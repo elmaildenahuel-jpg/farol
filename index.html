@@ -11,6 +11,25 @@
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC4PuqMjPVGz4F7Z-65DE4VV_OSs3TYlfU&libraries=places&language=es&region=AR"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://apis.google.com/js/api.js"></script>
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script>
+try{
+  firebase.initializeApp({
+    apiKey:"AIzaSyDQbC-CJgkTvQbZpJZ01ug_pnymHXHlE7c",
+    authDomain:"farol-crm-5b81c.firebaseapp.com",
+    projectId:"farol-crm-5b81c",
+    storageBucket:"farol-crm-5b81c.firebasestorage.app",
+    messagingSenderId:"831146918606",
+    appId:"1:831146918606:web:b1d3a30fd8002f2eda869f"
+  });
+  window.fbAuth=firebase.auth();
+  window.fbDb=firebase.firestore();
+  window.fbDb.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+}catch(e){console.error("Firebase init:",e);}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -32,24 +51,24 @@ button{font-family:'Inter',sans-serif;cursor:pointer}
 <div id="root"></div>
 <script type="text/babel">
 const {useState,useMemo}=React;
-
+ 
 // ── Paleta ────────────────────────────────────────────────────────
 const G="#C8972A",CR="#F0E4CC",MU="#7A6E60",GR="#4A7040",RE="#8A3028",AM="#A87028",
       BG="#080808",SU="#0F0F0F",CA="#141414",BO="#222222";
-
+ 
 // ── Catálogos ─────────────────────────────────────────────────────
 const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","Parrilla","Restobar","Bodegón","Otro"];
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const PEST={"Por contactar":MU,"Contactado":AM,"En negociación":GR,"Descartado":RE};
 const PEDIDO_ESTADOS={pendiente:{label:"Pendiente",color:AM},entregado:{label:"Entregado",color:GR},cancelado:{label:"Cancelado",color:RE}};
-
+ 
 // ── Config Google Calendar ────────────────────────────────────────
 // El Client ID se guarda en localStorage para no hardcodear credenciales.
 // El usuario lo pega desde Configuración dentro de la app.
 function getCalClientId(){ return localStorage.getItem("farol_gcal_client_id")||""; }
 const GCAL_SCOPE="https://www.googleapis.com/auth/calendar.events";
-
+ 
 const CONTACTO_TIPOS=[
   {id:"visita",label:"Visita presencial",icon:"🚐"},
   {id:"wa",label:"WhatsApp",icon:"💬"},
@@ -60,12 +79,12 @@ const CONTACTO_RESULTADOS=[
   "No estaba el dueño","Pidió precios","Interesado, vuelvo","Prometió llamar",
   "Hizo pedido","No le interesa","Ya trabaja con otra marca","Otro",
 ];
-
+ 
 // ── Scoring ───────────────────────────────────────────────────────
 const RUBRO_SCORE={"Pizzería":22,"Parrilla":20,"Restobar":19,"Bodegón":18,"Bar":16,"Autoservicio":14,"Almacén":12,"Despensa":10,"Kiosco":9,"Otro":6};
 const ZONA_SCORE={"CABA Centro":18,"CABA Norte":16,"CABA Sur":15,"GBA Sur":13,"GBA Norte":13,"GBA Oeste":11,"GBA Este":10};
 const ESTADO_SCORE={"En negociación":20,"Contactado":14,"Por contactar":8,"Descartado":0};
-
+ 
 function calcScore(p){
   const rS=RUBRO_SCORE[p.rubro]||6,zS=ZONA_SCORE[p.zona]||10,eS=ESTADO_SCORE[p.estado]||0;
   const telS=p.telefono?15:0,notasS=p.notas&&p.notas.length>30?5:p.notas?2:0;
@@ -77,7 +96,7 @@ function scoreLabel(s){
   if(s>=40)return{l:"Medio",c:AM};
   return{l:"Bajo",c:MU};
 }
-
+ 
 // ── Productos con promos por volumen ──────────────────────────────
 const PRODS_INIT=[
   {id:"rubia",nombre:"Rubia Arrabalera",precio:1500,promos:[],stock:120},
@@ -89,7 +108,7 @@ function precioEfectivo(prod,cantidad){
   return promos.length?promos[0].precioUnitario:prod.precio;
 }
 function montoTotal(prod,cantidad){ return precioEfectivo(prod,cantidad)*cantidad; }
-
+ 
 // ── Datos semilla ─────────────────────────────────────────────────
 const initClientes=[
   {id:"c1",nombre:"Kiosco Don Pedro",rubro:"Kiosco",zona:"CABA Centro",direccion:"San Martín 450",telefono:"5491155550101",notas:"Pide los jueves antes del mediodía.",agenda:[],historial:[],ventas:[
@@ -124,7 +143,7 @@ const initSpeeches=[
   {id:"s5",categoria:"Cierre",canal:"WhatsApp",titulo:"Confirmar pedido",texto:"Perfecto, te confirmo el pedido 🍺\n\n📦 [cantidad] litros de Farol\n🗓 Te lo llevo el [día] en el horario que me digas\n🚐 Directo desde producción en la Berlingo\n\n¡Gracias por la confianza!"},
   {id:"s6",categoria:"Promoción",canal:"WhatsApp",titulo:"Pack Desembarco",texto:"¡Hola! Esta semana estamos con el *Pack Desembarco Farol* 🍺\n\nPor la compra inicial de [X] litros: precio de lanzamiento + probadita de IPA Malandra incluida.\n\nEs la oportunidad de entrar antes de que esté en todos lados. ¿Lo hacemos?"},
 ];
-
+ 
 // ── Helpers ───────────────────────────────────────────────────────
 const fmtARS=n=>n.toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0});
 const fmtDate=s=>new Date(s+"T00:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"});
@@ -135,11 +154,11 @@ const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE
 const waLink=(tel,txt)=>{const n=(tel||"").replace(/\D/g,"");return n?`https://wa.me/${n}?text=${encodeURIComponent(txt)}`:null;};
 const uid=()=>"id"+Date.now()+Math.random().toString(36).slice(2);
 const hoyISO=()=>new Date().toISOString().slice(0,10);
-
+ 
 // ── Cuenta corriente ──────────────────────────────────────────────
 function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
 function totalAdeudado(clientes){ return clientes.reduce((s,c)=>s+saldoCliente(c),0); }
-
+ 
 // ── Meta semanal helpers ──────────────────────────────────────────
 function rangoSemanaActual(){
   const hoy=new Date(),dia=hoy.getDay(),offsetLunes=dia===0?-6:1-dia;
@@ -156,7 +175,7 @@ function diasRestantesSemana(){
   const{domingo}=rangoSemanaActual();const hoy=new Date();hoy.setHours(0,0,0,0);
   return Math.max(0,Math.ceil((domingo-hoy)/86400000));
 }
-
+ 
 // ── Iconos SVG ────────────────────────────────────────────────────
 const I={
   home:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
@@ -182,7 +201,7 @@ const I={
   zap:<svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   chart:<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
 };
-
+ 
 // ── UI base ───────────────────────────────────────────────────────
 function Lbl({t}){return<div style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>{t}</div>}
 function Pill({children,color}){return<span style={{padding:"3px 8px",borderRadius:4,fontSize:10,fontWeight:700,background:color+"22",color,letterSpacing:"0.05em"}}>{children}</span>}
@@ -218,7 +237,7 @@ function ScoreBar({score}){
     </div>
   );
 }
-
+ 
 // ── Google Calendar hook ──────────────────────────────────────────
 function useGoogleCalendar(){
   const[calToken,setCalToken]=useState(null);
@@ -226,7 +245,7 @@ function useGoogleCalendar(){
   const[gapiReady,setGapiReady]=useState(false);
   const[gisReady,setGisReady]=useState(false);
   const tokenClientRef=React.useRef(null);
-
+ 
   // Inicializar gapi.client (librería de Google APIs)
   React.useEffect(()=>{
     const initGapi=()=>{
@@ -244,13 +263,13 @@ function useGoogleCalendar(){
     };
     initGapi();
   },[]);
-
+ 
   // Esperar a que Google Identity Services esté disponible
   React.useEffect(()=>{
     const check=()=>{if(window.google?.accounts?.oauth2){setGisReady(true);}else{setTimeout(check,500);}};
     check();
   },[]);
-
+ 
   const login=()=>{
     const clientId=getCalClientId();
     if(!clientId){
@@ -281,14 +300,14 @@ function useGoogleCalendar(){
       setCalError("No se pudo iniciar el login: "+e.message);
     }
   };
-
+ 
   const logout=()=>{
     if(calToken&&window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(calToken,()=>{});
     setCalToken(null);
     setCalError("");
     tokenClientRef.current=null;
   };
-
+ 
   const crearEvento=async({titulo,descripcion,fecha,hora,durMin=60})=>{
     if(!calToken){login();return false;}
     if(!gapiReady){setCalError("La API de Google Calendar todavía está cargando.");return false;}
@@ -315,10 +334,10 @@ function useGoogleCalendar(){
       return false;
     }
   };
-
+ 
   return{calToken,calError,gapiReady,gisReady,login,logout,crearEvento};
 }
-
+ 
 // ── Modal Agenda ──────────────────────────────────────────────────
 function ModalAgenda({open,onClose,entidad,onGuardar,cal}){
   const[titulo,setTitulo]=useState("");
@@ -373,7 +392,7 @@ function ModalAgenda({open,onClose,entidad,onGuardar,cal}){
     </Modal>
   );
 }
-
+ 
 // ── Modal Contacto ────────────────────────────────────────────────
 function ModalContacto({open,onClose,entidad,onGuardar}){
   const[tipo,setTipo]=useState("visita");
@@ -402,7 +421,7 @@ function ModalContacto({open,onClose,entidad,onGuardar}){
     </Modal>
   );
 }
-
+ 
 // ── HistorialAgenda (bloque reutilizable) ─────────────────────────
 function HistorialAgenda({entidad,agenda,historial,onAgregarAgenda,onAgregarContacto,cal}){
   const[showAgenda,setShowAgenda]=useState(false);
@@ -448,7 +467,7 @@ function HistorialAgenda({entidad,agenda,historial,onAgregarAgenda,onAgregarCont
     </div>
   );
 }
-
+ 
 // ── Forms ─────────────────────────────────────────────────────────
 function FormCliente({initial,onSave,onCancel}){
   const[f,setF]=useState(initial||{nombre:"",rubro:RUBROS[0],zona:ZONAS[0],direccion:"",telefono:"",notas:""});
@@ -467,7 +486,7 @@ function FormCliente({initial,onSave,onCancel}){
     </div>
   );
 }
-
+ 
 function FormVenta({prods,onSave,onCancel}){
   const[f,setF]=useState({fecha:hoyISO(),producto:"rubia",cantidad:"",monto:"",pagado:true});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
@@ -495,7 +514,7 @@ function FormVenta({prods,onSave,onCancel}){
     </div>
   );
 }
-
+ 
 function FormProspecto({initial,onSave,onCancel}){
   const[f,setF]=useState(initial||{nombre:"",rubro:RUBROS[0],zona:ZONAS[0],direccion:"",telefono:"",notas:"",estado:"Por contactar"});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
@@ -519,7 +538,7 @@ function FormProspecto({initial,onSave,onCancel}){
     </div>
   );
 }
-
+ 
 // ── SpeechPicker ──────────────────────────────────────────────────
 function SpeechPicker({open,onClose,speeches,telefono,nombre}){
   const[cp,setCp]=useState(null);
@@ -540,7 +559,7 @@ function SpeechPicker({open,onClose,speeches,telefono,nombre}){
     </Modal>
   );
 }
-
+ 
 // ── CuentaCorriente ───────────────────────────────────────────────
 function CuentaCorriente({cliente,onUpdate}){
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
@@ -571,7 +590,7 @@ function CuentaCorriente({cliente,onUpdate}){
     </div>
   );
 }
-
+ 
 // ── DetalleCliente ────────────────────────────────────────────────
 function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
   const[vForm,setVForm]=useState(false);
@@ -631,7 +650,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
     </div>
   );
 }
-
+ 
 // ── INICIO ────────────────────────────────────────────────────────
 function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,setTab}){
   const totalARS=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+v.monto,0),0);
@@ -648,7 +667,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
   const productosStockBajo=prods.filter(p=>(p.stock||0)<24);
   const[editandoMeta,setEditandoMeta]=useState(false);
   const[metaTmp,setMetaTmp]=useState(String(metaSemanal));
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
@@ -658,7 +677,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           <div className="bebas" style={{fontSize:24,color:CR}}>Distribución directa</div>
         </div>
       </div>
-
+ 
       {/* Botón cargar pedido */}
       <button onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"20px 16px",borderRadius:16,background:`linear-gradient(135deg, ${G}, #B07F22)`,border:"none",cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",gap:14,boxShadow:`0 4px 20px ${G}33`}}>
         <div style={{width:48,height:48,borderRadius:12,background:"rgba(0,0,0,0.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#000"}}>{I.box}</div>
@@ -668,7 +687,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
         </div>
         <span style={{color:"#000",opacity:0.6}}>{I.chev}</span>
       </button>
-
+ 
       {/* Meta semanal */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:16,marginBottom:16}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -697,7 +716,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           <button onClick={()=>setEditandoMeta(true)} style={{fontSize:12,color:MU,background:"none",border:`1px dashed ${BO}`,borderRadius:8,padding:"10px 0",width:"100%",cursor:"pointer"}}>Definir meta semanal de litros</button>
         )}
       </div>
-
+ 
       {/* Stats */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
         {[{l:"Vendido",v:fmtARS(totalARS)},{l:"Litros",v:`${litros}L`},{l:"Activos",v:String(activos)}].map(s=>(
@@ -707,19 +726,19 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           </div>
         ))}
       </div>
-
+ 
       {/* Cuenta corriente pendiente */}
       {deuda>0&&<button onClick={()=>setTab("clientes")} style={{width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><span style={{fontSize:12,color:"#E08070",fontWeight:600}}>💰 Cuenta corriente pendiente de cobro</span><span className="bebas" style={{fontSize:18,color:"#E08070"}}>{fmtARS(deuda)}</span></button>}
-
+ 
       {/* Stock bajo */}
       {productosStockBajo.length>0&&<button onClick={()=>setTab("productos")} style={{width:"100%",background:AM+"11",border:`1px solid ${AM}33`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",textAlign:"left"}}><span style={{fontSize:16}}>⚠️</span><div><div style={{fontSize:12,fontWeight:700,color:"#E8B569"}}>Stock bajo</div><div style={{fontSize:11,color:MU,marginTop:1}}>{productosStockBajo.map(p=>`${p.nombre} (${p.stock||0}L)`).join(" · ")}</div></div></button>}
-
+ 
       {/* Recordatorios hoy */}
       {recordatoriosHoy.length>0&&<div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:12,overflow:"hidden",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${G}22`}}><span>📅</span><span style={{fontSize:13,fontWeight:700,color:G}}>Recordatorios de hoy</span></div>{recordatoriosHoy.map(r=><div key={r.id} style={{padding:"10px 16px",borderBottom:`1px solid ${G}11`,display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:CR}}>{r.titulo}</span><span style={{fontSize:11,color:MU}}>{r.hora}hs</span></div>)}</div>}
-
+ 
       {/* Entregas pendientes hoy */}
       {pedidosHoy.length>0&&<div style={{background:AM+"11",border:`1px solid ${AM}33`,borderRadius:12,overflow:"hidden",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${AM}22`}}>{I.truck}<span style={{fontSize:13,fontWeight:700,color:AM}}>Entregas pendientes hoy</span></div>{pedidosHoy.map(p=>{const cliente=clientes.find(c=>c.id===p.clienteId);const prod=prods.find(x=>x.id===p.producto);return<button key={p.id} onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",cursor:"pointer",display:"flex",justifyContent:"space-between",textAlign:"left"}}><span style={{fontSize:12,color:CR}}>{cliente?cliente.nombre:"Cliente"} · {prod?prod.nombre:p.producto} {p.cantidad}L</span><span style={{fontSize:11,color:AM}}>{p.horaEntrega}hs</span></button>;})}</div>}
-
+ 
       {/* Top 5 prospectos */}
       <div style={{background:CA,border:`1px solid ${G}44`,borderRadius:12,overflow:"hidden",marginBottom:20}}>
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${BO}`}}>{I.zap}<span style={{fontSize:13,fontWeight:700,color:G}}>Top 5 para visitar hoy</span><span style={{fontSize:10,color:MU,marginLeft:"auto"}}>por score</span></div>
@@ -739,7 +758,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
         ))}
         <button onClick={()=>setTab("comercios")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",fontSize:12,color:G,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>Ver todos {I.chev}</button>
       </div>
-
+ 
       {/* Alertas clientes */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:20}}>
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${BO}`,color:G}}>{I.alert}<span style={{fontSize:13,fontWeight:600,color:CR}}>Clientes con seguimiento</span></div>
@@ -750,7 +769,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           </button>
         );})}
       </div>
-
+ 
       {/* Accesos rápidos */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
         {[{tab:"comercios",icon:I.store,t:"Prospectos",s:"Sumar nuevas cuentas"},{tab:"speeches",icon:I.msg,t:"Speeches",s:"Copiar y mandar por WA"}].map(x=>(
@@ -759,7 +778,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           </button>
         ))}
       </div>
-
+ 
       {/* Línea Farol */}
       <button onClick={()=>setTab("productos")} style={{width:"100%",background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",cursor:"pointer",textAlign:"left"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px 8px"}}><span style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em"}}>Línea Farol</span><span style={{fontSize:10,color:G,display:"flex",alignItems:"center",gap:4}}>{I.edit}Editar precios</span></div>
@@ -768,7 +787,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
     </div>
   );
 }
-
+ 
 // ── CLIENTES ──────────────────────────────────────────────────────
 function Clientes({clientes,setClientes,speeches,cal,prods}){
   const[q,setQ]=useState("");
@@ -814,7 +833,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods}){
     </div>
   );
 }
-
+ 
 // ── COMERCIOS ─────────────────────────────────────────────────────
 function Comercios({prospectos,setProspectos,onConvertir,speeches}){
   const[q,setQ]=useState("");
@@ -827,7 +846,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
   const[editing,setEditing]=useState(null);
   const[spTarget,setSpTarget]=useState(null);
   const[expandido,setExpandido]=useState(null);
-
+ 
   const resultados=useMemo(()=>{
     const t=q.trim().toLowerCase();const terms=t?t.split(/\s+/):[];
     return prospectos.map(p=>{
@@ -843,11 +862,11 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
       return b._potScore-a._potScore;
     });
   },[prospectos,q,zona,rubro,estadoF,tieneTel,ordenar]);
-
+ 
   const stats=useMemo(()=>({total:resultados.length,conTel:resultados.filter(p=>p.telefono).length,porC:resultados.filter(p=>p.estado==="Por contactar").length,enN:resultados.filter(p=>p.estado==="En negociación").length,avgScore:resultados.length?Math.round(resultados.reduce((s,p)=>s+p._potScore,0)/resultados.length):0}),[resultados]);
   const hayFiltros=q||zona||rubro||estadoF||tieneTel;
   const limpiar=()=>{setQ("");setZona("");setRubro("");setEstadoF("");setTieneTel(false);};
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
@@ -942,7 +961,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
     </div>
   );
 }
-
+ 
 // ── PEDIDOS ───────────────────────────────────────────────────────
 function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const[showNew,setShowNew]=useState(false);
@@ -950,7 +969,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const prod=prods.find(p=>p.id===f.producto);
   const sug=f.cantidad&&prod?montoTotal(prod,Number(f.cantidad)):null;
-
+ 
   const confirmarPedido=()=>{
     if(!f.clienteId||!f.cantidad)return;
     const monto=Number(f.monto)||sug||0;
@@ -959,7 +978,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     setShowNew(false);
     setF({clienteId:"",producto:"rubia",cantidad:"",fechaEntrega:hoyISO(),horaEntrega:"10:00",notas:"",pagado:true});
   };
-
+ 
   const marcarEntregado=(pedidoId)=>{
     const ped=pedidos.find(p=>p.id===pedidoId);
     if(!ped)return;
@@ -974,17 +993,17 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     // Marcar pedido entregado
     setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado"}:p));
   };
-
+ 
   const pendientes=pedidos.filter(p=>p.estado==="pendiente").sort((a,b)=>a.fechaEntrega.localeCompare(b.fechaEntrega));
   const entregados=pedidos.filter(p=>p.estado==="entregado").sort((a,b)=>b.fechaEntrega.localeCompare(a.fechaEntrega)).slice(0,10);
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Pedidos</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
       </div>
-
+ 
       {pendientes.length===0?<div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:24,textAlign:"center",marginBottom:20}}><div style={{fontSize:13,color:MU,marginBottom:8}}>Sin entregas pendientes</div><Btn onClick={()=>setShowNew(true)}>{I.plus}Cargar primer pedido</Btn></div>:(
         <div style={{marginBottom:20}}>
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Pendientes de entrega ({pendientes.length})</div>
@@ -1015,7 +1034,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           })}
         </div>
       )}
-
+ 
       {entregados.length>0&&(
         <div>
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Últimas entregas</div>
@@ -1031,7 +1050,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           })}
         </div>
       )}
-
+ 
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo pedido">
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <div><Lbl t="Cliente"/><select value={f.clienteId} onChange={s("clienteId")}><option value="">Seleccioná un cliente</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
@@ -1057,14 +1076,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     </div>
   );
 }
-
+ 
 // ── PRODUCTOS ─────────────────────────────────────────────────────
 function Productos({prods,setProds}){
   const[editId,setEditId]=useState(null);
   const[ef,setEf]=useState(null);
   const[showPromo,setShowPromo]=useState(null);
   const[pf,setPf]=useState({minCantidad:"",precioUnitario:""});
-
+ 
   const startEdit=p=>{setEditId(p.id);setEf({...p});};
   const saveEdit=()=>{setProds(prev=>prev.map(p=>p.id===editId?{...ef,precio:Number(ef.precio),stock:Number(ef.stock||0)}:p));setEditId(null);};
   const agregarPromo=prodId=>{
@@ -1073,7 +1092,7 @@ function Productos({prods,setProds}){
     setPf({minCantidad:"",precioUnitario:""});setShowPromo(null);
   };
   const eliminarPromo=(prodId,promoId)=>setProds(prev=>prev.map(p=>p.id===prodId?{...p,promos:(p.promos||[]).filter(pr=>pr.id!==promoId)}:p));
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Productos</span>
@@ -1138,7 +1157,7 @@ function Productos({prods,setProds}){
     </div>
   );
 }
-
+ 
 // ── BUSCADOR MAPS ─────────────────────────────────────────────────
 function BuscadorMaps({prospectos,setProspectos}){
   const[modo,setModo]=useState("zona");
@@ -1156,14 +1175,14 @@ function BuscadorMaps({prospectos,setProspectos}){
   const[agregados,setAgregados]=useState({});
   const svcRef=React.useRef(null);
   const yaEnCRM=useMemo(()=>new Set(prospectos.map(p=>p._placeId).filter(Boolean)),[prospectos]);
-
+ 
   React.useEffect(()=>{
     if(window.google&&!svcRef.current){
       try{const div=document.createElement("div");const map=new window.google.maps.Map(div);svcRef.current=new window.google.maps.places.PlacesService(map);}
       catch(e){console.warn("Places init falló:",e);}
     }
   },[]);
-
+ 
   const ZONAS_COORDS={
     "Palermo, Buenos Aires":{lat:-34.5883,lng:-58.4269},"Villa Crespo, Buenos Aires":{lat:-34.5999,lng:-58.4398},
     "Almagro, Buenos Aires":{lat:-34.6088,lng:-58.4218},"Caballito, Buenos Aires":{lat:-34.6196,lng:-58.4411},
@@ -1175,7 +1194,7 @@ function BuscadorMaps({prospectos,setProspectos}){
   };
   const TIPOS_LIST=["pizzería","bar","parrilla","kiosco","almacén","restaurante","bodegón","autoservicio"];
   const ZONAS_LIST=Object.keys(ZONAS_COORDS);
-
+ 
   function buscarPorZona(){
     if(!svcRef.current)return;
     setLoading(true);setError("");setResultados([]);setNextToken(null);
@@ -1223,7 +1242,7 @@ function BuscadorMaps({prospectos,setProspectos}){
     setProspectos(prev=>[...prev,nuevo]);setAgregados(prev=>({...prev,[lugar.place_id]:true}));
   }
   function stars(r){if(!r)return"";const full=Math.round(r);return"★".repeat(full)+"☆".repeat(5-full);}
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Buscar en Maps</span>
@@ -1280,7 +1299,7 @@ function BuscadorMaps({prospectos,setProspectos}){
     </div>
   );
 }
-
+ 
 // ── SPEECHES ──────────────────────────────────────────────────────
 function Speeches({speeches,setSpeeches}){
   const[cat,setCat]=useState("todas");
@@ -1349,7 +1368,7 @@ function Speeches({speeches,setSpeeches}){
     </div>
   );
 }
-
+ 
 // ── VENTAS ────────────────────────────────────────────────────────
 function Ventas({clientes,prods}){
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,cn:c.nombre}))).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[clientes]);
@@ -1379,12 +1398,12 @@ function Ventas({clientes,prods}){
     </div>
   );
 }
-
+ 
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
 function Configuracion({cal}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
-
+ 
   const guardarClientId=()=>{
     const val=clientId.trim();
     if(!val){return;}
@@ -1397,14 +1416,14 @@ function Configuracion({cal}){
     setClientId("");
     cal.logout&&cal.logout();
   };
-
+ 
   const tieneClientId=!!getCalClientId();
-
+ 
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Configuración</span>
       <p style={{fontSize:11,color:MU,marginBottom:24}}>Integraciones y ajustes de Farol CRM</p>
-
+ 
       {/* Estado Google Calendar */}
       <div style={{background:CA,border:`1px solid ${cal.calToken?GR+"44":BO}`,borderRadius:12,padding:20,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
@@ -1415,7 +1434,7 @@ function Configuracion({cal}){
           </div>
           {cal.calToken&&<button onClick={cal.logout} style={{marginLeft:"auto",fontSize:11,padding:"5px 10px",borderRadius:6,background:"none",border:`1px solid ${RE}44`,color:RE,cursor:"pointer"}}>Desconectar</button>}
         </div>
-
+ 
         {/* Input Client ID */}
         <div style={{marginBottom:12}}>
           <Lbl t="Client ID de OAuth 2.0"/>
@@ -1432,7 +1451,7 @@ function Configuracion({cal}){
           </div>
           {tieneClientId&&<div style={{fontSize:10,color:MU,marginTop:4}}>Client ID guardado en este dispositivo · <button onClick={limpiarClientId} style={{background:"none",border:"none",color:RE,fontSize:10,cursor:"pointer",textDecoration:"underline"}}>Borrar</button></div>}
         </div>
-
+ 
         {/* Botón conectar */}
         {tieneClientId&&!cal.calToken&&(
           <button onClick={cal.login} style={{width:"100%",padding:"12px",borderRadius:10,background:G,color:"#000",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
@@ -1442,11 +1461,11 @@ function Configuracion({cal}){
         {cal.calError&&<div style={{background:RE+"22",border:`1px solid ${RE}44`,borderRadius:8,padding:"10px 12px",marginTop:10,fontSize:11,color:"#E08070",lineHeight:1.5}}>{cal.calError}</div>}
         {!cal.gisReady&&<div style={{fontSize:10,color:MU,marginTop:8}}>⏳ Cargando Google Identity Services...</div>}
       </div>
-
+ 
       {/* Guía paso a paso */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:20,marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:CR,marginBottom:16}}>🛠 Cómo configurar Google Calendar</div>
-
+ 
         {[
           {n:1,t:"Crear proyecto en Google Cloud",d:"Entrá a console.cloud.google.com → Nuevo proyecto → Ponele 'Farol CRM'"},
           {n:2,t:"Habilitar la API de Calendar",d:"En el proyecto: APIs y servicios → Biblioteca → buscá 'Google Calendar API' → Habilitar"},
@@ -1465,12 +1484,12 @@ function Configuracion({cal}){
             </div>
           </div>
         ))}
-
+ 
         <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px",borderRadius:8,background:G+"22",color:G,border:`1px solid ${G}44`,fontSize:12,fontWeight:700,textDecoration:"none",marginTop:4}}>
           Ir a Google Cloud Console →
         </a>
       </div>
-
+ 
       {/* Info deploy GitHub Pages */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:20}}>
         <div style={{fontSize:13,fontWeight:700,color:CR,marginBottom:12}}>🚀 Publicar en GitHub Pages (recomendado)</div>
@@ -1494,7 +1513,100 @@ function Configuracion({cal}){
     </div>
   );
 }
-
+ 
+// ── FIREBASE SYNC HOOK ────────────────────────────────────────────
+const SYNC_STATUS={
+  connecting:{icon:"☁️",label:"Conectando…",color:MU},
+  saving:    {icon:"⏳",label:"Guardando…", color:AM},
+  synced:    {icon:"✓", label:"Guardado",   color:GR},
+  offline:   {icon:"⚡",label:"Sin conexión",color:AM},
+  error:     {icon:"⚠️",label:"Error sync", color:RE},
+};
+ 
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,metaSemanal,setMetaSemanal){
+  const[status,setStatus]=useState("connecting");
+  const loadedRef=React.useRef(false);
+  const lastSyncRef=React.useRef(null);
+  const timerRef=React.useRef(null);
+  const isFirstLoad=React.useRef(true);
+ 
+  // Escuchar cambios en Firestore (carga inicial + updates en tiempo real)
+  React.useEffect(()=>{
+    if(!window.fbAuth||!window.fbDb){setStatus("error");return;}
+    let unsubSnap=null;
+    const unsubAuth=window.fbAuth.onAuthStateChanged(user=>{
+      if(!user)return;
+      const ref=window.fbDb.collection("farolcrm").doc("data");
+      unsubSnap=ref.onSnapshot(snap=>{
+        if(snap.exists){
+          const d=snap.data();
+          const incoming=JSON.stringify({
+            clientes:d.clientes||[],prospectos:d.prospectos||[],
+            speeches:d.speeches||[],pedidos:d.pedidos||[],
+            prods:d.prods||[],metaSemanal:d.metaSemanal||0
+          });
+          // Solo actualizar si los datos son distintos a los que acabamos de guardar
+          if(incoming!==lastSyncRef.current){
+            lastSyncRef.current=incoming;
+            setClientes(d.clientes||[]);
+            setProspectos(d.prospectos||[]);
+            setSpeeches(d.speeches||[]);
+            setPedidos(d.pedidos||[]);
+            if(d.prods&&d.prods.length>0) setProds(d.prods);
+            if(d.metaSemanal) setMetaSemanal(d.metaSemanal);
+          }
+        } else {
+          // Primera vez — subir datos semilla
+          const seed={clientes,prospectos,speeches,pedidos,prods,metaSemanal,updatedAt:Date.now()};
+          lastSyncRef.current=JSON.stringify({clientes,prospectos,speeches,pedidos,prods,metaSemanal});
+          ref.set(seed).catch(()=>{});
+        }
+        loadedRef.current=true;
+        isFirstLoad.current=false;
+        setStatus("synced");
+      },err=>{console.error("Firestore error:",err);setStatus("error");});
+    });
+    window.fbAuth.signInAnonymously().catch(()=>setStatus("error"));
+    const goOff=()=>setStatus(s=>s==="error"?s:"offline");
+    const goOn=()=>setStatus(s=>s==="error"?s:"synced");
+    window.addEventListener("offline",goOff);
+    window.addEventListener("online",goOn);
+    return()=>{
+      unsubAuth();
+      if(unsubSnap)unsubSnap();
+      window.removeEventListener("offline",goOff);
+      window.removeEventListener("online",goOn);
+    };
+  },[]);
+ 
+  // Guardar en Firestore cuando cambia el estado (debounce 800ms)
+  React.useEffect(()=>{
+    if(!loadedRef.current||isFirstLoad.current)return;
+    const current=JSON.stringify({clientes,prospectos,speeches,pedidos,prods,metaSemanal});
+    if(current===lastSyncRef.current)return;
+    if(timerRef.current)clearTimeout(timerRef.current);
+    setStatus("saving");
+    timerRef.current=setTimeout(()=>{
+      if(!window.fbDb){setStatus("error");return;}
+      window.fbDb.collection("farolcrm").doc("data")
+        .set({clientes,prospectos,speeches,pedidos,prods,metaSemanal,updatedAt:Date.now()})
+        .then(()=>{lastSyncRef.current=current;setStatus("synced");})
+        .catch(()=>setStatus(navigator.onLine?"error":"offline"));
+    },800);
+  },[clientes,prospectos,speeches,pedidos,prods,metaSemanal]);
+ 
+  return status;
+}
+ 
+function SyncBadge({status}){
+  const s=SYNC_STATUS[status]||SYNC_STATUS.connecting;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,color:s.color,padding:"3px 8px",borderRadius:6,background:s.color+"11",border:`1px solid ${s.color}33`}}>
+      <span>{s.icon}</span><span>{s.label}</span>
+    </div>
+  );
+}
+ 
 // ── APP ───────────────────────────────────────────────────────────
 const TABS=[
   {key:"inicio",label:"Inicio",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>},
@@ -1507,7 +1619,7 @@ const TABS=[
   {key:"productos",label:"Productos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>},
   {key:"config",label:"Config",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>},
 ];
-
+ 
 function App(){
   const[tab,setTab]=useState("inicio");
   const[clientes,setClientes]=useState(initClientes);
@@ -1517,16 +1629,25 @@ function App(){
   const[prods,setProds]=useState(PRODS_INIT);
   const[metaSemanal,setMetaSemanal]=useState(0);
   const cal=useGoogleCalendar();
-
+ 
+  // Sincronización Firebase — todos los datos en la nube
+  const syncStatus=useFirebaseSync(
+    clientes,setClientes,
+    prospectos,setProspectos,
+    speeches,setSpeeches,
+    pedidos,setPedidos,
+    prods,setProds,
+    metaSemanal,setMetaSemanal
+  );
+ 
   const convertir=p=>{
     setClientes(prev=>[...prev,{id:uid(),nombre:p.nombre,rubro:p.rubro,zona:p.zona,direccion:p.direccion,telefono:p.telefono,notas:p.notas,agenda:[],historial:[],ventas:[]}]);
     setProspectos(prev=>prev.filter(x=>x.id!==p.id));
     setTab("clientes");
   };
-
-  // Tabs visibles en mobile bottom nav (máx 5 para que no se apriete)
-  const TABS_MOBILE=TABS.slice(0,5); // inicio, clientes, comercios, pedidos, maps
-
+ 
+  const TABS_MOBILE=TABS.slice(0,5);
+ 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <div style={{display:"flex"}}>
@@ -1542,10 +1663,11 @@ function App(){
             ))}
           </nav>
           <div style={{padding:"16px 20px",borderTop:`1px solid ${BO}`}}>
-            <div style={{fontSize:9,color:BO,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em"}}>Triple P · Premium · Popular · Porteña</div>
+            <SyncBadge status={syncStatus}/>
+            <div style={{fontSize:9,color:BO,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginTop:8}}>Triple P · Premium · Popular · Porteña</div>
           </div>
         </aside>
-
+ 
         <main style={{flex:1,paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} prospectos={prospectos} pedidos={pedidos} prods={prods} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods}/>}
@@ -1558,19 +1680,18 @@ function App(){
           {tab==="config"&&<Configuracion cal={cal}/>}
         </main>
       </div>
-
+ 
       {/* Header mobile */}
       <div id="tb" style={{position:"fixed",top:0,left:0,right:0,zIndex:40,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:BG+"EE",backdropFilter:"blur(10px)",borderBottom:`1px solid ${BO}`}}>
         <span className="bebas" style={{fontSize:24,color:G}}>FAROL</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <button onClick={()=>setTab("ventas")} style={{fontSize:10,padding:"4px 8px",borderRadius:6,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer"}}>Ventas</button>
-          <button onClick={()=>setTab("productos")} style={{fontSize:10,padding:"4px 8px",borderRadius:6,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer"}}>Productos</button>
+          <SyncBadge status={syncStatus}/>
           <button onClick={()=>setTab("config")} style={{fontSize:10,padding:"4px 8px",borderRadius:6,background:tab==="config"?G:"none",border:`1px solid ${tab==="config"?G:BO}`,color:tab==="config"?"#000":cal.calToken?GR:MU,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
             {cal.calToken?"📅✓":"⚙️"}
           </button>
         </div>
       </div>
-
+ 
       {/* Bottom nav mobile (5 tabs) */}
       <div id="bn" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:40,background:SU,borderTop:`1px solid ${BO}`,display:"flex"}}>
         {TABS_MOBILE.map(({key,label,icon})=>(
@@ -1579,13 +1700,14 @@ function App(){
           </button>
         ))}
       </div>
-
+ 
       <style>{`@media(min-width:768px){#sb{display:flex!important}#mn{margin-left:200px;padding-top:0!important}#tb{display:none!important}#bn{display:none!important}}`}</style>
     </div>
   );
 }
-
+ 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
+ 
