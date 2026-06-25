@@ -562,31 +562,142 @@ function SpeechPicker({open,onClose,speeches,telefono,nombre}){
  
 // ── CuentaCorriente ───────────────────────────────────────────────
 function CuentaCorriente({cliente,onUpdate}){
+  const[montoPago,setMontoPago]=useState("");
+  const[showParcial,setShowParcial]=useState(false);
+  const[showHistorial,setShowHistorial]=useState(false);
+ 
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const saldo=saldoCliente(cliente);
-  if(saldo===0)return null;
+ 
   const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true}:v)});
+  const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false}:v)});
   const marcarTodo=()=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>({...v,pagado:true}))});
+ 
+  const aplicarPagoParcial=()=>{
+    let restante=Number(montoPago);
+    if(!restante||restante<=0)return;
+    // Saldar ventas pendientes de más antigua a más nueva hasta agotar el monto
+    const nuevasVentas=cliente.ventas.map(v=>{
+      if(v.pagado)return v;
+      if(restante<=0)return v;
+      if(restante>=v.monto){
+        restante-=v.monto;
+        return{...v,pagado:true};
+      }
+      // Si el pago no alcanza para cubrir esta venta, no la marcamos
+      return v;
+    });
+    onUpdate({...cliente,ventas:nuevasVentas});
+    setMontoPago("");
+    setShowParcial(false);
+  };
+ 
   return(
-    <div style={{background:RE+"11",border:`1px solid ${RE}33`,borderRadius:10,padding:14,marginBottom:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-        <span style={{fontSize:12,fontWeight:700,color:"#E08070"}}>💰 Cuenta corriente</span>
-        <span className="bebas" style={{fontSize:18,color:"#E08070"}}>{fmtARS(saldo)}</span>
+    <div style={{background:saldo>0?RE+"11":GR+"11",border:`1px solid ${saldo>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:14}}>
+      {/* Saldo siempre visible */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:saldo>0?12:0}}>
+        <span style={{fontSize:12,fontWeight:700,color:saldo>0?"#E08070":GR}}>
+          {saldo>0?"💰 Cuenta corriente":"✓ Sin deuda pendiente"}
+        </span>
+        <span className="bebas" style={{fontSize:20,color:saldo>0?"#E08070":GR}}>{fmtARS(saldo)}</span>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
-        {pendientes.map(v=>(
-          <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px"}}>
-            <span style={{fontSize:11,color:CR}}>{fmtDate(v.fecha)} · {v.cantidad}L</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:12,fontWeight:600,color:"#E08070"}}>{fmtARS(v.monto)}</span>
-              <button onClick={()=>marcarPagada(v.id)} style={{fontSize:10,fontWeight:700,padding:"4px 8px",borderRadius:6,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>Marcar pagado</button>
-            </div>
+ 
+      {saldo>0&&(
+        <>
+          {/* Ventas pendientes de cobro */}
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+            {pendientes.map(v=>(
+              <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px"}}>
+                <div>
+                  <span style={{fontSize:11,color:CR}}>{fmtDate(v.fecha)}</span>
+                  <span style={{fontSize:10,color:MU,marginLeft:6}}>{v.cantidad}L</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:12,fontWeight:600,color:"#E08070"}}>{fmtARS(v.monto)}</span>
+                  <button onClick={()=>marcarPagada(v.id)} style={{fontSize:10,fontWeight:700,padding:"5px 10px",borderRadius:6,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <button onClick={marcarTodo} style={{width:"100%",padding:"8px 0",borderRadius:8,background:GR,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-        {I.check} Saldar toda la cuenta
-      </button>
+ 
+          {/* Pago parcial */}
+          {showParcial?(
+            <div style={{marginBottom:8}}>
+              <Lbl t="¿Cuánto te pagó?"/>
+              <div style={{display:"flex",gap:8}}>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={montoPago}
+                  onChange={e=>setMontoPago(e.target.value)}
+                  placeholder={`Máx: ${fmtARS(saldo)}`}
+                  autoFocus
+                  style={{flex:1,fontSize:13}}
+                />
+                <button
+                  onClick={aplicarPagoParcial}
+                  disabled={!montoPago||Number(montoPago)<=0}
+                  style={{padding:"0 16px",borderRadius:8,background:GR,color:"#fff",border:"none",fontWeight:700,cursor:"pointer",fontSize:13}}
+                >
+                  Aplicar
+                </button>
+                <button
+                  onClick={()=>{setShowParcial(false);setMontoPago("");}}
+                  style={{padding:"0 10px",borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer"}}
+                >
+                  {I.x}
+                </button>
+              </div>
+              {montoPago&&Number(montoPago)>0&&(
+                <div style={{fontSize:10,color:MU,marginTop:4}}>
+                  Esto va a saldar {fmtARS(Math.min(Number(montoPago),saldo))} de deuda. Saldo restante: {fmtARS(Math.max(0,saldo-Number(montoPago)))}
+                </div>
+              )}
+            </div>
+          ):(
+            <button onClick={()=>setShowParcial(true)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"none",border:`1px dashed ${AM}55`,color:AM,fontSize:12,fontWeight:600,cursor:"pointer",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              💵 Registrar pago parcial
+            </button>
+          )}
+ 
+          {/* Saldar todo */}
+          <button onClick={marcarTodo} style={{width:"100%",padding:"10px 0",borderRadius:8,background:GR,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            {I.check} Saldar toda la cuenta · {fmtARS(saldo)}
+          </button>
+        </>
+      )}
+ 
+      {/* Historial de pagos — siempre visible para deshacer */}
+      {pagadas.length>0&&(
+        <div style={{marginTop:saldo>0?12:0}}>
+          <button onClick={()=>setShowHistorial(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
+            {showHistorial?"▲":"▼"} Historial de pagos ({pagadas.length})
+          </button>
+          {showHistorial&&(
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+              {pagadas.slice(0,5).map(v=>(
+                <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",opacity:0.8}}>
+                  <div>
+                    <span style={{fontSize:11,color:CR}}>{fmtDate(v.fecha)}</span>
+                    <span style={{fontSize:10,color:MU,marginLeft:6}}>{v.cantidad}L</span>
+                    <span style={{fontSize:10,color:GR,marginLeft:6}}>✓ Pagado</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:11,color:MU}}>{fmtARS(v.monto)}</span>
+                    <button
+                      onClick={()=>desmarcarPagada(v.id)}
+                      style={{fontSize:9,padding:"3px 7px",borderRadius:6,background:RE+"22",color:"#E08070",border:`1px solid ${RE}33`,cursor:"pointer"}}
+                    >
+                      Deshacer
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -965,32 +1076,69 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
 // ── PEDIDOS ───────────────────────────────────────────────────────
 function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const[showNew,setShowNew]=useState(false);
-  const[f,setF]=useState({clienteId:"",producto:"rubia",cantidad:"",fechaEntrega:hoyISO(),horaEntrega:"10:00",notas:"",pagado:true});
-  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const prod=prods.find(p=>p.id===f.producto);
-  const sug=f.cantidad&&prod?montoTotal(prod,Number(f.cantidad)):null;
+  // Cabecera del pedido
+  const[clienteId,setClienteId]=useState("");
+  const[fechaEntrega,setFechaEntrega]=useState(hoyISO());
+  const[horaEntrega,setHoraEntrega]=useState("10:00");
+  const[pagado,setPagado]=useState(true);
+  const[notas,setNotas]=useState("");
+  // Líneas del pedido (multi-producto)
+  const[lineas,setLineas]=useState([{id:uid(),productoId:"rubia",cantidad:"",monto:""}]);
+ 
+  const resetForm=()=>{
+    setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(true);setNotas("");
+    setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:""}]);
+  };
+ 
+  const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:""}]);
+  const quitarLinea=id=>setLineas(prev=>prev.filter(l=>l.id!==id));
+  const updateLinea=(id,campo,valor)=>setLineas(prev=>prev.map(l=>{
+    if(l.id!==id)return l;
+    const updated={...l,[campo]:valor};
+    // Auto-calcular monto si cambia cantidad o producto
+    if(campo==="cantidad"||campo==="productoId"){
+      const prod=prods.find(p=>p.id===(campo==="productoId"?valor:l.productoId));
+      const cant=Number(campo==="cantidad"?valor:l.cantidad);
+      if(prod&&cant>0) updated.monto=String(montoTotal(prod,cant));
+    }
+    return updated;
+  }));
+ 
+  const totalPedido=lineas.reduce((s,l)=>s+Number(l.monto||0),0);
+  const totalLitros=lineas.reduce((s,l)=>s+Number(l.cantidad||0),0);
+  const lineasValidas=lineas.filter(l=>l.cantidad&&Number(l.cantidad)>0);
  
   const confirmarPedido=()=>{
-    if(!f.clienteId||!f.cantidad)return;
-    const monto=Number(f.monto)||sug||0;
-    const nuevoPedido={id:uid(),...f,cantidad:Number(f.cantidad),monto,estado:"pendiente",creadoEn:new Date().toISOString()};
+    if(!clienteId||lineasValidas.length===0)return;
+    const nuevoPedido={
+      id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
+      lineas:lineasValidas.map(l=>({...l,cantidad:Number(l.cantidad),monto:Number(l.monto||0)})),
+      montoTotal:totalPedido,
+      estado:"pendiente",creadoEn:new Date().toISOString()
+    };
     setPedidos(p=>[nuevoPedido,...p]);
     setShowNew(false);
-    setF({clienteId:"",producto:"rubia",cantidad:"",fechaEntrega:hoyISO(),horaEntrega:"10:00",notas:"",pagado:true});
+    resetForm();
   };
  
   const marcarEntregado=(pedidoId)=>{
     const ped=pedidos.find(p=>p.id===pedidoId);
     if(!ped)return;
-    // Registrar venta en el cliente
+    // Registrar una venta por cada línea del pedido
     setClientes(prev=>prev.map(c=>{
       if(c.id!==ped.clienteId)return c;
-      const nuevaVenta={id:uid(),fecha:ped.fechaEntrega,producto:ped.producto,cantidad:ped.cantidad,monto:ped.monto,pagado:ped.pagado};
-      return{...c,ventas:[...c.ventas,nuevaVenta]};
+      const nuevasVentas=(ped.lineas||[]).map(l=>({
+        id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
+        cantidad:l.cantidad,monto:l.monto,pagado:ped.pagado
+      }));
+      return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
-    // Descontar stock
-    setProds(prev=>prev.map(p=>p.id===ped.producto?{...p,stock:Math.max(0,(p.stock||0)-ped.cantidad)}:p));
-    // Marcar pedido entregado
+    // Descontar stock por cada línea
+    setProds(prev=>prev.map(p=>{
+      const linea=(ped.lineas||[]).find(l=>l.productoId===p.id);
+      if(!linea)return p;
+      return{...p,stock:Math.max(0,(p.stock||0)-linea.cantidad)};
+    }));
     setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado"}:p));
   };
  
@@ -1001,28 +1149,46 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Pedidos</span>
-        <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
+        <Btn onClick={()=>{resetForm();setShowNew(true);}} small>{I.plus}Nuevo</Btn>
       </div>
  
-      {pendientes.length===0?<div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:24,textAlign:"center",marginBottom:20}}><div style={{fontSize:13,color:MU,marginBottom:8}}>Sin entregas pendientes</div><Btn onClick={()=>setShowNew(true)}>{I.plus}Cargar primer pedido</Btn></div>:(
-        <div style={{marginBottom:20}}>
+      {pendientes.length===0
+        ?<div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:24,textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:13,color:MU,marginBottom:8}}>Sin entregas pendientes</div>
+          <Btn onClick={()=>setShowNew(true)}>{I.plus}Cargar primer pedido</Btn>
+        </div>
+        :<div style={{marginBottom:20}}>
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Pendientes de entrega ({pendientes.length})</div>
           {pendientes.map(p=>{
             const cliente=clientes.find(c=>c.id===p.clienteId);
-            const producto=prods.find(x=>x.id===p.producto);
             const esHoy=p.fechaEntrega===hoyISO();
+            const lineas=p.lineas||[];
             return(
               <div key={p.id} style={{background:CA,border:`1px solid ${esHoy?AM+"44":BO}`,borderRadius:12,padding:16,marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                   <div>
                     <div style={{fontSize:14,fontWeight:700,color:CR}}>{cliente?cliente.nombre:"Cliente eliminado"}</div>
-                    <div style={{fontSize:12,color:MU,marginTop:2}}>{producto?producto.nombre:p.producto} · {p.cantidad}L</div>
-                    <div style={{fontSize:11,color:esHoy?AM:MU,marginTop:2,fontWeight:esHoy?700:400}}>{esHoy?"⏰ HOY":"📅 "}{fmtDate(p.fechaEntrega)} · {p.horaEntrega}hs</div>
+                    <div style={{fontSize:11,color:esHoy?AM:MU,marginTop:2,fontWeight:esHoy?700:400}}>{esHoy?"⏰ HOY · ":"📅 "}{fmtDate(p.fechaEntrega)} · {p.horaEntrega}hs</div>
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <div className="bebas" style={{fontSize:18,color:CR}}>{fmtARS(p.monto||0)}</div>
+                    <div className="bebas" style={{fontSize:18,color:CR}}>{fmtARS(p.montoTotal||0)}</div>
                     <div style={{fontSize:10,color:p.pagado?GR:AM,marginTop:2}}>{p.pagado?"Pagado":"Cuenta corriente"}</div>
                   </div>
+                </div>
+                {/* Líneas del pedido */}
+                <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                  {lineas.map((l,idx)=>{
+                    const prod=prods.find(x=>x.id===l.productoId);
+                    return(
+                      <div key={l.id||idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:idx<lineas.length-1?6:0,marginBottom:idx<lineas.length-1?6:0,borderBottom:idx<lineas.length-1?`1px solid ${BO}`:"none"}}>
+                        <span style={{fontSize:12,color:CR}}>{prod?prod.nombre:l.productoId}</span>
+                        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                          <span style={{fontSize:11,color:MU}}>{l.cantidad}L</span>
+                          <span style={{fontSize:12,fontWeight:600,color:CR}}>{fmtARS(l.monto||0)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 {p.notas&&<div style={{fontSize:11,color:"#A89682",marginBottom:10}}>{p.notas}</div>}
                 <div style={{display:"flex",gap:8}}>
@@ -1033,44 +1199,97 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
             );
           })}
         </div>
-      )}
+      }
  
       {entregados.length>0&&(
         <div>
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Últimas entregas</div>
           {entregados.map(p=>{
             const cliente=clientes.find(c=>c.id===p.clienteId);
-            const producto=prods.find(x=>x.id===p.producto);
+            const lineas=p.lineas||[];
             return(
-              <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:CA,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginBottom:6,opacity:0.7}}>
-                <div><div style={{fontSize:12,fontWeight:600,color:CR}}>{cliente?cliente.nombre:"—"}</div><div style={{fontSize:10,color:MU}}>{producto?producto.nombre:p.producto} · {p.cantidad}L · {fmtDate(p.fechaEntrega)}</div></div>
-                <div style={{textAlign:"right"}}><div style={{fontSize:12,color:CR}}>{fmtARS(p.monto||0)}</div><div style={{fontSize:10,color:GR}}>Entregado</div></div>
+              <div key={p.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginBottom:6,opacity:0.7}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{fontSize:12,fontWeight:600,color:CR}}>{cliente?cliente.nombre:"—"}</div>
+                  <div style={{textAlign:"right"}}><div style={{fontSize:12,color:CR}}>{fmtARS(p.montoTotal||0)}</div><div style={{fontSize:10,color:GR}}>Entregado · {fmtDate(p.fechaEntrega)}</div></div>
+                </div>
+                <div style={{fontSize:10,color:MU}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")}</div>
               </div>
             );
           })}
         </div>
       )}
  
-      <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo pedido">
+      <Modal open={showNew} onClose={()=>{setShowNew(false);resetForm();}} title="Nuevo pedido">
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div><Lbl t="Cliente"/><select value={f.clienteId} onChange={s("clienteId")}><option value="">Seleccioná un cliente</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
-          <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{prods.map(p=><option key={p.id} value={p.id}>{p.nombre} · stock {p.stock||0}L</option>)}</select></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><Lbl t="Cantidad (L)"/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder="24"/></div>
-            <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder={sug||"36000"}/>{sug&&!f.monto&&<div style={{fontSize:10,color:G,marginTop:4}}>Sug: {fmtARS(sug)}</div>}</div>
+          {/* Cliente */}
+          <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
+ 
+          {/* Líneas de productos */}
+          <div>
+            <Lbl t="Productos del pedido"/>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {lineas.map((l,idx)=>{
+                const prod=prods.find(p=>p.id===l.productoId);
+                const sug=l.cantidad&&prod?montoTotal(prod,Number(l.cantidad)):null;
+                const stockBajo=l.cantidad&&prod&&Number(l.cantidad)>(prod.stock||0);
+                return(
+                  <div key={l.id} style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <span style={{fontSize:11,fontWeight:700,color:MU}}>Ítem {idx+1}</span>
+                      {lineas.length>1&&<button onClick={()=>quitarLinea(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:RE,padding:2}}>{I.trash}</button>}
+                    </div>
+                    <div style={{marginBottom:8}}>
+                      <select value={l.productoId} onChange={e=>updateLinea(l.id,"productoId",e.target.value)}>
+                        {prods.map(p=><option key={p.id} value={p.id}>{p.nombre} · stock {p.stock||0}L</option>)}
+                      </select>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      <div>
+                        <Lbl t="Cantidad (L)"/>
+                        <input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder="12"/>
+                        {stockBajo&&<div style={{fontSize:9,color:"#E08070",marginTop:2}}>⚠ Solo {prod.stock||0}L en stock</div>}
+                      </div>
+                      <div>
+                        <Lbl t="Monto ARS"/>
+                        <input type="number" inputMode="numeric" value={l.monto} onChange={e=>updateLinea(l.id,"monto",e.target.value)} placeholder={sug||"0"}/>
+                        {sug&&!l.monto&&<div style={{fontSize:9,color:G,marginTop:2}}>Sug: {fmtARS(sug)}</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={agregarLinea} style={{width:"100%",marginTop:8,padding:"9px 0",borderRadius:8,background:"none",border:`1px dashed ${G}44`,color:G,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.plus}Agregar otro producto</button>
           </div>
+ 
+          {/* Total */}
+          {totalPedido>0&&(
+            <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:12,color:MU}}>Total del pedido · {totalLitros}L</span>
+              <span className="bebas" style={{fontSize:20,color:G}}>{fmtARS(totalPedido)}</span>
+            </div>
+          )}
+ 
+          {/* Fecha y hora */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><Lbl t="Fecha de entrega"/><input type="date" value={f.fechaEntrega} onChange={s("fechaEntrega")}/></div>
-            <div><Lbl t="Hora estimada"/><input type="time" value={f.horaEntrega} onChange={s("horaEntrega")}/></div>
+            <div><Lbl t="Fecha de entrega"/><input type="date" value={fechaEntrega} onChange={e=>setFechaEntrega(e.target.value)}/></div>
+            <div><Lbl t="Hora estimada"/><input type="time" value={horaEntrega} onChange={e=>setHoraEntrega(e.target.value)}/></div>
           </div>
+ 
+          {/* Pago */}
           <div><Lbl t="¿Se cobra al momento de la entrega?"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <button onClick={()=>setF(p=>({...p,pagado:true}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado?GR:BO}`,background:f.pagado?GR+"22":"transparent",color:f.pagado?GR:MU,fontSize:12,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
-              <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:12,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
+              <button onClick={()=>setPagado(true)} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${pagado?GR:BO}`,background:pagado?GR+"22":"transparent",color:pagado?GR:MU,fontSize:12,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
+              <button onClick={()=>setPagado(false)} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!pagado?AM:BO}`,background:!pagado?AM+"22":"transparent",color:!pagado?AM:MU,fontSize:12,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
             </div>
           </div>
-          <div><Lbl t="Notas (opcional)"/><textarea rows={2} value={f.notas} onChange={s("notas")} placeholder="Alguna aclaración para la entrega..."/></div>
-          <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={()=>setShowNew(false)}>Cancelar</Btn><Btn variant="green" onClick={confirmarPedido} disabled={!f.clienteId||!f.cantidad}>{I.box}Confirmar pedido</Btn></div>
+ 
+          <div><Lbl t="Notas (opcional)"/><textarea rows={2} value={notas} onChange={e=>setNotas(e.target.value)} placeholder="Alguna aclaración para la entrega..."/></div>
+          <div style={{display:"flex",gap:8,paddingTop:4}}>
+            <Btn variant="ghost" onClick={()=>{setShowNew(false);resetForm();}}>Cancelar</Btn>
+            <Btn variant="green" onClick={confirmarPedido} disabled={!clienteId||lineasValidas.length===0}>{I.box}Confirmar pedido</Btn>
+          </div>
         </div>
       </Modal>
     </div>
@@ -1399,6 +1618,175 @@ function Ventas({clientes,prods}){
   );
 }
  
+// ── MÉTRICAS ──────────────────────────────────────────────────────
+function Metricas({clientes,prods}){
+  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+ 
+  // Ranking por producto
+  const rankingProducto=useMemo(()=>{
+    const map={};
+    todas.forEach(v=>{
+      if(!map[v.producto])map[v.producto]={litros:0,monto:0,pedidos:0};
+      map[v.producto].litros+=v.cantidad;
+      map[v.producto].monto+=v.monto;
+      map[v.producto].pedidos+=1;
+    });
+    return Object.entries(map).map(([id,d])=>({id,nombre:prods.find(p=>p.id===id)?.nombre||id,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas,prods]);
+ 
+  // Ranking clientes por producto
+  const rankingClientesPorProd=useMemo(()=>{
+    const byProd={};
+    prods.forEach(p=>byProd[p.id]={});
+    todas.forEach(v=>{
+      if(!byProd[v.producto])byProd[v.producto]={};
+      if(!byProd[v.producto][v.clienteNombre])byProd[v.producto][v.clienteNombre]={litros:0,monto:0};
+      byProd[v.producto][v.clienteNombre].litros+=v.cantidad;
+      byProd[v.producto][v.clienteNombre].monto+=v.monto;
+    });
+    const result={};
+    Object.entries(byProd).forEach(([prodId,clientes])=>{
+      result[prodId]=Object.entries(clientes).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.litros-a.litros).slice(0,5);
+    });
+    return result;
+  },[todas,prods]);
+ 
+  // Ranking por zona
+  const rankingZona=useMemo(()=>{
+    const map={};
+    todas.forEach(v=>{
+      if(!map[v.zona])map[v.zona]={litros:0,monto:0,pedidos:0};
+      map[v.zona].litros+=v.cantidad;
+      map[v.zona].monto+=v.monto;
+      map[v.zona].pedidos+=1;
+    });
+    return Object.entries(map).map(([zona,d])=>({zona,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas]);
+ 
+  // Ranking por rubro
+  const rankingRubro=useMemo(()=>{
+    const map={};
+    todas.forEach(v=>{
+      if(!map[v.rubro])map[v.rubro]={litros:0,monto:0,pedidos:0};
+      map[v.rubro].litros+=v.cantidad;
+      map[v.rubro].monto+=v.monto;
+      map[v.rubro].pedidos+=1;
+    });
+    return Object.entries(map).map(([rubro,d])=>({rubro,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas]);
+ 
+  const maxZona=rankingZona[0]?.litros||1;
+  const maxRubro=rankingRubro[0]?.litros||1;
+ 
+  if(todas.length===0) return(
+    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+      <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Métricas</span>
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:32,textAlign:"center",marginTop:20}}>
+        <div style={{fontSize:14,color:MU}}>Sin ventas registradas todavía.</div>
+        <div style={{fontSize:11,color:MU,marginTop:6}}>Las métricas aparecen cuando registrés pedidos entregados.</div>
+      </div>
+    </div>
+  );
+ 
+  return(
+    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+      <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Métricas</span>
+      <p style={{fontSize:11,color:MU,marginBottom:20}}>Rankings de ventas · {todas.length} registros</p>
+ 
+      {/* Resumen general por producto */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+        {rankingProducto.map(p=>(
+          <div key={p.id} style={{background:CA,border:`1px solid ${G}33`,borderRadius:12,padding:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:G,marginBottom:6}}>{p.nombre}</div>
+            <div className="bebas" style={{fontSize:26,color:CR}}>{p.litros}L</div>
+            <div style={{fontSize:11,color:MU,marginTop:2}}>{fmtARS(p.monto)}</div>
+            <div style={{fontSize:10,color:MU,marginTop:1}}>{p.pedidos} pedido{p.pedidos!==1?"s":""}</div>
+          </div>
+        ))}
+      </div>
+ 
+      {/* Ranking clientes por producto */}
+      {prods.map(prod=>{
+        const ranking=rankingClientesPorProd[prod.id]||[];
+        if(ranking.length===0)return null;
+        const maxL=ranking[0]?.litros||1;
+        return(
+          <div key={prod.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+            <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:13,fontWeight:700,color:CR}}>🏆 Top clientes · {prod.nombre}</span>
+            </div>
+            {ranking.map((c,idx)=>(
+              <div key={c.nombre} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:22,height:22,borderRadius:"50%",background:idx===0?G+"33":BO,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:700,color:idx===0?G:MU}}>#{idx+1}</span>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
+                  <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}>
+                    <div style={{width:`${(c.litros/maxL)*100}%`,height:"100%",background:G,borderRadius:2}}/>
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:G}}>{c.litros}L</div>
+                  <div style={{fontSize:10,color:MU}}>{fmtARS(c.monto)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+ 
+      {/* Ranking por zona */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}>
+          <span style={{fontSize:13,fontWeight:700,color:CR}}>📍 Ventas por zona</span>
+        </div>
+        {rankingZona.map((z,idx)=>(
+          <div key={z.zona} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:22,height:22,borderRadius:"50%",background:idx===0?G+"33":BO,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <span style={{fontSize:11,fontWeight:700,color:idx===0?G:MU}}>#{idx+1}</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:600,color:CR}}>{z.zona}</div>
+              <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}>
+                <div style={{width:`${(z.litros/maxZona)*100}%`,height:"100%",background:G,borderRadius:2}}/>
+              </div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:12,fontWeight:700,color:G}}>{z.litros}L</div>
+              <div style={{fontSize:10,color:MU}}>{fmtARS(z.monto)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+ 
+      {/* Ranking por rubro */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}>
+          <span style={{fontSize:13,fontWeight:700,color:CR}}>🏪 Ventas por tipo de comercio</span>
+        </div>
+        {rankingRubro.map((r,idx)=>(
+          <div key={r.rubro} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:22,height:22,borderRadius:"50%",background:idx===0?G+"33":BO,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <span style={{fontSize:11,fontWeight:700,color:idx===0?G:MU}}>#{idx+1}</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:600,color:CR}}>{r.rubro}</div>
+              <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}>
+                <div style={{width:`${(r.litros/maxRubro)*100}%`,height:"100%",background:G,borderRadius:2}}/>
+              </div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:12,fontWeight:700,color:G}}>{r.litros}L</div>
+              <div style={{fontSize:10,color:MU}}>{r.pedidos} pedido{r.pedidos!==1?"s":""}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+ 
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
 function Configuracion({cal}){
   const[clientId,setClientId]=useState(getCalClientId());
@@ -1616,6 +2004,7 @@ const TABS=[
   {key:"maps",label:"Buscar",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>},
   {key:"speeches",label:"Speeches",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
   {key:"ventas",label:"Ventas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>},
+  {key:"metricas",label:"Métricas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
   {key:"productos",label:"Productos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>},
   {key:"config",label:"Config",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>},
 ];
@@ -1676,6 +2065,7 @@ function App(){
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
+          {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
           {tab==="config"&&<Configuracion cal={cal}/>}
         </main>
@@ -1710,4 +2100,3 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
- 
