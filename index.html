@@ -11,38 +11,42 @@
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC4PuqMjPVGz4F7Z-65DE4VV_OSs3TYlfU&libraries=places&language=es&region=AR"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://apis.google.com/js/api.js"></script>
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
-<script>
-try{
-  firebase.initializeApp({
-    apiKey:"AIzaSyDQbC-CJgkTvQbZpJZ01ug_pnymHXHlE7c",
-    authDomain:"farol-crm-5b81c.firebaseapp.com",
-    projectId:"farol-crm-5b81c",
-    storageBucket:"farol-crm-5b81c.firebasestorage.app",
-    messagingSenderId:"831146918606",
-    appId:"1:831146918606:web:b1d3a30fd8002f2eda869f"
-  });
-  window.fbAuth=firebase.auth();
-  window.fbDb=firebase.firestore();
-  window.fbDb.enablePersistence({synchronizeTabs:true}).catch(()=>{});
-}catch(e){console.error("Firebase init:",e);}
-</script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+  try{
+    var app=firebase.initializeApp({
+      apiKey:"AIzaSyDQbC-CJgkTvQbZpJZ01ug_pnymHXHlE7c",
+      authDomain:"farol-crm-5b81c.firebaseapp.com",
+      projectId:"farol-crm-5b81c",
+      storageBucket:"farol-crm-5b81c.firebasestorage.app",
+      messagingSenderId:"831146918606",
+      appId:"1:831146918606:web:b1d3a30fd8002f2eda869f"
+    });
+    window.fbAuth=firebase.auth(app);
+    window.fbDb=firebase.firestore(app);
+    window.fbDb.enablePersistence({synchronizeTabs:true}).catch(function(){});
+    console.log("Firebase OK");
+  }catch(e){
+    console.error("Firebase init error:",e.message);
+  }
+})();
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{background:#080808;color:#F0E4CC;font-family:'Inter',sans-serif;min-height:100vh}
-input,select,textarea{font-family:'Inter',sans-serif;color:#F0E4CC;background:#0A0A0A;border:1px solid #2A2A2A;border-radius:8px;padding:10px 12px;width:100%;font-size:14px;outline:none;transition:border-color 0.15s}
-input:focus,select:focus,textarea:focus{border-color:#C8972A}
+body{background:#F5F5F5;color:#1A1A1A;font-family:'Inter',sans-serif;min-height:100vh}
+input,select,textarea{font-family:'Inter',sans-serif;color:#1A1A1A;background:#FFFFFF;border:1px solid #D0D0D0;border-radius:10px;padding:12px 14px;width:100%;font-size:16px;outline:none;transition:border-color 0.15s;box-shadow:0 1px 3px rgba(0,0,0,0.06)}
+input:focus,select:focus,textarea:focus{border-color:#B07820;box-shadow:0 0 0 3px rgba(176,120,32,0.15)}
 select{-webkit-appearance:none;appearance:none}
 button{font-family:'Inter',sans-serif;cursor:pointer}
 ::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-thumb{background:#2A2A2A;border-radius:2px}
+::-webkit-scrollbar-thumb{background:#D0D0D0;border-radius:2px}
 .bebas{font-family:'Bebas Neue',sans-serif;letter-spacing:0.03em}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 </style>
@@ -52,9 +56,9 @@ button{font-family:'Inter',sans-serif;cursor:pointer}
 <script type="text/babel">
 const {useState,useMemo}=React;
  
-// ── Paleta ────────────────────────────────────────────────────────
-const G="#C8972A",CR="#F0E4CC",MU="#7A6E60",GR="#4A7040",RE="#8A3028",AM="#A87028",
-      BG="#080808",SU="#0F0F0F",CA="#141414",BO="#222222";
+// ── Paleta CLARA ─────────────────────────────────────────────────
+const G="#B07820",CR="#1A1A1A",MU="#888888",GR="#2E7D32",RE="#C62828",AM="#E65100",
+      BG="#F5F5F5",SU="#FFFFFF",CA="#FFFFFF",BO="#E0E0E0";
  
 // ── Catálogos ─────────────────────────────────────────────────────
 const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","Parrilla","Restobar","Bodegón","Otro"];
@@ -110,31 +114,8 @@ function precioEfectivo(prod,cantidad){
 function montoTotal(prod,cantidad){ return precioEfectivo(prod,cantidad)*cantidad; }
  
 // ── Datos semilla ─────────────────────────────────────────────────
-const initClientes=[
-  {id:"c1",nombre:"Kiosco Don Pedro",rubro:"Kiosco",zona:"CABA Centro",direccion:"San Martín 450",telefono:"5491155550101",notas:"Pide los jueves antes del mediodía.",agenda:[],historial:[],ventas:[
-    {id:"v1",fecha:"2026-05-20",producto:"rubia",cantidad:24,monto:36000,pagado:true},
-    {id:"v2",fecha:"2026-06-03",producto:"rubia",cantidad:24,monto:37200,pagado:false}]},
-  {id:"c2",nombre:"Despensa La Esquina",rubro:"Despensa",zona:"CABA Sur",direccion:"Belgrano 120",telefono:"5491155550102",notas:"Dueña Rosa. Prefiere efectivo.",agenda:[],historial:[],ventas:[
-    {id:"v3",fecha:"2026-04-10",producto:"rubia",cantidad:12,monto:18000,pagado:true}]},
-  {id:"c3",nombre:"Parrilla El Fogón",rubro:"Parrilla",zona:"GBA Sur",direccion:"Av. Rivadavia 2200, Lomas",telefono:"5491155550103",notas:"Fines de semana, consumo en el local.",agenda:[],historial:[],ventas:[
-    {id:"v4",fecha:"2026-06-10",producto:"ipa",cantidad:36,monto:59400,pagado:false},
-    {id:"v5",fecha:"2026-06-14",producto:"ipa",cantidad:36,monto:59400,pagado:false}]},
-  {id:"c4",nombre:"Pizzería Don Carlitos",rubro:"Pizzería",zona:"CABA Norte",direccion:"Av. Cabildo 1880",telefono:"5491155550104",notas:"Combo mitad Rubia mitad IPA.",agenda:[],historial:[],ventas:[
-    {id:"v6",fecha:"2026-05-28",producto:"rubia",cantidad:12,monto:18000,pagado:true},
-    {id:"v7",fecha:"2026-06-11",producto:"ipa",cantidad:12,monto:19800,pagado:true}]},
-];
-const initProspectos=[
-  {id:"p1",nombre:"Autoservicio Rapidito",rubro:"Autoservicio",zona:"GBA Norte",direccion:"Mitre 880, San Isidro",telefono:"",notas:"Vende litro de otras marcas, buen volumen.",estado:"Por contactar"},
-  {id:"p2",nombre:"Bar Sportivo",rubro:"Bar",zona:"CABA Centro",direccion:"Av. Colón 340",telefono:"5491155550202",notas:"TV y mesas afuera. Hablar con Martín el encargado.",estado:"Contactado"},
-  {id:"p3",nombre:"Bodegón La Porteña",rubro:"Bodegón",zona:"CABA Sur",direccion:"Almafuerte 890",telefono:"",notas:"Local clásico, mucho cubierto.",estado:"Por contactar"},
-  {id:"p4",nombre:"La Mezzanotte",rubro:"Pizzería",zona:"CABA Centro",direccion:"Corrientes 2140",telefono:"",notas:"Alto tráfico nocturno, delivery fuerte.",estado:"Por contactar"},
-  {id:"p5",nombre:"Pizza & Pop",rubro:"Pizzería",zona:"CABA Norte",direccion:"Av. Santa Fe 3880",telefono:"",notas:"Local moderno, clientela joven. Ideal IPA.",estado:"Por contactar"},
-  {id:"p6",nombre:"El Cuartito Palermo",rubro:"Pizzería",zona:"CABA Norte",direccion:"Thames 1702",telefono:"",notas:"Muy concurrido los fines de semana.",estado:"Por contactar"},
-  {id:"p7",nombre:"La Guitarrita Devoto",rubro:"Pizzería",zona:"CABA Sur",direccion:"Av. Beiró 4720",telefono:"",notas:"Público familia, piden litro para la mesa.",estado:"Por contactar"},
-  {id:"p8",nombre:"Don Vittorio",rubro:"Pizzería",zona:"GBA Sur",direccion:"Rivadavia 1120, Avellaneda",telefono:"",notas:"Pizzería clásica, buena rotación, pedidos de 24u.",estado:"Por contactar"},
-  {id:"p9",nombre:"Pizzería Roma",rubro:"Pizzería",zona:"GBA Norte",direccion:"Maipú 650, San Isidro",telefono:"5491155550301",notas:"Rodrigo el dueño. Interesado en precio por volumen.",estado:"Contactado"},
-  {id:"p10",nombre:"Fugazzeta & Fernet",rubro:"Pizzería",zona:"GBA Oeste",direccion:"Rivadavia 8900, Ramos Mejía",telefono:"",notas:"Sobre avenida, mucho delivery nocturno.",estado:"Por contactar"},
-];
+const initClientes=[];
+const initProspectos=[];
 const initSpeeches=[
   {id:"s1",categoria:"Primer contacto",canal:"WhatsApp",titulo:"Presentación al comercio",texto:"¡Hola! 👋 Te escribo de *Cerveza Farol* 🍺, una cerveza artesanal porteña que está arrancando en tu zona.\n\nManejamos el litro en envase PET descartable: *no devolvés envase*, precio competitivo y el producto se vende solo.\n\nTenemos *Rubia Arrabalera* e *IPA Malandra*, ambas en 1 litro.\n\n¿Te interesaría que te pase precios y condiciones?"},
   {id:"s2",categoria:"Primer contacto",canal:"Instagram",titulo:"DM a local nuevo",texto:"Hola! 🍺 Vimos tu local y nos encantaría que sumes *Cerveza Farol* a tu oferta.\n\nSomos productores directos, litro PET descartable (sin retorno de envase) con buen margen para reventa.\n\nCraft porteña, precio popular, calidad premium. ¿Te paso info?"},
@@ -203,29 +184,45 @@ const I={
 };
  
 // ── UI base ───────────────────────────────────────────────────────
-function Lbl({t}){return<div style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>{t}</div>}
-function Pill({children,color}){return<span style={{padding:"3px 8px",borderRadius:4,fontSize:10,fontWeight:700,background:color+"22",color,letterSpacing:"0.05em"}}>{children}</span>}
+function Lbl({t}){return<div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>{t}</div>}
+function Pill({children,color}){return<span style={{padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,background:color+"18",color,letterSpacing:"0.04em",border:`1px solid ${color}33`}}>{children}</span>}
 function Btn({children,onClick,variant,disabled,small}){
-  const pad=small?"6px 12px":"10px 16px",fs=small?12:13;
-  const bg=variant==="ghost"?"transparent":variant==="green"?GR:variant==="red"?RE+"33":G;
-  const cl=variant==="ghost"?MU:variant==="green"?"#fff":variant==="red"?"#E05040":"#000";
-  const br=variant==="ghost"?`1px solid ${BO}`:"none";
-  return<button onClick={onClick} disabled={disabled} style={{display:"flex",alignItems:"center",gap:6,padding:pad,borderRadius:8,fontSize:fs,fontWeight:600,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,background:bg,color:cl,border:br}}>{children}</button>;
+  const pad=small?"8px 14px":"12px 18px",fs=small?13:14;
+  const bg=variant==="ghost"?"transparent":variant==="green"?GR:variant==="red"?RE+"22":G;
+  const cl=variant==="ghost"?MU:variant==="green"?"#fff":variant==="red"?RE:"#fff";
+  const br=variant==="ghost"?`1px solid ${BO}`:variant==="red"?`1px solid ${RE}44`:"none";
+  return<button onClick={onClick} disabled={disabled} style={{display:"flex",alignItems:"center",gap:6,padding:pad,borderRadius:10,fontSize:fs,fontWeight:600,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,background:bg,color:cl,border:br,boxShadow:variant==="ghost"||variant==="red"?"none":"0 2px 8px rgba(176,120,32,0.3)"}}>{children}</button>;
 }
 function Modal({open,onClose,title,children}){
   if(!open)return null;
   return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.88)"}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${BO}`,borderRadius:"16px 16px 0 0",width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:`1px solid ${BO}`,position:"sticky",top:0,background:SU}}>
-          <span className="bebas" style={{fontSize:20,color:CR}}>{title}</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:MU,cursor:"pointer",padding:4}}>{I.x}</button>
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.5)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${BO}`,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -8px 40px rgba(0,0,0,0.15)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 20px",borderBottom:`1px solid ${BO}`,position:"sticky",top:0,background:SU}}>
+          <span className="bebas" style={{fontSize:22,color:CR}}>{title}</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:MU,cursor:"pointer",padding:4,fontSize:20}}>✕</button>
         </div>
         <div style={{padding:20}}>{children}</div>
       </div>
     </div>
   );
 }
+function ModalConfirmar({open,onClose,onConfirmar,titulo,mensaje,labelConfirmar}){
+  if(!open)return null;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.88)",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${RE}44`,borderRadius:16,width:"100%",maxWidth:340,padding:24}}>
+        <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:8}}>{titulo||"¿Estás seguro?"}</div>
+        <div style={{fontSize:13,color:MU,marginBottom:24,lineHeight:1.5}}>{mensaje||"Esta acción no se puede deshacer."}</div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"11px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+          <button onClick={()=>{onConfirmar();onClose();}} style={{flex:1,padding:"11px 0",borderRadius:10,background:RE,border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>{labelConfirmar||"Eliminar"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
 function ScoreBar({score}){
   const{c}=scoreLabel(score);
   return(
@@ -728,6 +725,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
   const[vForm,setVForm]=useState(false);
   const[edit,setEdit]=useState(false);
   const[spOpen,setSpOpen]=useState(false);
+  const[confirmBorrar,setConfirmBorrar]=useState(false);
   const e=EST[estadoC(cliente)];
   const ls=lastSale(cliente);
   const total=cliente.ventas.reduce((s,v)=>s+v.monto,0);
@@ -739,9 +737,10 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
         <Pill color={e.c}>{e.l}{ls?` · ${daysSince(ls.fecha)}d`:""}</Pill>
         <div style={{display:"flex",gap:4}}>
           <button onClick={()=>setEdit(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
-          <button onClick={()=>onDelete(cliente.id)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
+          <button onClick={()=>setConfirmBorrar(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
         </div>
       </div>
+      <ModalConfirmar open={confirmBorrar} onClose={()=>setConfirmBorrar(false)} onConfirmar={()=>onDelete(cliente.id)} titulo="¿Eliminar cliente?" mensaje={`Vas a eliminar a ${cliente.nombre} y todo su historial de ventas. Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
       <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14,fontSize:13}}>
         <div style={{color:CR}}><span style={{color:MU}}>Rubro · </span>{cliente.rubro}</div>
         <div style={{color:CR}}><span style={{color:MU}}>Zona · </span>{cliente.zona}</div>
@@ -1075,7 +1074,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
                       <button onClick={()=>setSpTarget(p)} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,padding:"7px 12px",borderRadius:6,cursor:"pointer",background:G+"20",color:G,border:`1px solid ${G}44`}}>{I.msg}Speech → WA</button>
                     </>}
                     <button onClick={()=>onConvertir(p)} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,padding:"7px 12px",borderRadius:6,cursor:"pointer",color:GR,background:"none",border:`1px solid ${GR}44`,marginLeft:"auto"}}>{I.plus}→ Cliente</button>
-                    <button onClick={()=>{setProspectos(prev=>prev.filter(x=>x.id!==p.id));setExpandido(null);}} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"7px 10px",borderRadius:6,cursor:"pointer",color:RE,background:"none",border:`1px solid ${RE}44`}}>{I.trash}</button>
+                    <button onClick={()=>{if(window.confirm(`¿Eliminar "${p.nombre}"? Esta acción no se puede deshacer.`)){setProspectos(prev=>prev.filter(x=>x.id!==p.id));setExpandido(null);}}} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,padding:"7px 10px",borderRadius:6,cursor:"pointer",color:RE,background:"none",border:`1px solid ${RE}44`}}>{I.trash}</button>
                   </div>
                 </div>
               )}
@@ -1214,7 +1213,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                 {p.notas&&<div style={{fontSize:11,color:"#A89682",marginBottom:10}}>{p.notas}</div>}
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>marcarEntregado(p.id)} style={{flex:1,padding:"9px 0",borderRadius:8,background:GR,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.check} Marcar entregado</button>
-                  <button onClick={()=>setPedidos(prev=>prev.map(x=>x.id===p.id?{...x,estado:"cancelado"}:x))} style={{padding:"9px 12px",borderRadius:8,background:"none",color:RE,border:`1px solid ${RE}44`,fontSize:11,cursor:"pointer"}}>{I.trash}</button>
+                  <button onClick={()=>{if(window.confirm("¿Cancelar este pedido?"))setPedidos(prev=>prev.map(x=>x.id===p.id?{...x,estado:"cancelado"}:x));}} style={{padding:"9px 12px",borderRadius:8,background:"none",color:RE,border:`1px solid ${RE}44`,fontSize:11,cursor:"pointer"}}>{I.trash}</button>
                 </div>
               </div>
             );
@@ -1809,13 +1808,13 @@ function Metricas({clientes,prods}){
 }
  
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
-function Configuracion({cal}){
+function Configuracion({cal,clientes,prods}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
  
   const guardarClientId=()=>{
     const val=clientId.trim();
-    if(!val){return;}
+    if(!val)return;
     localStorage.setItem("farol_gcal_client_id",val);
     setGuardado(true);
     setTimeout(()=>setGuardado(false),2000);
@@ -1825,15 +1824,113 @@ function Configuracion({cal}){
     setClientId("");
     cal.logout&&cal.logout();
   };
- 
   const tieneClientId=!!getCalClientId();
+ 
+  // ── Exportaciones ──
+  const exportarClientes=()=>{
+    const filas=clientes.map(c=>{
+      const saldo=saldoCliente(c);
+      const totalVentas=c.ventas.reduce((s,v)=>s+v.monto,0);
+      const totalLitros=c.ventas.reduce((s,v)=>s+v.cantidad,0);
+      const ultimaVenta=lastSale(c);
+      return[
+        `"${c.nombre}"`,
+        `"${c.rubro}"`,
+        `"${c.zona}"`,
+        `"${c.direccion||""}"`,
+        `"${c.telefono||""}"`,
+        totalVentas,
+        totalLitros,
+        saldo,
+        c.ventas.length,
+        ultimaVenta?ultimaVenta.fecha:"",
+        `"${c.notas||""}"`,
+      ].join(",");
+    });
+    const header="Nombre,Rubro,Zona,Dirección,Teléfono,Total vendido (ARS),Total litros,Saldo pendiente (ARS),Cantidad pedidos,Última venta,Notas";
+    descargarCSV(`clientes_farol_${hoyISO()}.csv`,header+"\n"+filas.join("\n"));
+  };
+ 
+  const exportarVentas=()=>{
+    const filas=clientes.flatMap(c=>
+      c.ventas.map(v=>{
+        const prod=prods.find(p=>p.id===v.producto);
+        return[
+          `"${c.nombre}"`,
+          `"${c.rubro}"`,
+          `"${c.zona}"`,
+          v.fecha,
+          `"${prod?prod.nombre:v.producto}"`,
+          v.cantidad,
+          v.monto,
+          v.pagado?"Pagado":"Pendiente",
+        ].join(",");
+      })
+    ).sort();
+    const header="Cliente,Rubro,Zona,Fecha,Producto,Cantidad (L),Monto (ARS),Estado pago";
+    descargarCSV(`ventas_farol_${hoyISO()}.csv`,header+"\n"+filas.join("\n"));
+  };
+ 
+  const exportarTodo=()=>{
+    const data=JSON.stringify({clientes,exportadoEn:new Date().toISOString()},null,2);
+    const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`backup_farol_${hoyISO()}.json`;a.click();
+  };
+ 
+  function descargarCSV(nombre,contenido){
+    const blob=new Blob(["\uFEFF"+contenido],{type:"text/csv;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=nombre;a.click();
+  }
  
   return(
     <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Configuración</span>
-      <p style={{fontSize:11,color:MU,marginBottom:24}}>Integraciones y ajustes de Farol CRM</p>
+      <p style={{fontSize:11,color:MU,marginBottom:24}}>Integraciones, exportaciones y ajustes</p>
  
-      {/* Estado Google Calendar */}
+      {/* ── Exportar datos ── */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:20,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:CR,marginBottom:4}}>📦 Exportar datos</div>
+        <p style={{fontSize:11,color:MU,marginBottom:16,lineHeight:1.5}}>Descargá tus datos como backup o para abrirlos en Excel.</p>
+ 
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {/* Clientes */}
+          <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:CR}}>Clientes</div>
+              <div style={{fontSize:10,color:MU,marginTop:2}}>Nombre, zona, teléfono, saldo, total vendido · {clientes.length} clientes</div>
+            </div>
+            <button onClick={exportarClientes} style={{padding:"8px 14px",borderRadius:8,background:G,color:"#000",border:"none",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+              ↓ CSV
+            </button>
+          </div>
+ 
+          {/* Ventas */}
+          <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:CR}}>Ventas</div>
+              <div style={{fontSize:10,color:MU,marginTop:2}}>Fecha, cliente, producto, litros, monto, estado de pago · {clientes.reduce((s,c)=>s+c.ventas.length,0)} registros</div>
+            </div>
+            <button onClick={exportarVentas} style={{padding:"8px 14px",borderRadius:8,background:G,color:"#000",border:"none",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+              ↓ CSV
+            </button>
+          </div>
+ 
+          {/* Backup completo */}
+          <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:CR}}>Backup completo</div>
+              <div style={{fontSize:10,color:MU,marginTop:2}}>Todos los datos en formato JSON · para restaurar en caso de pérdida</div>
+            </div>
+            <button onClick={exportarTodo} style={{padding:"8px 14px",borderRadius:8,background:"none",color:MU,border:`1px solid ${BO}`,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+              ↓ JSON
+            </button>
+          </div>
+        </div>
+      </div>
+ 
+      {/* ── Google Calendar ── */}
       <div style={{background:CA,border:`1px solid ${cal.calToken?GR+"44":BO}`,borderRadius:12,padding:20,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
           <div style={{width:36,height:36,borderRadius:10,background:cal.calToken?GR+"22":"#4285F422",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📅</div>
@@ -1843,86 +1940,49 @@ function Configuracion({cal}){
           </div>
           {cal.calToken&&<button onClick={cal.logout} style={{marginLeft:"auto",fontSize:11,padding:"5px 10px",borderRadius:6,background:"none",border:`1px solid ${RE}44`,color:RE,cursor:"pointer"}}>Desconectar</button>}
         </div>
- 
-        {/* Input Client ID */}
         <div style={{marginBottom:12}}>
           <Lbl t="Client ID de OAuth 2.0"/>
           <div style={{display:"flex",gap:8}}>
-            <input
-              value={clientId}
-              onChange={e=>setClientId(e.target.value)}
-              placeholder="123456789-abc...apps.googleusercontent.com"
-              style={{flex:1,fontSize:12}}
-            />
+            <input value={clientId} onChange={e=>setClientId(e.target.value)} placeholder="123456789-abc...apps.googleusercontent.com" style={{flex:1,fontSize:12}}/>
             <button onClick={guardarClientId} disabled={!clientId.trim()||clientId.trim()===getCalClientId()} style={{padding:"10px 14px",borderRadius:8,background:guardado?GR:G,color:"#000",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",minWidth:80}}>
               {guardado?"✓ Guardado":"Guardar"}
             </button>
           </div>
-          {tieneClientId&&<div style={{fontSize:10,color:MU,marginTop:4}}>Client ID guardado en este dispositivo · <button onClick={limpiarClientId} style={{background:"none",border:"none",color:RE,fontSize:10,cursor:"pointer",textDecoration:"underline"}}>Borrar</button></div>}
+          {tieneClientId&&<div style={{fontSize:10,color:MU,marginTop:4}}>Client ID guardado · <button onClick={limpiarClientId} style={{background:"none",border:"none",color:RE,fontSize:10,cursor:"pointer",textDecoration:"underline"}}>Borrar</button></div>}
         </div>
- 
-        {/* Botón conectar */}
         {tieneClientId&&!cal.calToken&&(
           <button onClick={cal.login} style={{width:"100%",padding:"12px",borderRadius:10,background:G,color:"#000",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             📅 Conectar con Google Calendar
           </button>
         )}
         {cal.calError&&<div style={{background:RE+"22",border:`1px solid ${RE}44`,borderRadius:8,padding:"10px 12px",marginTop:10,fontSize:11,color:"#E08070",lineHeight:1.5}}>{cal.calError}</div>}
-        {!cal.gisReady&&<div style={{fontSize:10,color:MU,marginTop:8}}>⏳ Cargando Google Identity Services...</div>}
       </div>
  
-      {/* Guía paso a paso */}
+      {/* ── Guía Google Calendar ── */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:20,marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:CR,marginBottom:16}}>🛠 Cómo configurar Google Calendar</div>
- 
         {[
-          {n:1,t:"Crear proyecto en Google Cloud",d:"Entrá a console.cloud.google.com → Nuevo proyecto → Ponele 'Farol CRM'"},
-          {n:2,t:"Habilitar la API de Calendar",d:"En el proyecto: APIs y servicios → Biblioteca → buscá 'Google Calendar API' → Habilitar"},
-          {n:3,t:"Crear credenciales OAuth",d:"APIs y servicios → Credenciales → Crear credenciales → ID de cliente OAuth 2.0 → Tipo: Aplicación web"},
-          {n:4,t:"Agregar el origen autorizado",d:"En 'Orígenes de JavaScript autorizados' agregá la URL donde abrís la app (ej: https://tuusuario.github.io)"},
-          {n:5,t:"Copiar el Client ID",d:"Copiá el ID generado (termina en .apps.googleusercontent.com) y pegalo en el campo de arriba"},
-          {n:6,t:"Pantalla de consentimiento",d:"APIs y servicios → Pantalla de consentimiento OAuth → Externo → completá nombre de la app → Agregá tu email como usuario de prueba"},
+          {n:1,t:"Crear proyecto en Google Cloud",d:"console.cloud.google.com → Nuevo proyecto → 'Farol CRM'"},
+          {n:2,t:"Habilitar la API de Calendar",d:"APIs y servicios → Biblioteca → Google Calendar API → Habilitar"},
+          {n:3,t:"Crear credenciales OAuth",d:"Credenciales → Crear → ID de cliente OAuth 2.0 → Aplicación web"},
+          {n:4,t:"Agregar el origen autorizado",d:"Orígenes autorizados → https://elmaildenahuel-jpg.github.io"},
+          {n:5,t:"Copiar el Client ID",d:"Copiá el ID generado y pegalo en el campo de arriba"},
+          {n:6,t:"Pantalla de consentimiento",d:"APIs → Pantalla de consentimiento → Externo → agregá tu email como usuario de prueba"},
         ].map(paso=>(
           <div key={paso.n} style={{display:"flex",gap:12,marginBottom:14}}>
             <div style={{width:24,height:24,borderRadius:"50%",background:G+"33",border:`1px solid ${G}66`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <span style={{fontSize:11,fontWeight:700,color:G}}>{paso.n}</span>
             </div>
-            <div>
-              <div style={{fontSize:12,fontWeight:700,color:CR,marginBottom:2}}>{paso.t}</div>
-              <div style={{fontSize:11,color:MU,lineHeight:1.5}}>{paso.d}</div>
-            </div>
+            <div><div style={{fontSize:12,fontWeight:700,color:CR,marginBottom:2}}>{paso.t}</div><div style={{fontSize:11,color:MU,lineHeight:1.5}}>{paso.d}</div></div>
           </div>
         ))}
- 
         <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px",borderRadius:8,background:G+"22",color:G,border:`1px solid ${G}44`,fontSize:12,fontWeight:700,textDecoration:"none",marginTop:4}}>
           Ir a Google Cloud Console →
-        </a>
-      </div>
- 
-      {/* Info deploy GitHub Pages */}
-      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:20}}>
-        <div style={{fontSize:13,fontWeight:700,color:CR,marginBottom:12}}>🚀 Publicar en GitHub Pages (recomendado)</div>
-        <p style={{fontSize:11,color:MU,marginBottom:12,lineHeight:1.6}}>OAuth de Google requiere una URL HTTPS válida. GitHub Pages es gratis y lo resuelve en 5 minutos.</p>
-        {[
-          {t:"Crear repositorio",d:"github.com → New repository → nombre 'farol-crm' → Public"},
-          {t:"Subir el HTML",d:"Subí farol-crm-v3.html y renombralo a index.html"},
-          {t:"Activar Pages",d:"Settings → Pages → Source: main → /root → Save"},
-          {t:"Tu URL",d:"En ~2 minutos: https://tuusuario.github.io/farol-crm"},
-          {t:"Registrar origen",d:"Esa URL la pegás en Google Cloud Console (paso 4 de arriba)"},
-        ].map((p,i)=>(
-          <div key={i} style={{display:"flex",gap:10,marginBottom:10}}>
-            <span style={{fontSize:14,flexShrink:0}}>{"①②③④⑤"[i]}</span>
-            <div><div style={{fontSize:12,fontWeight:600,color:CR}}>{p.t}</div><div style={{fontSize:11,color:MU,marginTop:1}}>{p.d}</div></div>
-          </div>
-        ))}
-        <a href="https://github.com/new" target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px",borderRadius:8,background:"#21262d",color:"#f0f6fc",border:"1px solid #30363d",fontSize:12,fontWeight:700,textDecoration:"none",marginTop:8}}>
-          Ir a GitHub →
         </a>
       </div>
     </div>
   );
 }
- 
 // ── FIREBASE SYNC HOOK ────────────────────────────────────────────
 const SYNC_STATUS={
   connecting:{icon:"☁️",label:"Conectando…",color:MU},
@@ -1938,15 +1998,16 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
   const lastSyncRef=React.useRef(null);
   const timerRef=React.useRef(null);
   const isFirstLoad=React.useRef(true);
+  const unsubAuthRef=React.useRef(null);
+  const unsubSnapRef=React.useRef(null);
  
-  // Escuchar cambios en Firestore (carga inicial + updates en tiempo real)
-  React.useEffect(()=>{
+  const iniciarSync=React.useCallback(()=>{
     if(!window.fbAuth||!window.fbDb){setStatus("error");return;}
-    let unsubSnap=null;
+ 
     const unsubAuth=window.fbAuth.onAuthStateChanged(user=>{
       if(!user)return;
       const ref=window.fbDb.collection("farolcrm").doc("data");
-      unsubSnap=ref.onSnapshot(snap=>{
+      const unsubSnap=ref.onSnapshot(snap=>{
         if(snap.exists){
           const d=snap.data();
           const incoming=JSON.stringify({
@@ -1954,18 +2015,16 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
             speeches:d.speeches||[],pedidos:d.pedidos||[],
             prods:d.prods||[],metaSemanal:d.metaSemanal||0
           });
-          // Solo actualizar si los datos son distintos a los que acabamos de guardar
           if(incoming!==lastSyncRef.current){
             lastSyncRef.current=incoming;
             setClientes(d.clientes||[]);
             setProspectos(d.prospectos||[]);
             setSpeeches(d.speeches||[]);
             setPedidos(d.pedidos||[]);
-            if(d.prods&&d.prods.length>0) setProds(d.prods);
-            if(d.metaSemanal) setMetaSemanal(d.metaSemanal);
+            if(d.prods&&d.prods.length>0)setProds(d.prods);
+            if(d.metaSemanal)setMetaSemanal(d.metaSemanal);
           }
-        } else {
-          // Primera vez — subir datos semilla
+        }else{
           const seed={clientes,prospectos,speeches,pedidos,prods,metaSemanal,updatedAt:Date.now()};
           lastSyncRef.current=JSON.stringify({clientes,prospectos,speeches,pedidos,prods,metaSemanal});
           ref.set(seed).catch(()=>{});
@@ -1974,15 +2033,34 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
         isFirstLoad.current=false;
         setStatus("synced");
       },err=>{console.error("Firestore error:",err);setStatus("error");});
+      unsubSnapRef.current=unsubSnap;
     });
+    unsubAuthRef.current=unsubAuth;
     window.fbAuth.signInAnonymously().catch(()=>setStatus("error"));
+  },[]);
+ 
+  React.useEffect(()=>{
+    // Esperar a que Firebase esté disponible (puede tardar si carga async)
+    let intentos=0;
+    const intentarConectar=()=>{
+      if(window.fbAuth&&window.fbDb){
+        iniciarSync();
+      }else if(intentos<20){
+        intentos++;
+        setTimeout(intentarConectar,500);
+      }else{
+        setStatus("error");
+      }
+    };
+    intentarConectar();
+ 
     const goOff=()=>setStatus(s=>s==="error"?s:"offline");
     const goOn=()=>setStatus(s=>s==="error"?s:"synced");
     window.addEventListener("offline",goOff);
     window.addEventListener("online",goOn);
     return()=>{
-      unsubAuth();
-      if(unsubSnap)unsubSnap();
+      if(unsubAuthRef.current)unsubAuthRef.current();
+      if(unsubSnapRef.current)unsubSnapRef.current();
       window.removeEventListener("offline",goOff);
       window.removeEventListener("online",goOn);
     };
@@ -2056,7 +2134,7 @@ function App(){
     setTab("clientes");
   };
  
-  const TABS_MOBILE=TABS.slice(0,5);
+  const TABS_MOBILE=TABS.filter(t=>["inicio","clientes","pedidos","ventas","metricas"].includes(t.key));
  
   return(
     <div style={{minHeight:"100vh",background:BG}}>
@@ -2088,26 +2166,26 @@ function App(){
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
-          {tab==="config"&&<Configuracion cal={cal}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} prods={prods}/>}
         </main>
       </div>
  
       {/* Header mobile */}
-      <div id="tb" style={{position:"fixed",top:0,left:0,right:0,zIndex:40,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:BG+"EE",backdropFilter:"blur(10px)",borderBottom:`1px solid ${BO}`}}>
-        <span className="bebas" style={{fontSize:24,color:G}}>FAROL</span>
+      <div id="tb" style={{position:"fixed",top:0,left:0,right:0,zIndex:40,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:"#FFFFFF",backdropFilter:"blur(10px)",borderBottom:`1px solid ${BO}`,boxShadow:"0 1px 8px rgba(0,0,0,0.08)"}}>
+        <span className="bebas" style={{fontSize:26,color:G}}>FAROL</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <SyncBadge status={syncStatus}/>
-          <button onClick={()=>setTab("config")} style={{fontSize:10,padding:"4px 8px",borderRadius:6,background:tab==="config"?G:"none",border:`1px solid ${tab==="config"?G:BO}`,color:tab==="config"?"#000":cal.calToken?GR:MU,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
+          <button onClick={()=>setTab("config")} style={{fontSize:11,padding:"5px 10px",borderRadius:8,background:tab==="config"?G:"none",border:`1px solid ${tab==="config"?G:BO}`,color:tab==="config"?"#fff":cal.calToken?GR:MU,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
             {cal.calToken?"📅✓":"⚙️"}
           </button>
         </div>
       </div>
  
-      {/* Bottom nav mobile (5 tabs) */}
-      <div id="bn" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:40,background:SU,borderTop:`1px solid ${BO}`,display:"flex"}}>
+      {/* Bottom nav mobile */}
+      <div id="bn" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:40,background:"#FFFFFF",borderTop:`1px solid ${BO}`,display:"flex",boxShadow:"0 -2px 12px rgba(0,0,0,0.08)"}}>
         {TABS_MOBILE.map(({key,label,icon})=>(
-          <button key={key} onClick={()=>setTab(key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 8px",gap:3,background:"none",border:"none",cursor:"pointer",color:tab===key?G:MU}}>
-            {icon}<span style={{fontSize:9,fontWeight:700}}>{label}</span>
+          <button key={key} onClick={()=>setTab(key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 8px",gap:3,background:"none",border:"none",cursor:"pointer",color:tab===key?G:MU,borderTop:tab===key?`2px solid ${G}`:"2px solid transparent"}}>
+            {icon}<span style={{fontSize:10,fontWeight:700}}>{label}</span>
           </button>
         ))}
       </div>
