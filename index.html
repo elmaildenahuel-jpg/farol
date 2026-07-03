@@ -801,7 +801,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
   const[metaTmp,setMetaTmp]=useState(String(metaSemanal));
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
         <div style={{width:44,height:44,borderRadius:"50%",background:G+"22",border:`1px solid ${G}44`,display:"flex",alignItems:"center",justifyContent:"center",color:G}}>{I.beer}</div>
         <div>
@@ -929,7 +929,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods}){
   const filtered=useMemo(()=>clientes.filter(c=>{const t=q.toLowerCase();return!t||c.nombre.toLowerCase().includes(t)||c.zona.toLowerCase().includes(t)||c.rubro.toLowerCase().includes(t);}).filter(c=>filtro==="todos"||estadoC(c)===filtro).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}),[clientes,q,filtro]);
   const selObj=clientes.find(c=>c.id===sel);
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Clientes</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
@@ -1000,7 +1000,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches}){
   const limpiar=()=>{setQ("");setZona("");setRubro("");setEstadoF("");setTieneTel(false);};
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Comercios</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
@@ -1167,7 +1167,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const entregados=pedidos.filter(p=>p.estado==="entregado").sort((a,b)=>b.fechaEntrega.localeCompare(a.fechaEntrega)).slice(0,10);
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Pedidos</span>
         <Btn onClick={()=>{resetForm();setShowNew(true);}} small>{I.plus}Nuevo</Btn>
@@ -1334,7 +1334,7 @@ function Productos({prods,setProds}){
   const eliminarPromo=(prodId,promoId)=>setProds(prev=>prev.map(p=>p.id===prodId?{...p,promos:(p.promos||[]).filter(pr=>pr.id!==promoId)}:p));
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Productos</span>
       <p style={{fontSize:11,color:MU,marginBottom:20}}>Precios, stock y promos por volumen</p>
       {prods.map(p=>(
@@ -1484,7 +1484,7 @@ function BuscadorMaps({prospectos,setProspectos}){
   function stars(r){if(!r)return"";const full=Math.round(r);return"★".repeat(full)+"☆".repeat(5-full);}
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Buscar en Maps</span>
       <p style={{fontSize:11,color:MU,marginBottom:16}}>Encontrá comercios reales con Google Places y agregalos a tu pipeline.</p>
       <div style={{display:"flex",gap:0,marginBottom:16,background:SU,border:`1px solid ${BO}`,borderRadius:10,padding:4}}>
@@ -1556,7 +1556,7 @@ function Speeches({speeches,setSpeeches}){
   const saveEdit=()=>{setSpeeches(p=>p.map(s=>s.id===editId?{...editF}:s));setEditId(null);};
   const saveNew=()=>{if(!nF.titulo.trim()||!nF.texto.trim())return;setSpeeches(p=>[...p,{id:uid(),...nF}]);setNF({titulo:"",categoria:"Primer contacto",canal:"WhatsApp",texto:""});setShowNew(false);};
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Speeches</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
@@ -1616,7 +1616,7 @@ function Ventas({clientes,prods}){
   const litros=todas.reduce((s,v)=>s+v.cantidad,0);
   const exportCSV=()=>{const h="Cliente,Fecha,Producto,Cantidad (L),Monto ARS,Pagado\n",r=todas.map(v=>`"${v.cn}",${v.fecha},${v.producto},${v.cantidad},${v.monto},${v.pagado?"Sí":"No"}`).join("\n"),b=new Blob([h+r],{type:"text/csv;charset=utf-8;"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`ventas_farol_${hoyISO()}.csv`;a.click();};
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:28,color:CR}}>Ventas</span>
         <button onClick={exportCSV} style={{fontSize:11,padding:"6px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${BO}`,background:"none",color:MU}}>Exportar CSV</button>
@@ -1700,7 +1700,7 @@ function Metricas({clientes,prods}){
   const maxRubro=rankingRubro[0]?.litros||1;
  
   if(todas.length===0) return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Métricas</span>
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:32,textAlign:"center",marginTop:20}}>
         <div style={{fontSize:14,color:MU}}>Sin ventas registradas todavía.</div>
@@ -1710,7 +1710,7 @@ function Metricas({clientes,prods}){
   );
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Métricas</span>
       <p style={{fontSize:11,color:MU,marginBottom:20}}>Rankings de ventas · {todas.length} registros</p>
  
@@ -1886,7 +1886,7 @@ function Configuracion({cal,clientes,prods}){
   }
  
   return(
-    <div style={{padding:"24px 16px 96px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Configuración</span>
       <p style={{fontSize:11,color:MU,marginBottom:24}}>Integraciones, exportaciones y ajustes</p>
  
