@@ -11,7 +11,7 @@
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC4PuqMjPVGz4F7Z-65DE4VV_OSs3TYlfU&libraries=places&language=es&region=AR"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://apis.google.com/js/api.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -48,7 +48,7 @@ select{-webkit-appearance:none;appearance:none}
 button{font-family:'Inter',sans-serif;cursor:pointer}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-thumb{background:#D0D0D0;border-radius:2px}
-.bebas{font-family:'Bebas Neue',sans-serif;letter-spacing:0.03em}
+.bebas{font-family:'Inter',sans-serif;font-weight:800;letter-spacing:-0.02em}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 </style>
 </head>
@@ -65,6 +65,7 @@ const G="#B07820",CR="#1A1A1A",MU="#888888",GR="#2E7D32",RE="#C62828",AM="#E6510
 const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","Parrilla","Restobar","Bodegón","Otro"];
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
+const ENVASES=["PET","Barril","Lata"];
 const PEST={"Por contactar":MU,"Contactado":AM,"En negociación":GR,"Descartado":RE};
 const PEDIDO_ESTADOS={pendiente:{label:"Pendiente",color:AM},entregado:{label:"Entregado",color:GR},cancelado:{label:"Cancelado",color:RE}};
  
@@ -104,8 +105,8 @@ function scoreLabel(s){
  
 // ── Productos con promos por volumen ──────────────────────────────
 const PRODS_INIT=[
-  {id:"rubia",nombre:"Rubia Arrabalera",precio:1500,promos:[],stock:120},
-  {id:"ipa",nombre:"IPA Malandra",precio:1650,promos:[],stock:96},
+  {id:"rubia",nombre:"Rubia Arrabalera",precio:1500,promos:[],stock:120,marca:"Farol",envase:"PET"},
+  {id:"ipa",nombre:"IPA Malandra",precio:1650,promos:[],stock:96,marca:"Farol",envase:"PET"},
 ];
 function precioEfectivo(prod,cantidad){
   if(!prod)return 0;
@@ -129,6 +130,27 @@ const initSpeeches=[
 // ── Helpers ───────────────────────────────────────────────────────
 const fmtARS=n=>n.toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0});
 const fmtDate=s=>new Date(s+"T00:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"});
+const fmtDateTime=iso=>{
+  if(!iso)return"—";
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return"—";
+  return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"})+" · "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+};
+const iniciales=nombre=>{
+  if(!nombre)return"?";
+  const partes=nombre.trim().split(/\s+/).filter(Boolean);
+  if(partes.length===0)return"?";
+  return(partes[0][0]+(partes[1]?partes[1][0]:"")).toUpperCase();
+};
+const mensajePedido=(p,nombreCliente,prods)=>{
+  const lineas=p.lineas||[];
+  const detalle=lineas.map(l=>{
+    const prod=prods.find(x=>x.id===l.productoId);
+    return`• ${l.cantidad}L ${prod?prod.nombre:l.productoId} — ${fmtARS(l.monto||0)}`;
+  }).join("\n");
+  const esHoy=p.fechaEntrega===hoyISO();
+  return`¡Hola${nombreCliente?" "+nombreCliente:""}! 🍺 Te confirmo tu pedido de *Cerveza Farol*:\n\n${detalle}\n\n*Total: ${fmtARS(p.montoTotal||0)}*\n📅 Entrega: ${esHoy?"HOY":fmtDate(p.fechaEntrega)} · ${p.horaEntrega}hs\n${p.pagado?"✅ Pagado":"🧾 Cuenta corriente"}\n\n¡Gracias por la confianza!`;
+};
 const daysSince=s=>Math.floor((Date.now()-new Date(s+"T00:00:00"))/86400000);
 const lastSale=c=>c.ventas.length?[...c.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0]:null;
 const estadoC=c=>{const ls=lastSale(c);if(!ls)return"nuevo";const d=daysSince(ls.fecha);return d<=21?"activo":d<=45?"atencion":"inactivo";};
@@ -182,6 +204,7 @@ const I={
   wa:<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>,
   zap:<svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   chart:<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  clock:<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
 };
  
 // ── UI base ───────────────────────────────────────────────────────
@@ -808,6 +831,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
   const alertas=clientes.filter(c=>["inactivo","atencion"].includes(estadoC(c))).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}).slice(0,4);
   const top5=useMemo(()=>[...prospectos].filter(p=>p.estado!=="Descartado").map(p=>({...p,_score:calcScore(p)})).sort((a,b)=>b._score-a._score).slice(0,5),[prospectos]);
   const pedidosHoy=(pedidos||[]).filter(p=>p.estado==="pendiente"&&p.fechaEntrega===hoyISO());
+  const ultimosPedidos=useMemo(()=>[...(pedidos||[])].sort((a,b)=>new Date(b.creadoEn||b.fechaEntrega)-new Date(a.creadoEn||a.fechaEntrega)).slice(0,5),[pedidos]);
   const recordatoriosHoy=useMemo(()=>{const out=[];clientes.forEach(c=>(c.agenda||[]).forEach(e=>{if(e.fecha===hoyISO())out.push({...e,entidadNombre:c.nombre});}));return out.sort((a,b)=>a.hora.localeCompare(b.hora));},[clientes]);
   const litrosSemana=litrosEstaSemana(clientes);
   const pctMeta=metaSemanal>0?Math.min(100,Math.round((litrosSemana/metaSemanal)*100)):0;
@@ -827,13 +851,31 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
         </div>
       </div>
  
-      {/* Botón cargar pedido */}
-      <button onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"20px 16px",borderRadius:16,background:`linear-gradient(135deg, ${G}, #B07F22)`,border:"none",cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",gap:14,boxShadow:`0 4px 20px ${G}33`}}>
-        <div style={{width:48,height:48,borderRadius:12,background:"rgba(0,0,0,0.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#000"}}>{I.box}</div>
-        <div style={{textAlign:"left",flex:1}}>
-          <div style={{fontSize:17,fontWeight:800,color:"#000",lineHeight:1.1}}>Cargar pedido</div>
-          <div style={{fontSize:11,color:"#000",opacity:0.7,marginTop:2}}>Confirmá una entrega para un cliente</div>
+      {/* Hoy: entregas y recordatorios */}
+      {(pedidosHoy.length>0||recordatoriosHoy.length>0)&&(
+        <div style={{background:CR,borderRadius:14,overflow:"hidden",marginBottom:16}}>
+          <div style={{padding:"10px 16px",fontSize:11,fontWeight:700,color:"#fff",opacity:0.85,textTransform:"uppercase",letterSpacing:"0.08em"}}>Hoy</div>
+          {pedidosHoy.map(p=>{const cliente=clientes.find(c=>c.id===p.clienteId);const prod=prods.find(x=>x.id===p.producto);return(
+            <button key={"pe"+p.id} onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",borderTop:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
+              <span style={{color:AM,flexShrink:0}}>{I.truck}</span>
+              <span style={{flex:1,fontSize:12,color:"#fff",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente?cliente.nombre:"Cliente"} · {prod?prod.nombre:p.producto} {p.cantidad}L</span>
+              <span style={{fontSize:11,color:AM,flexShrink:0,fontWeight:700}}>{p.horaEntrega}hs</span>
+            </button>
+          );})}
+          {recordatoriosHoy.map(r=>(
+            <div key={"re"+r.id} style={{width:"100%",padding:"10px 16px",borderTop:"1px solid rgba(255,255,255,0.08)",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{color:G,flexShrink:0}}>{I.alert}</span>
+              <span style={{flex:1,fontSize:12,color:"#fff",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.titulo}</span>
+              <span style={{fontSize:11,color:G,flexShrink:0,fontWeight:700}}>{r.hora}hs</span>
+            </div>
+          ))}
         </div>
+      )}
+
+      {/* Botón cargar pedido */}
+      <button onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"14px 16px",borderRadius:12,background:G,border:"none",cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+        <span style={{color:"#000",flexShrink:0}}>{I.box}</span>
+        <span style={{flex:1,textAlign:"left",fontSize:14,fontWeight:700,color:"#000"}}>Cargar pedido</span>
         <span style={{color:"#000",opacity:0.6}}>{I.chev}</span>
       </button>
  
@@ -876,17 +918,53 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
         ))}
       </div>
  
-      {/* Cuenta corriente pendiente */}
-      {deuda>0&&<button onClick={()=>setTab("clientes")} style={{width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><span style={{fontSize:12,color:"#E08070",fontWeight:600}}>💰 Cuenta corriente pendiente de cobro</span><span className="bebas" style={{fontSize:18,color:"#E08070"}}>{fmtARS(deuda)}</span></button>}
+      {/* Alertas: deuda y stock bajo */}
+      {(deuda>0||productosStockBajo.length>0)&&(
+        <div style={{display:"grid",gridTemplateColumns:deuda>0&&productosStockBajo.length>0?"1fr 1fr":"1fr",gap:8,marginBottom:16}}>
+          {deuda>0&&(
+            <button onClick={()=>setTab("clientes")} style={{background:RE+"11",border:`1px solid ${RE}33`,borderRadius:12,padding:"10px 12px",cursor:"pointer",textAlign:"left"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#E08070",textTransform:"uppercase",letterSpacing:"0.06em"}}>Por cobrar</div>
+              <div className="bebas" style={{fontSize:16,color:"#E08070",marginTop:2}}>{fmtARS(deuda)}</div>
+            </button>
+          )}
+          {productosStockBajo.length>0&&(
+            <button onClick={()=>setTab("productos")} style={{background:AM+"11",border:`1px solid ${AM}33`,borderRadius:12,padding:"10px 12px",cursor:"pointer",textAlign:"left"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#E8B569",textTransform:"uppercase",letterSpacing:"0.06em"}}>Stock bajo</div>
+              <div style={{fontSize:11,color:MU,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{productosStockBajo.map(p=>`${p.nombre} (${p.stock||0}L)`).join(" · ")}</div>
+            </button>
+          )}
+        </div>
+      )}
  
-      {/* Stock bajo */}
-      {productosStockBajo.length>0&&<button onClick={()=>setTab("productos")} style={{width:"100%",background:AM+"11",border:`1px solid ${AM}33`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",textAlign:"left"}}><span style={{fontSize:16}}>⚠️</span><div><div style={{fontSize:12,fontWeight:700,color:"#E8B569"}}>Stock bajo</div><div style={{fontSize:11,color:MU,marginTop:1}}>{productosStockBajo.map(p=>`${p.nombre} (${p.stock||0}L)`).join(" · ")}</div></div></button>}
  
-      {/* Recordatorios hoy */}
-      {recordatoriosHoy.length>0&&<div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:12,overflow:"hidden",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${G}22`}}><span>📅</span><span style={{fontSize:13,fontWeight:700,color:G}}>Recordatorios de hoy</span></div>{recordatoriosHoy.map(r=><div key={r.id} style={{padding:"10px 16px",borderBottom:`1px solid ${G}11`,display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:CR}}>{r.titulo}</span><span style={{fontSize:11,color:MU}}>{r.hora}hs</span></div>)}</div>}
- 
-      {/* Entregas pendientes hoy */}
-      {pedidosHoy.length>0&&<div style={{background:AM+"11",border:`1px solid ${AM}33`,borderRadius:12,overflow:"hidden",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderBottom:`1px solid ${AM}22`}}>{I.truck}<span style={{fontSize:13,fontWeight:700,color:AM}}>Entregas pendientes hoy</span></div>{pedidosHoy.map(p=>{const cliente=clientes.find(c=>c.id===p.clienteId);const prod=prods.find(x=>x.id===p.producto);return<button key={p.id} onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",cursor:"pointer",display:"flex",justifyContent:"space-between",textAlign:"left"}}><span style={{fontSize:12,color:CR}}>{cliente?cliente.nombre:"Cliente"} · {prod?prod.nombre:p.producto} {p.cantidad}L</span><span style={{fontSize:11,color:AM}}>{p.horaEntrega}hs</span></button>;})}</div>}
+      {/* Últimos pedidos cargados */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${BO}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>{I.box}<span style={{fontSize:13,fontWeight:700,color:CR}}>Últimos pedidos cargados</span></div>
+          <button onClick={()=>setTab("pedidos")} style={{fontSize:11,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}>Ver todos{I.chev}</button>
+        </div>
+        {ultimosPedidos.length===0?(
+          <p style={{color:MU,fontSize:13,textAlign:"center",padding:"20px 16px"}}>Todavía no cargaste pedidos.</p>
+        ):ultimosPedidos.map(p=>{
+          const cliente=clientes.find(c=>c.id===p.clienteId);
+          const lineas=p.lineas||[];
+          const resumen=lineas.length
+            ?lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")
+            :(prods.find(x=>x.id===p.producto)?.nombre||"—");
+          return(
+            <button key={p.id} onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",borderTop:`1px solid ${BO}`,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,textAlign:"left"}}>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{fontSize:12,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente?cliente.nombre:"Cliente eliminado"}</div>
+                <div style={{fontSize:10,color:MU,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{resumen}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:12,fontWeight:600,color:CR}}>{fmtARS(p.montoTotal||0)}</div>
+                <div style={{fontSize:9,fontWeight:700,color:p.estado==="entregado"?GR:AM,marginTop:1}}>{p.estado==="entregado"?"Entregado":"Pendiente"}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
  
       {/* Top 5 prospectos */}
       <div style={{background:CA,border:`1px solid ${G}44`,borderRadius:12,overflow:"hidden",marginBottom:20}}>
@@ -930,8 +1008,8 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
  
       {/* Línea Farol */}
       <button onClick={()=>setTab("productos")} style={{width:"100%",background:CA,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",cursor:"pointer",textAlign:"left"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px 8px"}}><span style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em"}}>Línea Farol</span><span style={{fontSize:10,color:G,display:"flex",alignItems:"center",gap:4}}>{I.edit}Editar precios</span></div>
-        {prods.map(p=><div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:13,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:11,color:MU}}>1L PET descartable{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:18,color:G}}>{fmtARS(p.precio)}</div></div>)}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px 8px"}}><span style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em"}}>Catálogo de productos</span><span style={{fontSize:10,color:G,display:"flex",alignItems:"center",gap:4}}>{I.edit}Editar precios</span></div>
+        {prods.map(p=><div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:13,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:11,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"}{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:18,color:G}}>{fmtARS(p.precio)}</div></div>)}
       </button>
     </div>
   );
@@ -1210,22 +1288,28 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Pendientes de entrega ({pendientes.length})</div>
           {pendientes.map(p=>{
             const cliente=clientes.find(c=>c.id===p.clienteId);
+            const nombreCliente=cliente?cliente.nombre:"Cliente eliminado";
             const esHoy=p.fechaEntrega===hoyISO();
             const lineas=p.lineas||[];
             return(
-              <div key={p.id} style={{background:CA,border:`1px solid ${esHoy?AM+"44":BO}`,borderRadius:12,padding:16,marginBottom:8}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                  <div>
-                    <div style={{fontSize:14,fontWeight:700,color:CR}}>{cliente?cliente.nombre:"Cliente eliminado"}</div>
-                    <div style={{fontSize:11,color:esHoy?AM:MU,marginTop:2,fontWeight:esHoy?700:400}}>{esHoy?"⏰ HOY · ":"📅 "}{fmtDate(p.fechaEntrega)} · {p.horaEntrega}hs</div>
+              <div key={p.id} style={{background:CA,border:`1px solid ${esHoy?G+"55":BO}`,borderRadius:14,padding:14,marginBottom:10,boxShadow:esHoy?`0 2px 8px ${G}22`:"0 1px 3px rgba(0,0,0,0.04)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,gap:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                    <div style={{width:40,height:40,borderRadius:"50%",background:G+"1a",color:G,border:`1px solid ${G}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0}}>{iniciales(nombreCliente)}</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,color:CR,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{nombreCliente}</div>
+                      <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,padding:"2px 8px",borderRadius:20,background:esHoy?G+"1a":BG,border:`1px solid ${esHoy?G+"44":BO}`}}>
+                        <span style={{fontSize:10,fontWeight:esHoy?700:500,color:esHoy?G:MU}}>{esHoy?"⏰ HOY":fmtDate(p.fechaEntrega)}{" · "+p.horaEntrega+"hs"}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{textAlign:"right"}}>
-                    <div className="bebas" style={{fontSize:18,color:CR}}>{fmtARS(p.montoTotal||0)}</div>
-                    <div style={{fontSize:10,color:p.pagado?GR:AM,marginTop:2}}>{p.pagado?"Pagado":"Cuenta corriente"}</div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div className="bebas" style={{fontSize:19,color:CR}}>{fmtARS(p.montoTotal||0)}</div>
+                    <div style={{display:"inline-block",marginTop:3,padding:"2px 8px",borderRadius:20,fontSize:9,fontWeight:700,background:p.pagado?GR+"1a":AM+"1a",color:p.pagado?GR:AM}}>{p.pagado?"Pagado":"Cta. corriente"}</div>
                   </div>
                 </div>
                 {/* Líneas del pedido */}
-                <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
                   {lineas.map((l,idx)=>{
                     const prod=prods.find(x=>x.id===l.productoId);
                     return(
@@ -1241,8 +1325,13 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                 </div>
                 {p.notas&&<div style={{fontSize:11,color:"#A89682",marginBottom:10}}>{p.notas}</div>}
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>marcarEntregado(p.id)} style={{flex:1,padding:"9px 0",borderRadius:8,background:GR,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.check} Marcar entregado</button>
-                  <button onClick={()=>{if(window.confirm("¿Cancelar este pedido?"))setPedidos(prev=>prev.map(x=>x.id===p.id?{...x,estado:"cancelado"}:x));}} style={{padding:"9px 12px",borderRadius:8,background:"none",color:RE,border:`1px solid ${RE}44`,fontSize:11,cursor:"pointer"}}>{I.trash}</button>
+                  <button onClick={()=>marcarEntregado(p.id)} style={{flex:1,minHeight:44,padding:"9px 0",borderRadius:22,background:GR,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.check} Marcar entregado</button>
+                  {cliente&&cliente.telefono?(
+                    <a href={waLink(cliente.telefono,mensajePedido(p,nombreCliente,prods))} target="_blank" rel="noreferrer" title="Enviar pedido por WhatsApp" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"#25D36615",color:"#25D366",border:"1px solid #25D36640",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}>{I.wa}</a>
+                  ):(
+                    <span title="Cliente sin teléfono cargado" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:BG,color:MU,border:`1px solid ${BO}`,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>{I.wa}</span>
+                  )}
+                  <button onClick={()=>{if(window.confirm("¿Cancelar este pedido?"))setPedidos(prev=>prev.map(x=>x.id===p.id?{...x,estado:"cancelado"}:x));}} style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"none",color:RE,border:`1px solid ${RE}44`,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.trash}</button>
                 </div>
               </div>
             );
@@ -1255,14 +1344,18 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Últimas entregas</div>
           {entregados.map(p=>{
             const cliente=clientes.find(c=>c.id===p.clienteId);
+            const nombreCliente=cliente?cliente.nombre:"—";
             const lineas=p.lineas||[];
             return(
-              <div key={p.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginBottom:6,opacity:0.7}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <div style={{fontSize:12,fontWeight:600,color:CR}}>{cliente?cliente.nombre:"—"}</div>
-                  <div style={{textAlign:"right"}}><div style={{fontSize:12,color:CR}}>{fmtARS(p.montoTotal||0)}</div><div style={{fontSize:10,color:GR}}>Entregado · {fmtDate(p.fechaEntrega)}</div></div>
+              <div key={p.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:"10px 12px",marginBottom:6,opacity:0.75,display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:30,height:30,borderRadius:"50%",background:GR+"14",color:GR,border:`1px solid ${GR}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,flexShrink:0}}>{iniciales(nombreCliente)}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:12,fontWeight:600,color:CR,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{nombreCliente}</div>
+                    <div style={{textAlign:"right",flexShrink:0,marginLeft:8}}><div style={{fontSize:12,color:CR}}>{fmtARS(p.montoTotal||0)}</div><div style={{fontSize:9,color:GR}}>Entregado · {fmtDate(p.fechaEntrega)}</div></div>
+                  </div>
+                  <div style={{fontSize:10,color:MU,marginTop:2}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")}</div>
                 </div>
-                <div style={{fontSize:10,color:MU}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")}</div>
               </div>
             );
           })}
@@ -1354,8 +1447,45 @@ function Productos({prods,setProds}){
   const[showReposicion,setShowReposicion]=useState(null);
   const[litrosReponer,setLitrosReponer]=useState("");
  
+  const[showHist,setShowHist]=useState(null);
+  const[showNewProd,setShowNewProd]=useState(false);
+  const[np,setNp]=useState({nombre:"",precio:"",stock:"",marca:"",envase:"PET"});
+
+  const crearProducto=()=>{
+    const nombre=(np.nombre||"").trim();
+    const precio=Number(np.precio);
+    if(!nombre||!precio||precio<=0)return;
+    const nuevoId=uid();
+    setProds(prev=>[...prev,{
+      id:nuevoId,nombre,precio,stock:Number(np.stock)||0,
+      marca:(np.marca||"").trim(),envase:np.envase||"PET",
+      promos:[],historialPrecios:[],
+    }]);
+    setNp({nombre:"",precio:"",stock:"",marca:"",envase:"PET"});
+    setShowNewProd(false);
+  };
+
   const startEdit=p=>{setEditId(p.id);setEf({...p});};
-  const saveEdit=()=>{setProds(prev=>prev.map(p=>p.id===editId?{...ef,precio:Number(ef.precio),stock:Number(ef.stock||0)}:p));setEditId(null);};
+  const saveEdit=()=>{
+    setProds(prev=>prev.map(p=>{
+      if(p.id!==editId)return p;
+      const precioAnterior=Number(p.precio)||0;
+      const precioIngresado=Number(ef.precio);
+      const precioValido=!isNaN(precioIngresado)&&precioIngresado>0;
+      const precioNuevo=precioValido?precioIngresado:precioAnterior;
+      const historialPrecios=p.historialPrecios||[];
+      const huboCambio=precioValido&&precioNuevo!==precioAnterior;
+      return{
+        ...ef,
+        precio:precioNuevo,
+        stock:Number(ef.stock||0),
+        historialPrecios:huboCambio
+          ?[{id:uid(),precioAnterior,precioNuevo,fecha:new Date().toISOString()},...historialPrecios]
+          :historialPrecios,
+      };
+    }));
+    setEditId(null);
+  };
   const agregarPromo=prodId=>{
     if(!pf.minCantidad||!pf.precioUnitario)return;
     setProds(prev=>prev.map(p=>p.id===prodId?{...p,promos:[...(p.promos||[]),{id:uid(),minCantidad:Number(pf.minCantidad),precioUnitario:Number(pf.precioUnitario)}].sort((a,b)=>a.minCantidad-b.minCantidad)}:p));
@@ -1373,13 +1503,23 @@ function Productos({prods,setProds}){
  
   return(
     <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
-      <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Productos</span>
-      <p style={{fontSize:11,color:MU,marginBottom:20}}>Precios, stock y promos por volumen</p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:10}}>
+        <div>
+          <span className="bebas" style={{fontSize:28,color:CR,display:"block"}}>Productos</span>
+          <p style={{fontSize:11,color:MU}}>Precios, stock y promos por volumen</p>
+        </div>
+        <Btn onClick={()=>{setNp({nombre:"",precio:"",stock:"",marca:"",envase:"PET"});setShowNewProd(true);}} small>{I.plus}Nuevo</Btn>
+      </div>
+      <div style={{marginBottom:16}}/>
       {prods.map(p=>(
         <div key={p.id} style={{background:CA,border:`1px solid ${editId===p.id?G:BO}`,borderRadius:12,padding:16,marginBottom:12}}>
           {editId===p.id?(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
               <div><Lbl t="Nombre"/><input value={ef.nombre} onChange={e=>setEf(x=>({...x,nombre:e.target.value}))}/></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><Lbl t="Marca"/><input value={ef.marca||""} onChange={e=>setEf(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
+                <div><Lbl t="Envase"/><select value={ef.envase||"PET"} onChange={e=>setEf(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
+              </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><Lbl t="Precio base (ARS/L)"/><input type="number" value={ef.precio} onChange={e=>setEf(x=>({...x,precio:e.target.value}))}/></div>
                 <div><Lbl t="Stock actual (L)"/><input type="number" value={ef.stock||""} onChange={e=>setEf(x=>({...x,stock:e.target.value}))}/></div>
@@ -1391,13 +1531,20 @@ function Productos({prods,setProds}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div>
                   <div style={{fontSize:14,fontWeight:700,color:CR}}>{p.nombre}</div>
-                  <div style={{fontSize:11,color:MU,marginTop:2}}>1L PET descartable</div>
+                  <div style={{fontSize:11,color:MU,marginTop:2}}>{p.marca||"Farol"} · {p.envase||"PET"}</div>
                 </div>
                 <button onClick={()=>startEdit(p)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                 <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div style={{fontSize:10,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2}}>Precio base</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                    <div style={{fontSize:10,color:MU,textTransform:"uppercase",letterSpacing:"0.08em"}}>Precio base</div>
+                    {(p.historialPrecios||[]).length>0&&(
+                      <button onClick={()=>setShowHist(showHist===p.id?null:p.id)} title="Ver historial de precios" style={{background:"none",border:"none",cursor:"pointer",color:showHist===p.id?G:MU,padding:2,display:"flex",alignItems:"center"}}>
+                        {I.clock}
+                      </button>
+                    )}
+                  </div>
                   <div className="bebas" style={{fontSize:22,color:G}}>{fmtARS(p.precio)}</div>
                 </div>
                 <div style={{background:BG,border:`1px solid ${(p.stock||0)<24?RE+"44":BO}`,borderRadius:8,padding:"10px 12px"}}>
@@ -1406,6 +1553,31 @@ function Productos({prods,setProds}){
                   {(p.stock||0)<24&&<div style={{fontSize:9,color:"#E08070",marginTop:2}}>⚠ Stock bajo</div>}
                 </div>
               </div>
+              {/* Historial de precios */}
+              {showHist===p.id&&(
+                <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12,marginBottom:12}}>
+                  <div style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>{I.clock}Historial de precios</div>
+                  {(p.historialPrecios||[]).length===0?(
+                    <p style={{fontSize:11,color:MU,fontStyle:"italic"}}>Sin cambios registrados.</p>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflowY:"auto"}}>
+                      {(p.historialPrecios||[]).map(h=>{
+                        const anterior=Number(h.precioAnterior)||0,nuevo=Number(h.precioNuevo)||0;
+                        const subio=nuevo>anterior;
+                        return(
+                          <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:SU,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px"}}>
+                            <div style={{fontSize:11,color:MU}}>{fmtDateTime(h.fecha)}</div>
+                            <div style={{fontSize:12,fontWeight:600,color:CR,display:"flex",alignItems:"center",gap:5}}>
+                              <span style={{color:MU,textDecoration:"line-through"}}>{fmtARS(anterior)}</span>
+                              <span style={{color:subio?RE:GR}}>→ {fmtARS(nuevo)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               {/* Reposición de stock */}
               {showReposicion===p.id?(
                 <div style={{background:GR+"11",border:`1px solid ${GR}33`,borderRadius:10,padding:14,marginBottom:12}}>
@@ -1455,6 +1627,23 @@ function Productos({prods,setProds}){
           )}
         </div>
       ))}
+      <Modal open={showNewProd} onClose={()=>setShowNewProd(false)} title="Nuevo producto">
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div><Lbl t="Nombre"/><input value={np.nombre} onChange={e=>setNp(x=>({...x,nombre:e.target.value}))} placeholder="Ej: Stout Malandra" autoFocus/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Lbl t="Marca"/><input value={np.marca} onChange={e=>setNp(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
+            <div><Lbl t="Envase"/><select value={np.envase} onChange={e=>setNp(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Lbl t="Precio base (ARS/L)"/><input type="number" inputMode="numeric" value={np.precio} onChange={e=>setNp(x=>({...x,precio:e.target.value}))} placeholder="1500"/></div>
+            <div><Lbl t="Stock inicial (L)"/><input type="number" inputMode="numeric" value={np.stock} onChange={e=>setNp(x=>({...x,stock:e.target.value}))} placeholder="0"/></div>
+          </div>
+          <div style={{display:"flex",gap:8,paddingTop:4}}>
+            <Btn variant="ghost" onClick={()=>setShowNewProd(false)}>Cancelar</Btn>
+            <Btn onClick={crearProducto} disabled={!np.nombre.trim()||!np.precio||Number(np.precio)<=0}>{I.plus}Crear producto</Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
