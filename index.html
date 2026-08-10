@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#178D4F"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="Farol CRM"/>
-<title>Farol CRM</title>
+<meta name="apple-mobile-web-app-title" content="Grunge & Farol"/>
+<title>Grunge & Farol</title>
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC4PuqMjPVGz4F7Z-65DE4VV_OSs3TYlfU&libraries=places&language=es&region=AR"></script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://apis.google.com/js/api.js"></script>
@@ -149,8 +149,8 @@ function construirCatalogoPDF(prods){
   doc.rect(0,0,pageW,36,"F");
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold");
-  doc.setFontSize(26);
-  doc.text("FAROL",marginX,20);
+  doc.setFontSize(20);
+  doc.text("GRUNGE & FAROL",marginX,20);
   doc.setFont("helvetica","normal");
   doc.setFontSize(11);
   doc.text("Catálogo de productos",marginX,28);
@@ -217,7 +217,7 @@ function construirCatalogoPDF(prods){
     doc.setFont("helvetica","italic");
     doc.setFontSize(9);
     doc.setTextColor(150,150,150);
-    doc.text("¡Escribinos para hacer tu pedido! · Cerveza Farol",pageW/2,pageH-12,{align:"center"});
+    doc.text("¡Escribinos para hacer tu pedido! · Grunge & Farol",pageW/2,pageH-12,{align:"center"});
   }
   return doc;
 }
@@ -236,7 +236,7 @@ async function compartirCatalogoPDF(prods){
       try{
         const file=new File([blob],fileName,{type:"application/pdf"});
         if(navigator.canShare({files:[file]})){
-          await navigator.share({files:[file],title:"Catálogo Farol",text:"Catálogo de productos Cerveza Farol 🍺"});
+          await navigator.share({files:[file],title:"Catálogo Grunge & Farol",text:"Catálogo de productos Grunge & Farol 🍺"});
           compartido=true;
         }
       }catch(e){
@@ -991,7 +991,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
         <div>
           <div className="bebas" style={{fontSize:24,color:CR}}>Hola, Nahu 👋</div>
-          <div style={{fontSize:13,color:MU,marginTop:2}}>Cerveza Farol · Distribución directa</div>
+          <div style={{fontSize:13,color:MU,marginTop:2}}>Grunge & Farol · Distribución directa</div>
         </div>
         <div style={{width:44,height:44,borderRadius:18,background:GDK,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>{I.beer}</div>
       </div>
@@ -2680,7 +2680,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   };
   const resetGeneral=()=>{
     if(!confirm("¿Resetear el programa por completo? Se borran clientes, comercios, pedidos, la meta semanal y los productos vuelven a sus valores de fábrica."))return;
-    if(!confirm("Última confirmación: esto borra TODOS los datos de Farol CRM y no se puede deshacer. ¿Continuar?"))return;
+    if(!confirm("Última confirmación: esto borra TODOS los datos de Grunge & Farol y no se puede deshacer. ¿Continuar?"))return;
     setClientes([]);
     setProspectos([]);
     setPedidos([]);
@@ -3015,7 +3015,7 @@ function Login(){
       <form onSubmit={entrar} style={{width:"100%",maxWidth:360,background:CA,border:`1px solid ${BO}`,borderRadius:24,padding:32,boxShadow:"0 8px 30px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:24}}>
           <div style={{width:56,height:56,borderRadius:16,background:"#0E4A2C",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>{I.beer}</div>
-          <div className="bebas" style={{fontSize:26,color:CR}}>Farol CRM</div>
+          <div className="bebas" style={{fontSize:26,color:CR}}>Grunge & Farol</div>
           <div style={{fontSize:12,color:MU,marginTop:2}}>Iniciá sesión para continuar</div>
         </div>
         <div style={{marginBottom:14}}>
@@ -3100,8 +3100,8 @@ function App(){
         {/* Sidebar desktop */}
         <aside style={{width:200,minHeight:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none"}} id="sb">
           <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BO}`}}>
-            <div className="bebas" style={{fontSize:34,color:G}}>FAROL</div>
-            <div style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Rubia Arrabalera · IPA Malandra</div>
+            <div className="bebas" style={{fontSize:28,color:G}}>GRUNGE & FAROL</div>
+            <div style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Distribución de cerveza artesanal</div>
           </div>
           <nav style={{padding:12,display:"flex",flexDirection:"column",gap:4,flex:1,overflowY:"auto"}}>
             {TABS.map(({key,label,icon})=>(
@@ -3110,7 +3110,7 @@ function App(){
           </nav>
           <div style={{padding:"16px 20px",borderTop:`1px solid ${BO}`}}>
             <SyncBadge status={syncStatus} errorMsg={syncError}/>
-            <div style={{fontSize:10,color:BO,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginTop:8}}>Triple P · Premium · Popular · Porteña</div>
+            <div style={{fontSize:10,color:BO,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginTop:8}}>Dos marcas, un mismo reparto</div>
           </div>
         </aside>
  
@@ -3132,7 +3132,7 @@ function App(){
  
       {/* Header mobile */}
       <div id="tb" style={{position:"fixed",top:0,left:0,right:0,zIndex:40,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:"#FFFFFF",borderBottom:`1px solid ${BO}`,boxShadow:"0 1px 8px rgba(0,0,0,0.08)"}}>
-        <span className="bebas" style={{fontSize:26,color:G}}>FAROL</span>
+        <span className="bebas" style={{fontSize:19,color:G}}>GRUNGE & FAROL</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <SyncBadge status={syncStatus} errorMsg={syncError}/>
           <button onClick={()=>setTab("config")} style={{fontSize:12,padding:"5px 10px",borderRadius:8,background:tab==="config"?G:"none",border:`1px solid ${tab==="config"?G:BO}`,color:tab==="config"?"#fff":cal.calToken?GR:MU,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
