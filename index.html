@@ -286,6 +286,32 @@ const hoyISO=()=>new Date().toISOString().slice(0,10);
 // ── Cuenta corriente ──────────────────────────────────────────────
 function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
 function totalAdeudado(clientes){ return clientes.reduce((s,c)=>s+saldoCliente(c),0); }
+const MEDIOS_PAGO=[{id:"Efectivo",ic:"💵"},{id:"Transferencia",ic:"🏦"},{id:"Otro",ic:"✏️"}];
+// Aplica un cobro (total o parcial) a las ventas pendientes de un cliente, de más antigua a más nueva.
+// Registra fechaCobro y medioPago en cada venta saldada; si el monto no alcanza a cubrir una venta, la divide en dos.
+function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota=""}={}){
+  const monto=Number(montoCobro);
+  if(!monto||monto<=0)return cliente;
+  const pendientesOrdenadas=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(v=>v.id);
+  let restante=monto;
+  const fechaCobro=hoyISO();
+  const nuevasVentas=[...cliente.ventas].map(v=>{
+    if(v.pagado||!pendientesOrdenadas.includes(v.id)||restante<=0)return v;
+    if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||""};}
+    const montoPagado=restante,montoRestante=v.monto-restante;
+    const cantPagada=Math.round((v.cantidad*(montoPagado/v.monto))*10)/10;
+    restante=0;
+    return{...v,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:v.cantidad-cantPagada};
+  });
+  const ventasFinales=[];
+  nuevasVentas.forEach(v=>{
+    if(v._split){
+      ventasFinales.push({id:v.id,fecha:v.fecha,producto:v.producto,cantidad:v._cantPagada,monto:v._montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",comisionPct:v.comisionPct||0});
+      ventasFinales.push({id:uid(),fecha:v.fecha,producto:v.producto,cantidad:v._cantRestante,monto:v._montoRestante,pagado:false,comisionPct:v.comisionPct||0});
+    }else{ventasFinales.push(v);}
+  });
+  return{...cliente,ventas:ventasFinales};
+}
  
 // ── Meta semanal helpers ──────────────────────────────────────────
 function rangoSemanaActual(){
@@ -711,69 +737,32 @@ function SpeechPicker({open,onClose,speeches,telefono,nombre}){
 }
  
 // ── CuentaCorriente ───────────────────────────────────────────────
-function CuentaCorriente({cliente,onUpdate}){
+function CuentaCorriente({cliente,onUpdate,diasMora}){
   const[montoPago,setMontoPago]=useState("");
   const[showParcial,setShowParcial]=useState(false);
   const[showHistorial,setShowHistorial]=useState(false);
   const[showCobroIndep,setShowCobroIndep]=useState(false);
   const[montoCobroIndep,setMontoCobroIndep]=useState("");
   const[notaCobro,setNotaCobro]=useState("");
+  const[medioPago,setMedioPago]=useState("Efectivo");
  
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const saldo=saldoCliente(cliente);
+  const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora);
  
-  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true}:v)});
-  const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false}:v)});
-  const marcarTodo=()=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>({...v,pagado:true}))});
+  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:hoyISO(),medioPago}:v)});
+  const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false,fechaCobro:null}:v)});
+  const marcarTodo=()=>onUpdate(aplicarCobroACliente(cliente,saldo,{medioPago}));
  
-  // Cobro independiente — registra un pago en efectivo sin crear venta nueva
+  // Cobro independiente — registra un pago sin crear venta nueva
   const registrarCobroIndependiente=()=>{
-    const monto=Number(montoCobroIndep);
-    if(!monto||monto<=0)return;
-    // Aplica el cobro saldando ventas pendientes de más antigua a más nueva
-    let restante=monto;
-    const nuevasVentas=[...cliente.ventas].map(v=>{
-      if(v.pagado||restante<=0)return v;
-      if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true};}
-      // Pago parcial: divide la venta
-      const montoPagado=restante,montoRestante=v.monto-restante;
-      const cantPagada=Math.round((v.cantidad*(montoPagado/v.monto))*10)/10;
-      restante=0;
-      return{...v,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:v.cantidad-cantPagada};
-    });
-    const ventasFinales=[];
-    nuevasVentas.forEach(v=>{
-      if(v._split){
-        ventasFinales.push({id:v.id,fecha:v.fecha,producto:v.producto,cantidad:v._cantPagada,monto:v._montoPagado,pagado:true,nota:notaCobro||"Cobro en efectivo"});
-        ventasFinales.push({id:uid(),fecha:v.fecha,producto:v.producto,cantidad:v._cantRestante,monto:v._montoRestante,pagado:false});
-      }else{ventasFinales.push(v);}
-    });
-    onUpdate({...cliente,ventas:ventasFinales});
+    onUpdate(aplicarCobroACliente(cliente,montoCobroIndep,{medioPago,nota:notaCobro}));
     setMontoCobroIndep("");setNotaCobro("");setShowCobroIndep(false);
   };
  
   const aplicarPagoParcial=()=>{
-    const pago=Number(montoPago);
-    if(!pago||pago<=0)return;
-    let restante=pago;
-    const nuevasVentas=[...cliente.ventas].map(v=>{
-      if(v.pagado||restante<=0)return v;
-      if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true};}
-      const montoPagado=restante,montoRestante=v.monto-restante;
-      const cantidadPagada=Math.round((v.cantidad*(montoPagado/v.monto))*10)/10;
-      const cantidadRestante=v.cantidad-cantidadPagada;
-      restante=0;
-      return{...v,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantidadPagada,_cantRestante:cantidadRestante};
-    });
-    const ventasFinales=[];
-    nuevasVentas.forEach(v=>{
-      if(v._split){
-        ventasFinales.push({id:v.id,fecha:v.fecha,producto:v.producto,cantidad:v._cantPagada,monto:v._montoPagado,pagado:true});
-        ventasFinales.push({id:uid(),fecha:v.fecha,producto:v.producto,cantidad:v._cantRestante,monto:v._montoRestante,pagado:false});
-      }else{ventasFinales.push(v);}
-    });
-    onUpdate({...cliente,ventas:ventasFinales});
+    onUpdate(aplicarCobroACliente(cliente,montoPago,{medioPago}));
     setMontoPago("");setShowParcial(false);
   };
  
@@ -789,19 +778,28 @@ function CuentaCorriente({cliente,onUpdate}){
  
       {saldo>0&&(
         <>
+          {hayVencidas&&<div style={{fontSize:11,fontWeight:700,color:"#fff",background:"#C62828",borderRadius:8,padding:"6px 10px",marginBottom:10,display:"flex",alignItems:"center",gap:5}}>⚠ Tiene ventas vencidas (+{diasMora} días sin cobrar)</div>}
           {/* Ventas pendientes */}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
-            {pendientes.map(v=>(
-              <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
+            {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
+              <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
                 <div>
                   <div style={{fontSize:14,color:CR,fontWeight:500}}>{fmtDate(v.fecha)}</div>
                   <div style={{fontSize:12,color:MU}}>{v.cantidad}L · {v.nota||""}</div>
+                  {vencida&&<div style={{fontSize:11,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:15,fontWeight:700,color:"#C62828"}}>{fmtARS(v.monto)}</span>
                   <button onClick={()=>marcarPagada(v.id)} style={{fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
                 </div>
               </div>
+            );})}
+          </div>
+ 
+          {/* Medio de pago */}
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            {MEDIOS_PAGO.map(m=>(
+              <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
             ))}
           </div>
  
@@ -872,8 +870,8 @@ function CuentaCorriente({cliente,onUpdate}){
               {pagadas.slice(0,8).map(v=>(
                 <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
                   <div>
-                    <div style={{fontSize:13,color:CR}}>{fmtDate(v.fecha)}</div>
-                    <div style={{fontSize:11,color:GR}}>✓ Cobrado{v.nota?` · ${v.nota}`:""}</div>
+                    <div style={{fontSize:13,color:CR}}>{fmtDate(v.fechaCobro||v.fecha)}</div>
+                    <div style={{fontSize:11,color:GR}}>✓ {v.medioPago||"Cobrado"}{v.nota?` · ${v.nota}`:""}</div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:14,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
@@ -891,7 +889,7 @@ function CuentaCorriente({cliente,onUpdate}){
  
  
 // ── DetalleCliente ────────────────────────────────────────────────
-function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
+function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora}){
   const[vForm,setVForm]=useState(false);
   const[edit,setEdit]=useState(false);
   const[spOpen,setSpOpen]=useState(false);
@@ -926,7 +924,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods}){
       )}
       <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:13,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
-      <CuentaCorriente cliente={cliente} onUpdate={onUpdate}/>
+      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
       <div style={{borderTop:`1px solid ${BO}`,paddingTop:14,marginBottom:14}}>
         <HistorialAgenda entidad={cliente} agenda={cliente.agenda||[]} historial={cliente.historial||[]} cal={cal} onAgregarAgenda={ev=>onUpdate({...cliente,agenda:[...(cliente.agenda||[]),ev]})} onAgregarContacto={c=>onUpdate({...cliente,historial:[...(cliente.historial||[]),c]})}/>
       </div>
@@ -1178,7 +1176,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
-function Clientes({clientes,setClientes,speeches,cal,prods}){
+function Clientes({clientes,setClientes,speeches,cal,prods,diasMora}){
   const[q,setQ]=useState("");
   const[filtro,setFiltro]=useState("todos");
   const[orden,setOrden]=useState("reciente");
@@ -1232,7 +1230,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods}){
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} onUpdate={u=>setClientes(p=>p.map(c=>c.id===u.id?u:c))} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} onUpdate={u=>setClientes(p=>p.map(c=>c.id===u.id?u:c))} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
       </Modal>
     </div>
   );
@@ -2045,52 +2043,77 @@ function Speeches({speeches,setSpeeches}){
 }
  
 // ── VENTAS ────────────────────────────────────────────────────────
-function CuentasCorrientes({clientes,setClientes}){
+function CuentasCorrientes({clientes,setClientes,diasMora}){
   const[expandido,setExpandido]=useState(null);
-  const conDeuda=useMemo(()=>clientes
+  const[filtro,setFiltro]=useState("todos"); // todos | vencidos
+  const[medioPago,setMedioPago]=useState("Efectivo");
+  const[parcialAbierto,setParcialAbierto]=useState(null);
+  const[montoParcial,setMontoParcial]=useState("");
+
+  const todasConDeuda=useMemo(()=>clientes
     .map(c=>({cliente:c,deuda:saldoCliente(c),pendientes:(c.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))}))
     .filter(x=>x.deuda>0)
-    .sort((a,b)=>b.deuda-a.deuda),[clientes]);
-  const deudaTotal=conDeuda.reduce((s,x)=>s+x.deuda,0);
+    .map(x=>({...x,vencidas:x.pendientes.filter(v=>daysSince(v.fecha)>=diasMora)}))
+    .sort((a,b)=>b.deuda-a.deuda),[clientes,diasMora]);
+  const deudaTotal=todasConDeuda.reduce((s,x)=>s+x.deuda,0);
+  const clientesVencidos=todasConDeuda.filter(x=>x.vencidas.length>0);
+  const deudaVencida=clientesVencidos.reduce((s,x)=>s+x.vencidas.reduce((a,v)=>a+v.monto,0),0);
+  const conDeuda=filtro==="vencidos"?clientesVencidos:todasConDeuda;
 
-  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true}:v)}));
-  const marcarTodoPagado=clienteId=>{
+  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:hoyISO(),medioPago}:v)}));
+  const marcarTodoPagado=(clienteId,deuda)=>{
     if(!confirm("¿Marcar todas las ventas pendientes de este cliente como cobradas?"))return;
-    setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>({...v,pagado:true}))}));
+    setClientes(prev=>prev.map(c=>c.id!==clienteId?c:aplicarCobroACliente(c,deuda,{medioPago})));
+  };
+  const confirmarParcial=cliente=>{
+    setClientes(prev=>prev.map(c=>c.id!==cliente.id?c:aplicarCobroACliente(c,montoParcial,{medioPago})));
+    setMontoParcial("");setParcialAbierto(null);
   };
   const actualizarComision=(clienteId,ventaId,valor)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,comisionPct:valor===""?"":Number(valor)}:v)}));
 
   return(
     <div style={{padding:"24px 16px 130px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:28,color:CR,display:"block",marginBottom:4}}>Cuentas corrientes</span>
-      <p style={{fontSize:12,color:MU,marginBottom:16}}>{conDeuda.length} cliente{conDeuda.length!==1?"s":""} con saldo pendiente</p>
+      <p style={{fontSize:12,color:MU,marginBottom:16}}>{todasConDeuda.length} cliente{todasConDeuda.length!==1?"s":""} con saldo pendiente</p>
 
-      <div style={{background:CA,border:`1px solid ${RE}33`,borderRadius:18,padding:18,marginBottom:20}}>
-        <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Total pendiente de cobro</div>
-        <div className="bebas" style={{fontSize:28,color:"#C24545"}}>{fmtARS(deudaTotal)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        <div style={{background:CA,border:`1px solid ${RE}33`,borderRadius:18,padding:16}}>
+          <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Total pendiente</div>
+          <div className="bebas" style={{fontSize:22,color:"#C24545"}}>{fmtARS(deudaTotal)}</div>
+        </div>
+        <div style={{background:CA,border:`1px solid ${clientesVencidos.length>0?"#C6282866":BO}`,borderRadius:18,padding:16}}>
+          <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>⚠ Vencido (+{diasMora}d)</div>
+          <div className="bebas" style={{fontSize:22,color:clientesVencidos.length>0?"#C62828":CR}}>{fmtARS(deudaVencida)}</div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:18}}>
+        <button onClick={()=>setFiltro("todos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:12,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="todos"?G:BO}`,background:filtro==="todos"?G+"18":"none",color:filtro==="todos"?G:MU}}>Todos ({todasConDeuda.length})</button>
+        <button onClick={()=>setFiltro("vencidos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:12,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="vencidos"?"#C62828":BO}`,background:filtro==="vencidos"?"#C6282818":"none",color:filtro==="vencidos"?"#C62828":MU}}>⚠ Vencidos ({clientesVencidos.length})</button>
       </div>
 
       {conDeuda.length===0?(
-        <p style={{color:MU,textAlign:"center",padding:"40px 0",fontSize:14}}>🎉 No hay cuentas pendientes. Todo cobrado.</p>
-      ):conDeuda.map(({cliente,deuda,pendientes})=>{
+        <p style={{color:MU,textAlign:"center",padding:"40px 0",fontSize:14}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":"🎉 No hay cuentas pendientes. Todo cobrado."}</p>
+      ):conDeuda.map(({cliente,deuda,pendientes,vencidas})=>{
         const abierto=expandido===cliente.id;
+        const tieneVencidas=vencidas.length>0;
         return(
-          <div key={cliente.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:10}}>
+          <div key={cliente.id} style={{background:CA,border:`1px solid ${tieneVencidas?"#C6282866":BO}`,borderRadius:18,overflow:"hidden",marginBottom:10}}>
             <button onClick={()=>setExpandido(abierto?null:cliente.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:14,background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
               <div style={{width:36,height:36,borderRadius:"50%",background:RE+"15",color:"#C24545",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,flexShrink:0}}>{iniciales(cliente.nombre)}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente.nombre}</div>
-                <div style={{fontSize:11,color:MU,marginTop:2}}>{pendientes.length} venta{pendientes.length!==1?"s":""} pendiente{pendientes.length!==1?"s":""}</div>
+                <div style={{fontSize:11,color:tieneVencidas?"#C62828":MU,marginTop:2,fontWeight:tieneVencidas?700:400}}>{tieneVencidas?`⚠ ${vencidas.length} vencida${vencidas.length!==1?"s":""} · `:""}{pendientes.length} venta{pendientes.length!==1?"s":""} pendiente{pendientes.length!==1?"s":""}</div>
               </div>
               <div style={{fontSize:14,fontWeight:700,color:"#C24545",flexShrink:0}}>{fmtARS(deuda)}</div>
               <span style={{color:MU,display:"flex",flexShrink:0,transform:abierto?"rotate(90deg)":"none",transition:"transform 0.2s"}}>{I.chev}</span>
             </button>
             {abierto&&(
               <div style={{borderTop:`1px solid ${BO}`,padding:"8px 14px 14px"}}>
-                {pendientes.map(v=>(
+                {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
                   <div key={v.id} style={{padding:"8px 0",borderBottom:`1px solid ${BO}`}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                      <div style={{fontSize:12,color:MU}}>{fmtDate(v.fecha)} · {v.cantidad}L</div>
+                      <div style={{fontSize:12,color:vencida?"#C62828":MU,fontWeight:vencida?700:400}}>{fmtDate(v.fecha)} · {v.cantidad}L{vencida?` · vencido ${dias}d`:""}</div>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <span style={{fontSize:13,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
                         <button onClick={()=>marcarPagada(cliente.id,v.id)} style={{padding:"5px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>Cobrado</button>
@@ -2102,8 +2125,28 @@ function CuentasCorrientes({clientes,setClientes}){
                       {v.monto&&v.comisionPct?<span style={{fontSize:11,color:G}}>= {fmtARS(Math.round(v.monto*v.comisionPct/100))}</span>:null}
                     </div>
                   </div>
-                ))}
-                <button onClick={()=>marcarTodoPagado(cliente.id)} style={{width:"100%",marginTop:10,padding:"9px",borderRadius:10,background:"none",border:`1px solid ${G}`,color:G,fontSize:12,fontWeight:700,cursor:"pointer"}}>Marcar todo como cobrado</button>
+                );})}
+
+                <div style={{display:"flex",gap:6,marginTop:10,marginBottom:8}}>
+                  {MEDIOS_PAGO.map(m=>(
+                    <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"6px 0",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
+                  ))}
+                </div>
+
+                {parcialAbierto===cliente.id?(
+                  <div style={{background:BG,border:`1px solid ${AM}33`,borderRadius:10,padding:12,marginTop:4}}>
+                    <div style={{marginBottom:8}}><Lbl t="¿Cuánto pagó?"/><input type="number" inputMode="numeric" value={montoParcial} onChange={e=>setMontoParcial(e.target.value)} placeholder={`Máx: ${fmtARS(deuda)}`} autoFocus/></div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>{setParcialAbierto(null);setMontoParcial("");}} style={{flex:1,padding:"9px 0",borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+                      <button onClick={()=>confirmarParcial(cliente)} disabled={!montoParcial||Number(montoParcial)<=0} style={{flex:2,padding:"9px 0",borderRadius:8,background:AM,color:"#fff",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",opacity:!montoParcial||Number(montoParcial)<=0?0.4:1}}>✓ Confirmar pago parcial</button>
+                    </div>
+                  </div>
+                ):(
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>{setParcialAbierto(cliente.id);setMontoParcial("");}} style={{flex:1,padding:"9px",borderRadius:10,background:"none",border:`1px solid ${AM}`,color:AM,fontSize:12,fontWeight:700,cursor:"pointer"}}>🔢 Pago parcial</button>
+                    <button onClick={()=>marcarTodoPagado(cliente.id,deuda)} style={{flex:1,padding:"9px",borderRadius:10,background:"none",border:`1px solid ${G}`,color:G,fontSize:12,fontWeight:700,cursor:"pointer"}}>Marcar todo cobrado</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2300,6 +2343,26 @@ function Metricas({clientes,prods}){
     return meses.map(m=>({...m,...map[m.key]}));
   },[todas]);
   const maxMes=Math.max(1,...evolucionMensual.map(m=>m.litros));
+  const maxMesMonto=Math.max(1,...evolucionMensual.map(m=>m.monto));
+
+  // Cobros mensuales — según fecha en que se cobró cada venta (fechaCobro), no la fecha de venta
+  const cobrosMensuales=useMemo(()=>{
+    const hoy=new Date();
+    const meses=[];
+    for(let i=5;i>=0;i--){
+      const d=new Date(hoy.getFullYear(),hoy.getMonth()-i,1);
+      meses.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,lbl:d.toLocaleDateString("es-AR",{month:"short"})});
+    }
+    const map={};
+    meses.forEach(m=>map[m.key]=0);
+    todas.forEach(v=>{
+      if(!v.pagado)return;
+      const key=(v.fechaCobro||v.fecha||"").slice(0,7);
+      if(key in map)map[key]+=v.monto||0;
+    });
+    return meses.map(m=>({...m,monto:map[m.key]}));
+  },[todas]);
+  const maxCobroMes=Math.max(1,...cobrosMensuales.map(m=>m.monto));
 
   // Top clientes por facturación total
   const topClientesFacturacion=useMemo(()=>{
@@ -2442,6 +2505,32 @@ function Metricas({clientes,prods}){
             <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
               <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.litros/maxMes)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s"}}/>
               <span style={{fontSize:9,fontWeight:i===evolucionMensual.length-1?700:500,color:i===evolucionMensual.length-1?G:MU,textTransform:"capitalize"}}>{m.lbl}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Ventas mensuales $ */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Ventas mensuales · $ facturado</div>
+        <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90}}>
+          {evolucionMensual.map((m,i)=>(
+            <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
+              <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxMesMonto)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s"}}/>
+              <span style={{fontSize:9,fontWeight:i===evolucionMensual.length-1?700:500,color:i===evolucionMensual.length-1?G:MU,textTransform:"capitalize"}}>{m.lbl}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Cobros mensuales $ — según cuándo se cobró, no cuándo se vendió */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Cobros mensuales · $ efectivamente cobrado</div>
+        <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90}}>
+          {cobrosMensuales.map((m,i)=>(
+            <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
+              <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxCobroMes)*68))}px`,borderRadius:6,background:i===cobrosMensuales.length-1?GR:AM+"55",transition:"height 0.4s"}}/>
+              <span style={{fontSize:9,fontWeight:i===cobrosMensuales.length-1?700:500,color:i===cobrosMensuales.length-1?GR:MU,textTransform:"capitalize"}}>{m.lbl}</span>
             </div>
           ))}
         </div>
@@ -2592,9 +2681,11 @@ function Metricas({clientes,prods}){
 }
  
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,setMetaSemanal}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,setMetaSemanal,diasMora,setDiasMora}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
+  const[moraTmp,setMoraTmp]=useState(String(diasMora));
+  const guardarMora=()=>{const n=Number(moraTmp);if(n>0)setDiasMora(n);};
  
   const guardarClientId=()=>{
     const val=clientId.trim();
@@ -2785,6 +2876,16 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         </a>
       </div>
 
+      {/* ── Cobranzas ── */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
+        <div style={{fontSize:14,fontWeight:700,color:CR,marginBottom:4}}>💰 Cobranzas</div>
+        <p style={{fontSize:12,color:MU,marginBottom:14,lineHeight:1.5}}>Una venta pendiente se marca como "vencida" cuando pasan más de estos días sin cobrarse. Se usa para las alertas de mora en Cta.Cte y en la ficha de cada cliente.</p>
+        <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+          <div style={{flex:1}}><Lbl t="Días para considerar mora"/><input type="number" inputMode="numeric" value={moraTmp} onChange={e=>setMoraTmp(e.target.value)} placeholder="Ej: 15"/></div>
+          <button onClick={guardarMora} disabled={!moraTmp||Number(moraTmp)<=0} style={{padding:"10px 16px",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",opacity:!moraTmp||Number(moraTmp)<=0?0.4:1}}>Guardar</button>
+        </div>
+      </div>
+
       {/* ── Zona de peligro ── */}
       <div style={{background:RE+"08",border:`1px solid ${RE}33`,borderRadius:18,padding:20,marginBottom:16}}>
         <div style={{fontSize:14,fontWeight:700,color:RE,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>{I.alert}Zona de peligro</div>
@@ -2807,17 +2908,17 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,metaSemanal,setMetaSemanal){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,metaSemanal,setMetaSemanal,diasMora,setDiasMora){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
   const KEYS=["clientes","prospectos","speeches","pedidos","prods","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,config:{metaSemanal}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,config:{metaSemanal,diasMora}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);},
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);},
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
@@ -2857,7 +2958,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
             KEYS.forEach((k,i)=>{
               if(!checks[i].exists){
                 necesitaMigrar=true;
-                const val=k==="config"?{metaSemanal:d.metaSemanal||0}:(d[k]||[]);
+                const val=k==="config"?{metaSemanal:d.metaSemanal||0,diasMora:d.diasMora||15}:(d[k]||[]);
                 batch.set(col.doc(k),{value:val,updatedAt:Date.now()});
               }
             });
@@ -2928,7 +3029,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,metaSemanal]);
+  },[clientes,prospectos,speeches,pedidos,prods,metaSemanal,diasMora]);
 
   return{status,errorMsg};
 }
@@ -3074,6 +3175,7 @@ function App(){
   const[pedidos,setPedidos]=useState([]);
   const[prods,setProds]=useState(PRODS_INIT);
   const[metaSemanal,setMetaSemanal]=useState(0);
+  const[diasMora,setDiasMora]=useState(15);
   const cal=useGoogleCalendar();
  
   // Sincronización Firebase — todos los datos en la nube
@@ -3083,7 +3185,8 @@ function App(){
     speeches,setSpeeches,
     pedidos,setPedidos,
     prods,setProds,
-    metaSemanal,setMetaSemanal
+    metaSemanal,setMetaSemanal,
+    diasMora,setDiasMora
   );
  
   const convertir=p=>{
@@ -3116,17 +3219,17 @@ function App(){
  
         <main style={{flex:1,paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} prospectos={prospectos} pedidos={pedidos} prods={prods} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
-          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods}/>}
+          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds}/>}
-          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes}/>}
+          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="caja"&&<Caja clientes={clientes}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} setMetaSemanal={setMetaSemanal}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora}/>}
         </main>
       </div>
  
