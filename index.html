@@ -280,6 +280,17 @@ const lastSale=c=>c.ventas.length?[...c.ventas].sort((a,b)=>new Date(b.fecha)-ne
 const estadoC=c=>{const ls=lastSale(c);if(!ls)return"nuevo";const d=daysSince(ls.fecha);return d<=21?"activo":d<=45?"atencion":"inactivo";};
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
 const waLink=(tel,txt)=>{const n=(tel||"").replace(/\D/g,"");return n?`https://wa.me/${n}?text=${encodeURIComponent(txt)}`:null;};
+// Arma el mensaje de recordatorio de deuda para un cliente, mencionando la venta más antigua vencida si corresponde.
+function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
+  const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const masAntigua=pendientes[0];
+  const dias=masAntigua?daysSince(masAntigua.fecha):0;
+  const vencida=masAntigua&&dias>=diasMora;
+  let msg=`Hola ${cliente.nombre}! 👋 Te escribo de Grunge & Farol para recordarte que tenés un saldo pendiente de ${fmtARS(saldo)}.`;
+  if(vencida)msg+=` Corresponde a una entrega del ${fmtDate(masAntigua.fecha)} (hace ${dias} días).`;
+  msg+=` Cualquier duda me avisás. ¡Gracias! 🍺`;
+  return msg;
+}
 const uid=()=>"id"+Date.now()+Math.random().toString(36).slice(2);
 const hoyISO=()=>new Date().toISOString().slice(0,10);
  
@@ -780,7 +791,12 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
  
       {saldo>0&&(
         <>
-          {hayVencidas&&<div style={{fontSize:13,fontWeight:700,color:"#fff",background:"#C62828",borderRadius:8,padding:"6px 10px",marginBottom:10,display:"flex",alignItems:"center",gap:5}}>⚠ Tiene ventas vencidas (+{diasMora} días sin cobrar)</div>}
+          {hayVencidas&&(
+            <div style={{background:"#C62828",borderRadius:8,padding:"8px 10px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#fff",display:"flex",alignItems:"center",gap:5}}>⚠ Tiene ventas vencidas (+{diasMora} días sin cobrar)</span>
+              {cliente.telefono&&<a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,saldo,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"5px 10px",borderRadius:6,background:"#fff",color:"#C62828",textDecoration:"none",whiteSpace:"nowrap"}}>{I.wa} Recordar por WhatsApp</a>}
+            </div>
+          )}
           {/* Ventas pendientes */}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
             {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
@@ -1483,12 +1499,39 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     window.open(url,"_blank");
   };
  
+  // Resumen de producción: suma cuánto queda por entregar de cada producto entre todos los pedidos pendientes.
+  // Se recalcula solo — al marcar un pedido como entregado, ese pedido deja de estar "pendiente" y sus litros se descuentan automáticamente.
+  const resumenProductos=useMemo(()=>{
+    const map={};
+    pendientes.forEach(p=>(p.lineas||[]).forEach(l=>{
+      map[l.productoId]=(map[l.productoId]||0)+Number(l.cantidad||0);
+    }));
+    return Object.entries(map)
+      .map(([productoId,cantidad])=>({productoId,cantidad,prod:prods.find(x=>x.id===productoId)}))
+      .filter(x=>x.cantidad>0)
+      .sort((a,b)=>b.cantidad-a.cantidad);
+  },[pendientes,prods]);
+
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Pedidos</span>
         <Btn onClick={()=>{resetForm();setShowNew(true);}} small>{I.plus}Nuevo</Btn>
       </div>
+
+      {resumenProductos.length>0&&(
+        <div style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:16,marginBottom:20}}>
+          <div style={{fontSize:12,fontWeight:700,color:G,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>🍺 Para preparar · entregas pendientes</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {resumenProductos.map(({productoId,cantidad,prod})=>(
+              <div key={productoId} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:15,color:CR,fontWeight:500}}>{prod?prod.nombre:productoId}</span>
+                <span className="bebas" style={{fontSize:20,color:G}}>{cantidad}L</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
  
       {pendientes.length===0
         ?<div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:24,textAlign:"center",marginBottom:20}}>
@@ -2133,6 +2176,10 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
                   </div>
                 );})}
 
+                {vencidas.length>0&&cliente.telefono&&(
+                  <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
+                )}
+
                 <div style={{display:"flex",gap:6,marginTop:10,marginBottom:8}}>
                   {MEDIOS_PAGO.map(m=>(
                     <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"6px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
@@ -2690,7 +2737,7 @@ function Metricas({clientes,prods}){
 }
  
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,setMetaSemanal,diasMora,setDiasMora,setSpeeches}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,metaSemanal,setMetaSemanal,diasMora,setDiasMora}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -2755,11 +2802,71 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     descargarCSV(`ventas_farol_${hoyISO()}.csv`,header+"\n"+filas.join("\n"));
   };
  
-  const exportarTodo=()=>{
-    const data=JSON.stringify({clientes,exportadoEn:new Date().toISOString()},null,2);
+  const exportarTodo=async()=>{
+    const data=JSON.stringify({
+      version:1,exportadoEn:new Date().toISOString(),
+      clientes,prospectos,pedidos,prods,speeches,
+      config:{metaSemanal,diasMora}
+    },null,2);
+    const fileName=`backup_grunge_farol_${hoyISO()}.json`;
     const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-    a.download=`backup_farol_${hoyISO()}.json`;a.click();
+    let compartido=false;
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],fileName,{type:"application/json"});
+        if(navigator.canShare({files:[file]})){
+          await navigator.share({files:[file],title:"Backup Grunge & Farol",text:"Backup completo de la app"});
+          compartido=true;
+        }
+      }catch(e){if(e&&e.name==="AbortError")compartido=true;}
+    }
+    if(!compartido){
+      const url=URL.createObjectURL(blob);
+      const nuevaVentana=window.open(url,"_blank");
+      if(!nuevaVentana){
+        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+      }
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
+  };
+ 
+  const fileInputRef=React.useRef(null);
+  const[restaurando,setRestaurando]=useState(false);
+  const restaurarBackup=e=>{
+    const archivo=e.target.files&&e.target.files[0];
+    if(!archivo)return;
+    setRestaurando(true);
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        if(!data||typeof data!=="object")throw new Error("El archivo no tiene el formato esperado.");
+        const resumen=[
+          data.clientes?`${data.clientes.length} clientes`:null,
+          data.prospectos?`${data.prospectos.length} comercios`:null,
+          data.pedidos?`${data.pedidos.length} pedidos`:null,
+          data.prods?`${data.prods.length} productos`:null,
+        ].filter(Boolean).join(", ");
+        if(!confirm(`Este backup tiene: ${resumen||"(sin datos reconocibles)"}.\n\nEsto va a REEMPLAZAR todos los datos actuales de la app en este dispositivo (y se sincroniza a la nube). Esta acción no se puede deshacer.\n\n¿Continuar?`))return;
+        if(Array.isArray(data.clientes))setClientes(data.clientes);
+        if(Array.isArray(data.prospectos))setProspectos(data.prospectos);
+        if(Array.isArray(data.pedidos))setPedidos(data.pedidos);
+        if(Array.isArray(data.prods)&&data.prods.length>0)setProds(data.prods);
+        if(setSpeeches&&Array.isArray(data.speeches))setSpeeches(data.speeches);
+        if(data.config){
+          if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
+          if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
+        }
+        alert("✓ Backup restaurado correctamente.");
+      }catch(err){
+        alert("No se pudo leer el backup:\n\n"+(err&&err.message?err.message:String(err))+"\n\nVerificá que sea un archivo JSON exportado desde esta misma app.");
+      }finally{
+        setRestaurando(false);
+        if(fileInputRef.current)fileInputRef.current.value="";
+      }
+    };
+    reader.readAsText(archivo);
   };
  
   function descargarCSV(nombre,contenido){
@@ -2786,9 +2893,20 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     if(!confirm("¿Restablecer el catálogo de productos a los valores de fábrica? Se pierden los precios, promos y productos cargados manualmente."))return;
     setProds(PRODS_INIT);
   };
+  const RESET_BACKUP_KEY="farol_reset_backup";
+  const[deshacerDisponible,setDeshacerDisponible]=useState(()=>{
+    try{return!!localStorage.getItem(RESET_BACKUP_KEY);}catch(e){return false;}
+  });
+
   const resetGeneral=()=>{
-    if(!confirm("¿Resetear el programa por completo? Se borran clientes, comercios, pedidos, speeches, la meta semanal, los días de mora, y los productos vuelven a sus valores de fábrica."))return;
-    if(!confirm("Última confirmación: esto borra TODOS los datos de Grunge & Farol y no se puede deshacer. ¿Continuar?"))return;
+    if(!confirm("¿Resetear el programa por completo? Se borran clientes, comercios, pedidos, speeches, la meta semanal, los días de mora, y los productos vuelven a sus valores de fábrica.\n\n(Vas a poder deshacer esto después con el botón \"Deshacer último reseteo\", mientras no hagas otro reseteo.)"))return;
+    if(!confirm("Última confirmación: esto borra TODOS los datos de Grunge & Farol de este dispositivo (se sincroniza a la nube). ¿Continuar?"))return;
+    try{
+      localStorage.setItem(RESET_BACKUP_KEY,JSON.stringify({
+        ts:Date.now(),clientes,prospectos,pedidos,prods,speeches,metaSemanal,diasMora
+      }));
+      setDeshacerDisponible(true);
+    }catch(e){/* si falla el guardado del snapshot, igual seguimos con el reseteo */}
     setClientes([]);
     setProspectos([]);
     setPedidos([]);
@@ -2796,6 +2914,24 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     setMetaSemanal(0);
     setDiasMora(15);
     if(setSpeeches)setSpeeches(initSpeeches);
+  };
+
+  const deshacerReset=()=>{
+    let snap=null;
+    try{snap=JSON.parse(localStorage.getItem(RESET_BACKUP_KEY));}catch(e){}
+    if(!snap){alert("No se encontró una copia para deshacer.");setDeshacerDisponible(false);return;}
+    const cuando=new Date(snap.ts).toLocaleString("es-AR");
+    if(!confirm(`Vas a restaurar cómo estaba todo antes del último reseteo (${cuando}). ¿Continuar?`))return;
+    setClientes(snap.clientes||[]);
+    setProspectos(snap.prospectos||[]);
+    setPedidos(snap.pedidos||[]);
+    setProds(snap.prods&&snap.prods.length>0?snap.prods:PRODS_INIT);
+    setMetaSemanal(typeof snap.metaSemanal==="number"?snap.metaSemanal:0);
+    setDiasMora(typeof snap.diasMora==="number"?snap.diasMora:15);
+    if(setSpeeches)setSpeeches(snap.speeches||initSpeeches);
+    try{localStorage.removeItem(RESET_BACKUP_KEY);}catch(e){}
+    setDeshacerDisponible(false);
+    alert("✓ Se restauraron los datos previos al reseteo.");
   };
 
   return(
@@ -2832,14 +2968,19 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           </div>
  
           {/* Backup completo */}
-          <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={{fontSize:15,fontWeight:700,color:CR}}>Backup completo</div>
-              <div style={{fontSize:13,color:MU,marginTop:2}}>Todos los datos en formato JSON · para restaurar en caso de pérdida</div>
+          <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px"}}>
+            <div style={{fontSize:15,fontWeight:700,color:CR}}>Backup completo</div>
+            <div style={{fontSize:13,color:MU,marginTop:2,marginBottom:10}}>Clientes, comercios, pedidos, productos, speeches y configuración — todo en un solo archivo JSON.</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={exportarTodo} style={{flex:1,padding:"10px 14px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                ↓ Descargar backup
+              </button>
+              <button onClick={()=>fileInputRef.current&&fileInputRef.current.click()} disabled={restaurando} style={{flex:1,padding:"10px 14px",borderRadius:8,background:"none",color:AM,border:`1px solid ${AM}`,fontSize:14,fontWeight:700,cursor:restaurando?"not-allowed":"pointer",whiteSpace:"nowrap",opacity:restaurando?0.6:1}}>
+                {restaurando?"Restaurando...":"↑ Restaurar backup"}
+              </button>
+              <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={restaurarBackup} style={{display:"none"}}/>
             </div>
-            <button onClick={exportarTodo} style={{padding:"8px 14px",borderRadius:8,background:"none",color:MU,border:`1px solid ${BO}`,fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-              ↓ JSON
-            </button>
+            <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 Recomendación: descargá un backup una vez por semana y guardalo en Google Drive o mandátelo por WhatsApp a vos mismo — así tenés una copia fuera de la app por si hay algún problema.</div>
           </div>
         </div>
       </div>
@@ -2915,6 +3056,9 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           <button onClick={borrarPedidos} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.trash}Borrar todos los pedidos ({pedidos.length})</button>
           <button onClick={restablecerProductos} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.refresh}Restablecer productos de fábrica</button>
           <button onClick={resetGeneral} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"14px",borderRadius:14,background:RE,border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4}}>{I.refresh}Reseteo general del programa</button>
+          {deshacerDisponible&&(
+            <button onClick={deshacerReset} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:GLT,border:`1px solid ${G}55`,color:G,fontSize:15,fontWeight:700,cursor:"pointer"}}>↩ Deshacer último reseteo</button>
+          )}
         </div>
       </div>
     </div>
@@ -3226,7 +3370,7 @@ function App(){
     <div style={{minHeight:"100vh",background:BG}}>
       <div style={{display:"flex"}}>
         {/* Sidebar desktop */}
-        <aside style={{width:200,minHeight:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none"}} id="sb">
+        <aside style={{width:200,height:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none",overflow:"hidden"}} id="sb">
           <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BO}`}}>
             <div className="bebas" style={{fontSize:30,color:G}}>GRUNGE & FAROL</div>
             <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Distribución de cerveza artesanal</div>
@@ -3254,7 +3398,7 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} setSpeeches={setSpeeches}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora}/>}
         </main>
       </div>
  
