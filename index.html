@@ -300,12 +300,12 @@ function totalAdeudado(clientes){ return clientes.reduce((s,c)=>s+saldoCliente(c
 const MEDIOS_PAGO=[{id:"Efectivo",ic:"💵"},{id:"Transferencia",ic:"🏦"},{id:"Otro",ic:"✏️"}];
 // Aplica un cobro (total o parcial) a las ventas pendientes de un cliente, de más antigua a más nueva.
 // Registra fechaCobro y medioPago en cada venta saldada; si el monto no alcanza a cubrir una venta, la divide en dos.
-function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota=""}={}){
+function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",fecha=null}={}){
   const monto=Number(montoCobro);
   if(!monto||monto<=0)return cliente;
   const pendientesOrdenadas=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(v=>v.id);
   let restante=monto;
-  const fechaCobro=hoyISO();
+  const fechaCobro=fecha||hoyISO();
   const nuevasVentas=[...cliente.ventas].map(v=>{
     if(v.pagado||!pendientesOrdenadas.includes(v.id)||restante<=0)return v;
     if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||""};}
@@ -758,24 +758,25 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
   const[montoCobroIndep,setMontoCobroIndep]=useState("");
   const[notaCobro,setNotaCobro]=useState("");
   const[medioPago,setMedioPago]=useState("Efectivo");
+  const[fechaCobroSel,setFechaCobroSel]=useState(hoyISO());
  
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const saldo=saldoCliente(cliente);
   const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora);
  
-  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:hoyISO(),medioPago}:v)});
+  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:fechaCobroSel||hoyISO(),medioPago}:v)});
   const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false,fechaCobro:null}:v)});
-  const marcarTodo=()=>onUpdate(aplicarCobroACliente(cliente,saldo,{medioPago}));
+  const marcarTodo=()=>onUpdate(aplicarCobroACliente(cliente,saldo,{medioPago,fecha:fechaCobroSel}));
  
   // Cobro independiente — registra un pago sin crear venta nueva
   const registrarCobroIndependiente=()=>{
-    onUpdate(aplicarCobroACliente(cliente,montoCobroIndep,{medioPago,nota:notaCobro}));
+    onUpdate(aplicarCobroACliente(cliente,montoCobroIndep,{medioPago,nota:notaCobro,fecha:fechaCobroSel}));
     setMontoCobroIndep("");setNotaCobro("");setShowCobroIndep(false);
   };
  
   const aplicarPagoParcial=()=>{
-    onUpdate(aplicarCobroACliente(cliente,montoPago,{medioPago}));
+    onUpdate(aplicarCobroACliente(cliente,montoPago,{medioPago,fecha:fechaCobroSel}));
     setMontoPago("");setShowParcial(false);
   };
  
@@ -814,7 +815,11 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
             );})}
           </div>
  
-          {/* Medio de pago */}
+          {/* Medio de pago y fecha de cobro */}
+          <div style={{marginBottom:6}}>
+            <Lbl t="Fecha de cobro"/>
+            <input type="date" value={fechaCobroSel} max={hoyISO()} onChange={e=>setFechaCobroSel(e.target.value||hoyISO())}/>
+          </div>
           <div style={{display:"flex",gap:6,marginBottom:10}}>
             {MEDIOS_PAGO.map(m=>(
               <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
@@ -2101,6 +2106,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   const[expandido,setExpandido]=useState(null);
   const[filtro,setFiltro]=useState("todos"); // todos | vencidos
   const[medioPago,setMedioPago]=useState("Efectivo");
+  const[fechaCobroSel,setFechaCobroSel]=useState(hoyISO());
   const[parcialAbierto,setParcialAbierto]=useState(null);
   const[montoParcial,setMontoParcial]=useState("");
 
@@ -2114,13 +2120,13 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   const deudaVencida=clientesVencidos.reduce((s,x)=>s+x.vencidas.reduce((a,v)=>a+v.monto,0),0);
   const conDeuda=filtro==="vencidos"?clientesVencidos:todasConDeuda;
 
-  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:hoyISO(),medioPago}:v)}));
+  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:fechaCobroSel||hoyISO(),medioPago}:v)}));
   const marcarTodoPagado=(clienteId,deuda)=>{
     if(!confirm("¿Marcar todas las ventas pendientes de este cliente como cobradas?"))return;
-    setClientes(prev=>prev.map(c=>c.id!==clienteId?c:aplicarCobroACliente(c,deuda,{medioPago})));
+    setClientes(prev=>prev.map(c=>c.id!==clienteId?c:aplicarCobroACliente(c,deuda,{medioPago,fecha:fechaCobroSel})));
   };
   const confirmarParcial=cliente=>{
-    setClientes(prev=>prev.map(c=>c.id!==cliente.id?c:aplicarCobroACliente(c,montoParcial,{medioPago})));
+    setClientes(prev=>prev.map(c=>c.id!==cliente.id?c:aplicarCobroACliente(c,montoParcial,{medioPago,fecha:fechaCobroSel})));
     setMontoParcial("");setParcialAbierto(null);
   };
 
@@ -2180,7 +2186,11 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
                   <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
                 )}
 
-                <div style={{display:"flex",gap:6,marginTop:10,marginBottom:8}}>
+                <div style={{marginTop:10}}>
+                  <Lbl t="Fecha de cobro"/>
+                  <input type="date" value={fechaCobroSel} max={hoyISO()} onChange={e=>setFechaCobroSel(e.target.value||hoyISO())}/>
+                </div>
+                <div style={{display:"flex",gap:6,marginTop:8,marginBottom:8}}>
                   {MEDIOS_PAGO.map(m=>(
                     <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"6px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
                   ))}
@@ -2212,7 +2222,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
 }
 
 function Caja({clientes}){
-  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
+  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
   const totalFacturado=todas.reduce((s,v)=>s+(v.monto||0),0);
   const totalGanancia=todas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
@@ -2243,7 +2253,54 @@ function Caja({clientes}){
   const maxGananciaMes=Math.max(1,...evolucionGanancia.map(m=>m.ganancia));
 
   const sinComision=clientesSinComision.length;
-  const recientes=useMemo(()=>[...todas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,15),[todas]);
+
+  // ── Filtros de análisis ──
+  const[fDesde,setFDesde]=useState("");
+  const[fHasta,setFHasta]=useState("");
+  const[fTipoFecha,setFTipoFecha]=useState("venta"); // venta | cobro
+  const[fCliente,setFCliente]=useState("");
+  const[fEstado,setFEstado]=useState("todos"); // todos | pagado | pendiente
+  const[fComision,setFComision]=useState("todos"); // todos | valor exacto
+
+  const clientesConVentas=useMemo(()=>[...clientes].filter(c=>(c.ventas||[]).length>0).sort((a,b)=>a.nombre.localeCompare(b.nombre)),[clientes]);
+  const comisionesDisponibles=useMemo(()=>[...new Set(todas.map(v=>v.comisionPct||0))].sort((a,b)=>a-b),[todas]);
+  const hayFiltrosActivos=fDesde||fHasta||fCliente||fEstado!=="todos"||fComision!=="todos";
+
+  const filtradas=useMemo(()=>todas.filter(v=>{
+    const fechaComparar=fTipoFecha==="cobro"?v.fechaCobro:v.fecha;
+    if(fTipoFecha==="cobro"&&!v.pagado)return false;
+    if(fDesde&&(!fechaComparar||fechaComparar<fDesde))return false;
+    if(fHasta&&(!fechaComparar||fechaComparar>fHasta))return false;
+    if(fCliente&&v.clienteId!==fCliente)return false;
+    if(fEstado==="pagado"&&!v.pagado)return false;
+    if(fEstado==="pendiente"&&v.pagado)return false;
+    if(fComision!=="todos"&&String(v.comisionPct||0)!==fComision)return false;
+    return true;
+  }).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[todas,fDesde,fHasta,fTipoFecha,fCliente,fEstado,fComision]);
+
+  const resumenFiltrado=useMemo(()=>({
+    cantidad:filtradas.length,
+    litros:filtradas.reduce((s,v)=>s+(v.cantidad||0),0),
+    facturado:filtradas.reduce((s,v)=>s+(v.monto||0),0),
+    ganancia:filtradas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0),
+    cobrado:filtradas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0),
+    pendiente:filtradas.filter(v=>!v.pagado).reduce((s,v)=>s+(v.monto||0),0),
+  }),[filtradas]);
+
+  const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFCliente("");setFEstado("todos");setFComision("todos");};
+
+  const exportarFiltrado=()=>{
+    const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago";
+    const filas=filtradas.map(v=>[
+      `"${v.clienteNombre}"`,v.fecha,v.fechaCobro||"",`"${v.producto}"`,v.cantidad,v.monto,v.comisionPct||0,
+      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`
+    ].join(","));
+    const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`caja_filtrado_${hoyISO()}.csv`;a.click();
+  };
+
+  const mostrar=hayFiltrosActivos?filtradas:[...todas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,15);
 
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
@@ -2301,15 +2358,73 @@ function Caja({clientes}){
         </div>
       </div>
 
+      {/* ── Filtros de análisis ── */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🔍 Filtrar y analizar ventas</div>
+
+        <div style={{marginBottom:10}}>
+          <Lbl t="Filtrar por"/>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setFTipoFecha("venta")} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${fTipoFecha==="venta"?G:BO}`,background:fTipoFecha==="venta"?G+"18":"none",color:fTipoFecha==="venta"?G:MU}}>Fecha de venta</button>
+            <button onClick={()=>setFTipoFecha("cobro")} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${fTipoFecha==="cobro"?G:BO}`,background:fTipoFecha==="cobro"?G+"18":"none",color:fTipoFecha==="cobro"?G:MU}}>Fecha de cobro</button>
+          </div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
+          <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <Lbl t="Cliente"/>
+          <select value={fCliente} onChange={e=>setFCliente(e.target.value)}>
+            <option value="">Todos los clientes</option>
+            {clientesConVentas.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4}}>
+          <div><Lbl t="Estado"/>
+            <select value={fEstado} onChange={e=>setFEstado(e.target.value)}>
+              <option value="todos">Todos</option>
+              <option value="pagado">Pagado</option>
+              <option value="pendiente">Pendiente</option>
+            </select>
+          </div>
+          <div><Lbl t="% comisión"/>
+            <select value={fComision} onChange={e=>setFComision(e.target.value)}>
+              <option value="todos">Todas</option>
+              {comisionesDisponibles.map(c=><option key={c} value={c}>{c}%</option>)}
+            </select>
+          </div>
+        </div>
+
+        {hayFiltrosActivos&&<button onClick={limpiarFiltros} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar filtros</button>}
+      </div>
+
+      {hayFiltrosActivos&&(
+        <div style={{background:GDK,borderRadius:18,padding:16,marginBottom:16}}>
+          <div style={{fontSize:13,color:"#8FE3B4",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Resultado del filtro · {resumenFiltrado.cantidad} venta{resumenFiltrado.cantidad!==1?"s":""}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Facturado</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.facturado)}</div></div>
+            <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Ganancia</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.ganancia)}</div></div>
+            <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Cobrado</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.cobrado)}</div></div>
+            <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Pendiente</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.pendiente)}</div></div>
+          </div>
+          <div style={{fontSize:13,color:"#8FE3B4",marginTop:10}}>{resumenFiltrado.litros}L en total</div>
+          <button onClick={exportarFiltrado} style={{width:"100%",marginTop:12,padding:"9px 0",borderRadius:8,background:"#fff",color:GDK,border:"none",fontSize:14,fontWeight:700,cursor:"pointer"}}>↓ Exportar este filtro a CSV</button>
+        </div>
+      )}
+
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
-        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>Ventas recientes</span></div>
-        {recientes.length===0?<p style={{padding:16,fontSize:15,color:MU,textAlign:"center"}}>Sin ventas registradas.</p>:recientes.map((v,i)=>{
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>{hayFiltrosActivos?"Ventas filtradas":"Ventas recientes"}</span></div>
+        {mostrar.length===0?<p style={{padding:16,fontSize:15,color:MU,textAlign:"center"}}>{hayFiltrosActivos?"Ningún resultado con estos filtros.":"Sin ventas registradas."}</p>:mostrar.map((v,i)=>{
           const ganancia=Math.round((v.monto||0)*(v.comisionPct||0)/100);
           return(
             <div key={v.id+i} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
               <div style={{minWidth:0}}>
                 <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.clienteNombre}</div>
-                <div style={{fontSize:13,color:MU,marginTop:1}}>{fmtDate(v.fecha)} · {v.comisionPct||0}% de ganancia</div>
+                <div style={{fontSize:13,color:MU,marginTop:1}}>{fmtDate(v.fecha)}{v.pagado&&v.fechaCobro&&v.fechaCobro!==v.fecha?` · cobrado ${fmtDate(v.fechaCobro)}`:""} · {v.comisionPct||0}% de ganancia</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
                 <div style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
