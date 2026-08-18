@@ -51,6 +51,10 @@ button{font-family:'Inter',sans-serif;cursor:pointer}
 ::-webkit-scrollbar-thumb{background:#D0D0D0;border-radius:2px}
 .bebas{font-family:'Inter',sans-serif;font-weight:800;letter-spacing:-0.02em}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+/* ── Modo oscuro (inversión + rotación de tono, sin tocar cada color hardcodeado del componente) ── */
+html.tema-oscuro{background:#111}
+html.tema-oscuro #root{filter:invert(1) hue-rotate(180deg);background:#fff}
+html.tema-oscuro ::-webkit-scrollbar-thumb{background:#666}
 </style>
 </head>
 <body>
@@ -115,6 +119,8 @@ function precioEfectivo(prod,cantidad){
   return promos.length?promos[0].precioUnitario:prod.precio;
 }
 function montoTotal(prod,cantidad){ return precioEfectivo(prod,cantidad)*cantidad; }
+// Nombre + envase, para distinguir productos con el mismo nombre pero distinto envase (ej. "Rubia Arrabalera · Barril")
+function nombreProdEnvase(p){ return p?`${p.nombre} · ${p.envase||"PET"}`:""; }
  
 // ── Datos semilla ─────────────────────────────────────────────────
 const initClientes=[];
@@ -270,10 +276,21 @@ const mensajePedido=(p,nombreCliente,prods)=>{
   const lineas=p.lineas||[];
   const detalle=lineas.map(l=>{
     const prod=prods.find(x=>x.id===l.productoId);
-    return`• ${l.cantidad}L ${prod?prod.nombre:l.productoId} — ${fmtARS(l.monto||0)}`;
+    return`• ${l.cantidad}L ${prod?nombreProdEnvase(prod):l.productoId} — ${fmtARS(l.monto||0)}`;
   }).join("\n");
+  const subtotal=lineas.reduce((s,l)=>s+(l.monto||0),0);
+  const descPct=p.descuentoPct||0;
+  const montoDesc=descPct?Math.round(subtotal*descPct/100):0;
+  const montoIVA=p.incluyeIVA?Math.round((subtotal-montoDesc)*0.21):0;
+  let resumen="";
+  if(descPct>0||p.incluyeIVA){
+    resumen=`\nSubtotal: ${fmtARS(subtotal)}`;
+    if(descPct>0)resumen+=`\nDescuento (${descPct}%): -${fmtARS(montoDesc)}`;
+    if(p.incluyeIVA)resumen+=`\nIVA (21%): +${fmtARS(montoIVA)}`;
+    resumen+="\n";
+  }
   const esHoy=p.fechaEntrega===hoyISO();
-  return`¡Hola${nombreCliente?" "+nombreCliente:""}! 🍺 Te confirmo tu pedido de *Cerveza Farol*:\n\n${detalle}\n\n*Total: ${fmtARS(p.montoTotal||0)}*\n📅 Entrega: ${esHoy?"HOY":fmtDate(p.fechaEntrega)} · ${p.horaEntrega}hs\n${p.pagado?"✅ Pagado":"🧾 Cuenta corriente"}\n\n¡Gracias por la confianza!`;
+  return`¡Hola${nombreCliente?" "+nombreCliente:""}! 🍺 Te confirmo tu pedido de *Cerveza Farol*:\n\n${detalle}\n${resumen}\n*Total: ${fmtARS(p.montoTotal||0)}*\n📅 Entrega: ${esHoy?"HOY":fmtDate(p.fechaEntrega)} · ${p.horaEntrega}hs\n${p.pagado?"✅ Pagado":"🧾 Cuenta corriente"}\n\n¡Gracias por la confianza!`;
 };
 const daysSince=s=>Math.floor((Date.now()-new Date(s+"T00:00:00"))/86400000);
 const lastSale=c=>c.ventas.length?[...c.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0]:null;
@@ -331,11 +348,15 @@ function rangoSemanaActual(){
   const domingo=new Date(lunes); domingo.setDate(lunes.getDate()+6); domingo.setHours(23,59,59,999);
   return{lunes,domingo};
 }
-function litrosEstaSemana(clientes){
+function litrosEstaSemana(clientes,prods){
+  const envaseMap=envaseMapDe(prods);
   const{lunes,domingo}=rangoSemanaActual(); let total=0;
-  clientes.forEach(c=>(c.ventas||[]).forEach(v=>{const f=new Date(v.fecha+"T00:00:00");if(f>=lunes&&f<=domingo)total+=v.cantidad;}));
+  clientes.forEach(c=>(c.ventas||[]).forEach(v=>{const f=new Date(v.fecha+"T00:00:00");if(f>=lunes&&f<=domingo)total+=litrosDeItem(v.cantidad,envaseMap[v.producto]);}));
   return total;
 }
+// Las latas son de 0.50L cada una — la cantidad cargada en una venta/línea de Lata representa unidades, no litros directos.
+function envaseMapDe(prods){ const m={}; (prods||[]).forEach(p=>{m[p.id]=p.envase||"PET";}); return m; }
+function litrosDeItem(cantidad,envase){ return envase==="Lata"?(Number(cantidad)||0)*0.5:(Number(cantidad)||0); }
 function diasRestantesSemana(){
   const{domingo}=rangoSemanaActual();const hoy=new Date();hoy.setHours(0,0,0,0);
   return Math.max(0,Math.ceil((domingo-hoy)/86400000));
@@ -675,19 +696,29 @@ function FormCliente({initial,onSave,onCancel}){
 }
  
 function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
-  const[f,setF]=useState({fecha:hoyISO(),producto:"rubia",cantidad:"",monto:"",pagado:true});
+  const[f,setF]=useState({fecha:hoyISO(),producto:"rubia",cantidad:"",monto:"",descuentoPct:"",pagado:true});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const prod=prods.find(p=>p.id===f.producto);
   const sug=f.cantidad&&prod?montoTotal(prod,Number(f.cantidad)):null;
+  const descPct=Number(f.descuentoPct)||0;
+  const sugConDescuento=sug&&descPct?Math.round(sug*(1-descPct/100)):null;
   const promoAplicada=f.cantidad&&prod?(prod.promos||[]).filter(pr=>Number(f.cantidad)>=pr.minCantidad).sort((a,b)=>b.minCantidad-a.minCantidad)[0]:null;
   const gananciaEstimada=f.monto&&comisionPctDefault?Math.round(Number(f.monto)*Number(comisionPctDefault)/100):null;
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-      <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{prods.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+      <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{prods.map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <div><Lbl t="Cantidad (L)"/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder="24"/></div>
-        <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder={sug||"36000"}/>{sug&&!f.monto&&<div style={{fontSize:13,color:G,marginTop:4}}>Sug: {fmtARS(sug)}</div>}</div>
+        <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"12":"24"}/>{prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:4}}>Cada lata = 0.50L</div>}</div>
+        <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={f.descuentoPct} onChange={s("descuentoPct")} placeholder="0"/></div>
+      </div>
+      <div>
+        <Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder={sugConDescuento||sug||"36000"}/>
+        {sug&&!f.monto&&(
+          <button type="button" onClick={()=>setF(p=>({...p,monto:String(sugConDescuento||sug)}))} style={{display:"block",marginTop:4,fontSize:13,color:G,background:"none",border:"none",padding:0,cursor:"pointer",textDecoration:"underline"}}>
+            {sugConDescuento?<>Sug. con {descPct}% desc: {fmtARS(sugConDescuento)} <span style={{color:MU,textDecoration:"line-through"}}>{fmtARS(sug)}</span></>:<>Sug: {fmtARS(sug)}</>} — usar este monto
+          </button>
+        )}
       </div>
       {promoAplicada&&<div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"8px 12px",fontSize:14,color:G}}>🏷 Promo aplicada: {fmtARS(promoAplicada.precioUnitario)}/L desde {promoAplicada.minCantidad}L</div>}
       <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",fontSize:14,color:MU}}>
@@ -699,7 +730,7 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
           <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),pagado:f.pagado})} disabled={!f.cantidad||!f.monto}>Registrar</Btn></div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),descuentoPct:descPct||0,pagado:f.pagado})} disabled={!f.cantidad||!f.monto}>Registrar</Btn></div>
     </div>
   );
 }
@@ -964,7 +995,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora})
       {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin ventas aún.</p>:sorted.map(v=>{const p=prods.find(x=>x.id===v.producto);return(
         <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${v.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
           <div>
-            <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?p.nombre:v.producto}</div>
+            <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):v.producto}</div>
             <div style={{fontSize:13,color:MU}}>{fmtDate(v.fecha)}</div>
           </div>
           <div style={{textAlign:"right"}}>
@@ -980,8 +1011,9 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora})
  
 // ── INICIO ────────────────────────────────────────────────────────
 function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,setTab}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const totalARS=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+v.monto,0),0);
-  const litros=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+v.cantidad,0),0);
+  const litros=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),0);
   const activos=clientes.filter(c=>estadoC(c)==="activo").length;
   const alertas=clientes.filter(c=>["inactivo","atencion"].includes(estadoC(c))).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}).slice(0,4);
   const top5=useMemo(()=>[...prospectos].filter(p=>p.estado!=="Descartado").map(p=>({...p,_score:calcScore(p)})).sort((a,b)=>b._score-a._score).slice(0,5),[prospectos]);
@@ -991,7 +1023,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
     .filter(p=>filtroPedidos==="todos"||(filtroPedidos==="pendientes"?p.estado!=="entregado":p.estado==="entregado"))
     .sort((a,b)=>new Date(b.creadoEn||b.fechaEntrega)-new Date(a.creadoEn||a.fechaEntrega)).slice(0,5),[pedidos,filtroPedidos]);
   const recordatoriosHoy=useMemo(()=>{const out=[];clientes.forEach(c=>(c.agenda||[]).forEach(e=>{if(e.fecha===hoyISO())out.push({...e,entidadNombre:c.nombre});}));return out.sort((a,b)=>a.hora.localeCompare(b.hora));},[clientes]);
-  const litrosSemana=litrosEstaSemana(clientes);
+  const litrosSemana=litrosEstaSemana(clientes,prods);
   const pctMeta=metaSemanal>0?Math.min(100,Math.round((litrosSemana/metaSemanal)*100)):0;
   const diasRest=diasRestantesSemana();
   const deuda=totalAdeudado(clientes);
@@ -1003,10 +1035,10 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
     return[0,1,2,3,4,5,6].map(off=>{
       const d=new Date(lunes);d.setDate(lunes.getDate()+off);
       const iso=d.toISOString().slice(0,10);
-      const total=clientes.reduce((s,c)=>s+(c.ventas||[]).filter(v=>v.fecha===iso).reduce((a,v)=>a+(v.cantidad||0),0),0);
+      const total=clientes.reduce((s,c)=>s+(c.ventas||[]).filter(v=>v.fecha===iso).reduce((a,v)=>a+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),0);
       return{lbl:DIAS_LBL[off],total,esHoy:iso===hoyISO()};
     });
-  },[clientes]);
+  },[clientes,envaseMap]);
   const maxDia=Math.max(1,...litrosPorDia.map(d=>d.total));
  
   return(
@@ -1026,7 +1058,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           {pedidosHoy.map(p=>{const cliente=clientes.find(c=>c.id===p.clienteId);const prod=prods.find(x=>x.id===p.producto);return(
             <button key={"pe"+p.id} onClick={()=>setTab("pedidos")} style={{width:"100%",padding:"10px 16px",background:"none",border:"none",borderTop:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left"}}>
               <span style={{color:"#8FE3B4",flexShrink:0}}>{I.truck}</span>
-              <span style={{flex:1,fontSize:15,color:"#fff",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente?cliente.nombre:"Cliente"} · {prod?prod.nombre:p.producto} {p.cantidad}L</span>
+              <span style={{flex:1,fontSize:15,color:"#fff",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente?cliente.nombre:"Cliente"} · {prod?nombreProdEnvase(prod):p.producto} {p.cantidad}L</span>
               <span style={{fontSize:14,color:"#8FE3B4",flexShrink:0,fontWeight:700}}>{p.horaEntrega}hs</span>
             </button>
           );})}
@@ -1065,7 +1097,7 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
           const nombreCliente=cliente?cliente.nombre:"Cliente eliminado";
           const lineas=p.lineas||[];
           const resumen=lineas.length
-            ?lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")
+            ?lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?nombreProdEnvase(prod):l.productoId}`;}).join(" + ")
             :(prods.find(x=>x.id===p.producto)?.nombre||"—");
           const entregado=p.estado==="entregado";
           return(
@@ -1411,6 +1443,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
  
 // ── PEDIDOS ───────────────────────────────────────────────────────
 function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const[showNew,setShowNew]=useState(false);
   // Cabecera del pedido
   const[clienteId,setClienteId]=useState("");
@@ -1420,10 +1453,13 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const[notas,setNotas]=useState("");
   // Líneas del pedido (multi-producto)
   const[lineas,setLineas]=useState([{id:uid(),productoId:"rubia",cantidad:"",monto:""}]);
+  const[descuentoPct,setDescuentoPct]=useState("");
+  const[incluyeIVA,setIncluyeIVA]=useState(false);
  
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
     setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:""}]);
+    setDescuentoPct("");setIncluyeIVA(false);
   };
  
   const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:""}]);
@@ -1441,18 +1477,26 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   }));
  
   const totalPedido=lineas.reduce((s,l)=>s+Number(l.monto||0),0);
-  const totalLitros=lineas.reduce((s,l)=>s+Number(l.cantidad||0),0);
+  const totalLitros=lineas.reduce((s,l)=>s+litrosDeItem(l.cantidad,envaseMap[l.productoId]),0);
   const lineasValidas=lineas.filter(l=>l.cantidad&&Number(l.cantidad)>0);
   const clienteSel=clientes.find(c=>c.id===clienteId);
   const comisionPctSel=clienteSel&&clienteSel.comisionPctDefault?Number(clienteSel.comisionPctDefault):0;
-  const gananciaEstimadaPedido=comisionPctSel?Math.round(totalPedido*comisionPctSel/100):0;
+  const descPctNum=Number(descuentoPct)||0;
+  const montoDescuento=Math.round(totalPedido*descPctNum/100);
+  const subtotalConDescuento=totalPedido-montoDescuento;
+  const montoIVA=incluyeIVA?Math.round(subtotalConDescuento*0.21):0;
+  const totalFinal=subtotalConDescuento+montoIVA;
+  const gananciaEstimadaPedido=comisionPctSel?Math.round(totalFinal*comisionPctSel/100):0;
  
   const confirmarPedido=()=>{
     if(!clienteId||lineasValidas.length===0)return;
+    // Factor de ajuste (descuento + IVA) que se reparte proporcionalmente entre las líneas al confirmar la entrega
+    const factor=totalPedido>0?totalFinal/totalPedido:1;
     const nuevoPedido={
       id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
       lineas:lineasValidas.map(l=>({...l,cantidad:Number(l.cantidad),monto:Number(l.monto||0)})),
-      montoTotal:totalPedido,
+      descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
+      montoTotal:totalFinal,
       estado:"pendiente",creadoEn:new Date().toISOString()
     };
     setPedidos(p=>[nuevoPedido,...p]);
@@ -1463,12 +1507,13 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const marcarEntregado=(pedidoId)=>{
     const ped=pedidos.find(p=>p.id===pedidoId);
     if(!ped)return;
-    // Registrar una venta por cada línea del pedido
+    const factor=ped.factorAjuste||1;
+    // Registrar una venta por cada línea del pedido, aplicando proporcionalmente el descuento/IVA del pedido
     setClientes(prev=>prev.map(c=>{
       if(c.id!==ped.clienteId)return c;
       const nuevasVentas=(ped.lineas||[]).map(l=>({
         id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
-        cantidad:l.cantidad,monto:l.monto,pagado:ped.pagado
+        cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado
       }));
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
@@ -1530,8 +1575,8 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {resumenProductos.map(({productoId,cantidad,prod})=>(
               <div key={productoId} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:15,color:CR,fontWeight:500}}>{prod?prod.nombre:productoId}</span>
-                <span className="bebas" style={{fontSize:20,color:G}}>{cantidad}L</span>
+                <span style={{fontSize:15,color:CR,fontWeight:500}}>{prod?nombreProdEnvase(prod):productoId}</span>
+                <span className="bebas" style={{fontSize:20,color:G}}>{cantidad}{prod&&prod.envase==="Lata"?" u.":"L"}</span>
               </div>
             ))}
           </div>
@@ -1573,6 +1618,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
                     <div className="bebas" style={{fontSize:21,color:CR}}>{fmtARS(p.montoTotal||0)}</div>
+                    {(p.descuentoPct>0||p.incluyeIVA)&&<div style={{fontSize:11,color:MU,marginTop:1}}>{p.descuentoPct>0?`-${p.descuentoPct}% desc.`:""}{p.descuentoPct>0&&p.incluyeIVA?" · ":""}{p.incluyeIVA?"+21% IVA":""}</div>}
                     <div style={{display:"inline-block",marginTop:3,padding:"2px 8px",borderRadius:20,fontSize:12,fontWeight:700,background:p.pagado?GR+"1a":AM+"1a",color:p.pagado?GR:AM}}>{p.pagado?"Pagado":"Cta. corriente"}</div>
                   </div>
                 </div>
@@ -1582,7 +1628,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                     const prod=prods.find(x=>x.id===l.productoId);
                     return(
                       <div key={l.id||idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:idx<lineas.length-1?6:0,marginBottom:idx<lineas.length-1?6:0,borderBottom:idx<lineas.length-1?`1px solid ${BO}`:"none"}}>
-                        <span style={{fontSize:15,color:CR}}>{prod?prod.nombre:l.productoId}</span>
+                        <span style={{fontSize:15,color:CR}}>{prod?nombreProdEnvase(prod):l.productoId}</span>
                         <div style={{display:"flex",gap:12,alignItems:"center"}}>
                           <span style={{fontSize:14,color:MU}}>{l.cantidad}L</span>
                           <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(l.monto||0)}</span>
@@ -1622,7 +1668,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                     <div style={{fontSize:15,fontWeight:600,color:CR,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{nombreCliente}</div>
                     <div style={{textAlign:"right",flexShrink:0,marginLeft:8}}><div style={{fontSize:15,color:CR}}>{fmtARS(p.montoTotal||0)}</div><div style={{fontSize:12,color:GR}}>Entregado · {fmtDate(p.fechaEntrega)}</div></div>
                   </div>
-                  <div style={{fontSize:13,color:MU,marginTop:2}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?prod.nombre:l.productoId}`;}).join(" + ")}</div>
+                  <div style={{fontSize:13,color:MU,marginTop:2}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?nombreProdEnvase(prod):l.productoId}`;}).join(" + ")}</div>
                 </div>
                 <button onClick={()=>{if(window.confirm("¿Eliminar este registro de pedido entregado? No afecta la venta ya registrada en el cliente."))setPedidos(prev=>prev.filter(x=>x.id!==p.id));}} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
               </div>
@@ -1651,13 +1697,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                     </div>
                     <div style={{marginBottom:8}}>
                       <select value={l.productoId} onChange={e=>updateLinea(l.id,"productoId",e.target.value)}>
-                        {prods.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        {prods.map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
                       </select>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                       <div>
-                        <Lbl t="Cantidad (L)"/>
-                        <input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder="12"/>
+                        <Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/>
+                        <input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder={prod&&prod.envase==="Lata"?"12":"12"}/>
+                        {prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:2}}>Cada lata = 0.50L</div>}
                       </div>
                       <div>
                         <Lbl t="Monto ARS"/>
@@ -1672,11 +1719,33 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
             <button onClick={agregarLinea} style={{width:"100%",marginTop:8,padding:"9px 0",borderRadius:8,background:"none",border:`1px dashed ${G}44`,color:G,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.plus}Agregar otro producto</button>
           </div>
  
-          {/* Total */}
+          {/* Total, descuento e IVA */}
           {totalPedido>0&&(
-            <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontSize:15,color:MU}}>Total del pedido · {totalLitros}L</span>
-              <span className="bebas" style={{fontSize:22,color:G}}>{fmtARS(totalPedido)}</span>
+            <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"12px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <span style={{fontSize:15,color:MU}}>Subtotal · {totalLitros}L</span>
+                <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(totalPedido)}</span>
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={descuentoPct} onChange={e=>setDescuentoPct(e.target.value)} placeholder="0"/></div>
+                <label style={{display:"flex",alignItems:"center",gap:8,marginTop:20,cursor:"pointer"}}>
+                  <input type="checkbox" checked={incluyeIVA} onChange={e=>setIncluyeIVA(e.target.checked)} style={{width:18,height:18}}/>
+                  <span style={{fontSize:14,color:CR,fontWeight:600}}>Agregar IVA (21%)</span>
+                </label>
+              </div>
+
+              {(descPctNum>0||incluyeIVA)&&(
+                <div style={{fontSize:14,color:MU,marginBottom:8}}>
+                  {descPctNum>0&&<div>Descuento ({descPctNum}%): <span style={{color:RE,fontWeight:600}}>-{fmtARS(montoDescuento)}</span></div>}
+                  {incluyeIVA&&<div>IVA (21%): <span style={{color:G,fontWeight:600}}>+{fmtARS(montoIVA)}</span></div>}
+                </div>
+              )}
+
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${G}33`}}>
+                <span style={{fontSize:15,fontWeight:700,color:CR}}>Total final</span>
+                <span className="bebas" style={{fontSize:24,color:G}}>{fmtARS(totalFinal)}</span>
+              </div>
             </div>
           )}
  
@@ -2298,7 +2367,8 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   );
 }
 
-function Caja({clientes}){
+function Caja({clientes,prods}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
   const totalFacturado=todas.reduce((s,v)=>s+(v.monto||0),0);
@@ -2357,7 +2427,7 @@ function Caja({clientes}){
 
   const resumenFiltrado=useMemo(()=>({
     cantidad:filtradas.length,
-    litros:filtradas.reduce((s,v)=>s+(v.cantidad||0),0),
+    litros:filtradas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),
     facturado:filtradas.reduce((s,v)=>s+(v.monto||0),0),
     ganancia:filtradas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0),
     cobrado:filtradas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0),
@@ -2516,6 +2586,7 @@ function Caja({clientes}){
 }
 
 function Ventas({clientes,prods}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,cn:c.nombre,clienteId:c.id}))).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[clientes]);
 
   // ── Filtros ──
@@ -2554,7 +2625,7 @@ function Ventas({clientes,prods}){
   const limpiarFiltrosVenta=()=>{setFDesde("");setFHasta("");setFCliente("");setFProducto("");setFEstado("todos");setFOrden("fecha-desc");};
 
   const totalARS=filtradas.reduce((s,v)=>s+v.monto,0);
-  const litros=filtradas.reduce((s,v)=>s+v.cantidad,0);
+  const litros=filtradas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0);
   const exportCSV=()=>{const h="Cliente,Fecha,Producto,Cantidad (L),Monto ARS,Pagado\n",r=filtradas.map(v=>`"${v.cn}",${v.fecha},${v.producto},${v.cantidad},${v.monto},${v.pagado?"Sí":"No"}`).join("\n"),b=new Blob([h+r],{type:"text/csv;charset=utf-8;"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`ventas_farol_${hoyISO()}.csv`;a.click();};
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
@@ -2581,7 +2652,7 @@ function Ventas({clientes,prods}){
           <div><Lbl t="Producto"/>
             <select value={fProducto} onChange={e=>setFProducto(e.target.value)}>
               <option value="">Todos</option>
-              {prods.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+              {prods.map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
             </select>
           </div>
           <div><Lbl t="Estado"/>
@@ -2622,7 +2693,7 @@ function Ventas({clientes,prods}){
       {filtradas.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{hayFiltrosVenta?"Ningún resultado con estos filtros.":"Sin ventas registradas."}</p>:filtradas.map((v,i)=>{const p=prods.find(x=>x.id===v.producto);return(
         <div key={v.id+i} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${v.pagado?BO:RE+"33"}`,borderRadius:18,padding:"12px 16px",marginBottom:8}}>
           <div style={{width:36,height:36,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>{iniciales(v.cn)}</div>
-          <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.cn}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{p?p.nombre:v.producto} · {fmtDate(v.fecha)}</div></div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.cn}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{p?nombreProdEnvase(p):v.producto} · {fmtDate(v.fecha)}</div></div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
             <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:3,padding:"2px 8px",borderRadius:20,background:v.pagado?GLT:RE+"15"}}>
@@ -2638,6 +2709,7 @@ function Ventas({clientes,prods}){
  
 // ── MÉTRICAS ──────────────────────────────────────────────────────
 function Metricas({clientes,prods}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
 
   // KPIs: ticket promedio, frecuencia de compra, cobrado vs pendiente
@@ -2670,10 +2742,10 @@ function Metricas({clientes,prods}){
     meses.forEach(m=>map[m.key]={litros:0,monto:0});
     todas.forEach(v=>{
       const key=(v.fecha||"").slice(0,7);
-      if(map[key]){map[key].litros+=v.cantidad||0;map[key].monto+=v.monto||0;}
+      if(map[key]){map[key].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[key].monto+=v.monto||0;}
     });
     return meses.map(m=>({...m,...map[m.key]}));
-  },[todas]);
+  },[todas,envaseMap]);
   const maxMes=Math.max(1,...evolucionMensual.map(m=>m.litros));
   const maxMesMonto=Math.max(1,...evolucionMensual.map(m=>m.monto));
 
@@ -2701,12 +2773,12 @@ function Metricas({clientes,prods}){
     const map={};
     todas.forEach(v=>{
       if(!map[v.clienteNombre])map[v.clienteNombre]={litros:0,monto:0,pedidos:0};
-      map[v.clienteNombre].litros+=v.cantidad||0;
+      map[v.clienteNombre].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
       map[v.clienteNombre].monto+=v.monto||0;
       map[v.clienteNombre].pedidos+=1;
     });
     return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.monto-a.monto).slice(0,8);
-  },[todas]);
+  },[todas,envaseMap]);
   const maxFacturacion=topClientesFacturacion[0]?.monto||1;
 
   // Ventas por tipo de envase
@@ -2716,7 +2788,7 @@ function Metricas({clientes,prods}){
     todas.forEach(v=>{
       const envase=prods.find(p=>p.id===v.producto)?.envase||"Otro";
       if(!map[envase])map[envase]={litros:0,monto:0};
-      map[envase].litros+=v.cantidad||0;
+      map[envase].litros+=litrosDeItem(v.cantidad,envase);
       map[envase].monto+=v.monto||0;
     });
     return Object.entries(map).map(([envase,d])=>({envase,...d})).sort((a,b)=>b.litros-a.litros);
@@ -2730,10 +2802,10 @@ function Metricas({clientes,prods}){
     todas.forEach(v=>{
       if(!v.fecha)return;
       const dow=new Date(v.fecha+"T00:00:00").getDay();
-      acc[dow===0?6:dow-1]+=v.cantidad||0;
+      acc[dow===0?6:dow-1]+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
     });
     return DIAS_LBL.map((lbl,i)=>({lbl,litros:acc[i]}));
-  },[todas]);
+  },[todas,envaseMap]);
   const maxDiaSem=Math.max(1,...ventasPorDiaSemana.map(d=>d.litros));
   const diaTop=ventasPorDiaSemana.reduce((max,d)=>d.litros>max.litros?d:max,ventasPorDiaSemana[0]);
  
@@ -2742,12 +2814,12 @@ function Metricas({clientes,prods}){
     const map={};
     todas.forEach(v=>{
       if(!map[v.producto])map[v.producto]={litros:0,monto:0,pedidos:0};
-      map[v.producto].litros+=v.cantidad;
+      map[v.producto].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
       map[v.producto].monto+=v.monto;
       map[v.producto].pedidos+=1;
     });
     return Object.entries(map).map(([id,d])=>({id,nombre:prods.find(p=>p.id===id)?.nombre||id,...d})).sort((a,b)=>b.litros-a.litros);
-  },[todas,prods]);
+  },[todas,prods,envaseMap]);
  
   // Ranking clientes por producto
   const rankingClientesPorProd=useMemo(()=>{
@@ -2756,7 +2828,7 @@ function Metricas({clientes,prods}){
     todas.forEach(v=>{
       if(!byProd[v.producto])byProd[v.producto]={};
       if(!byProd[v.producto][v.clienteNombre])byProd[v.producto][v.clienteNombre]={litros:0,monto:0};
-      byProd[v.producto][v.clienteNombre].litros+=v.cantidad;
+      byProd[v.producto][v.clienteNombre].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
       byProd[v.producto][v.clienteNombre].monto+=v.monto;
     });
     const result={};
@@ -2764,31 +2836,31 @@ function Metricas({clientes,prods}){
       result[prodId]=Object.entries(clientes).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.litros-a.litros).slice(0,5);
     });
     return result;
-  },[todas,prods]);
+  },[todas,prods,envaseMap]);
  
   // Ranking por zona
   const rankingZona=useMemo(()=>{
     const map={};
     todas.forEach(v=>{
       if(!map[v.zona])map[v.zona]={litros:0,monto:0,pedidos:0};
-      map[v.zona].litros+=v.cantidad;
+      map[v.zona].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
       map[v.zona].monto+=v.monto;
       map[v.zona].pedidos+=1;
     });
     return Object.entries(map).map(([zona,d])=>({zona,...d})).sort((a,b)=>b.litros-a.litros);
-  },[todas]);
+  },[todas,envaseMap]);
  
   // Ranking por rubro
   const rankingRubro=useMemo(()=>{
     const map={};
     todas.forEach(v=>{
       if(!map[v.rubro])map[v.rubro]={litros:0,monto:0,pedidos:0};
-      map[v.rubro].litros+=v.cantidad;
+      map[v.rubro].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
       map[v.rubro].monto+=v.monto;
       map[v.rubro].pedidos+=1;
     });
     return Object.entries(map).map(([rubro,d])=>({rubro,...d})).sort((a,b)=>b.litros-a.litros);
-  },[todas]);
+  },[todas,envaseMap]);
  
   const maxZona=rankingZona[0]?.litros||1;
   const maxRubro=rankingRubro[0]?.litros||1;
@@ -3033,12 +3105,13 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   };
   const tieneClientId=!!getCalClientId();
  
+  const envaseMapExport=envaseMapDe(prods);
   // ── Exportaciones ──
   const exportarClientes=()=>{
     const filas=clientes.map(c=>{
       const saldo=saldoCliente(c);
       const totalVentas=c.ventas.reduce((s,v)=>s+v.monto,0);
-      const totalLitros=c.ventas.reduce((s,v)=>s+v.cantidad,0);
+      const totalLitros=c.ventas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMapExport[v.producto]),0);
       const ultimaVenta=lastSale(c);
       return[
         `"${c.nombre}"`,
@@ -3613,6 +3686,13 @@ function AppGate(){
 function App(){
   const[tab,setTab]=useState("inicio");
   const[showMore,setShowMore]=useState(false);
+  const[temaOscuro,setTemaOscuro]=useState(()=>{
+    try{return localStorage.getItem("farol_tema")==="oscuro";}catch(e){return false;}
+  });
+  React.useEffect(()=>{
+    document.documentElement.classList.toggle("tema-oscuro",temaOscuro);
+    try{localStorage.setItem("farol_tema",temaOscuro?"oscuro":"claro");}catch(e){}
+  },[temaOscuro]);
   const[clientes,setClientes]=useState(initClientes);
   const[prospectos,setProspectos]=useState(initProspectos);
   const[speeches,setSpeeches]=useState(initSpeeches);
@@ -3647,9 +3727,14 @@ function App(){
       <div style={{display:"flex"}}>
         {/* Sidebar desktop */}
         <aside style={{width:200,height:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none",overflow:"hidden"}} id="sb">
-          <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BO}`}}>
-            <div className="bebas" style={{fontSize:30,color:G}}>GRUNGE & FAROL</div>
-            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Distribución de cerveza artesanal</div>
+          <div style={{padding:"24px 20px 16px",borderBottom:`1px solid ${BO}`,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div className="bebas" style={{fontSize:30,color:G}}>GRUNGE & FAROL</div>
+              <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Distribución de cerveza artesanal</div>
+            </div>
+            <button onClick={()=>setTemaOscuro(t=>!t)} title="Cambiar fondo claro/oscuro" style={{fontSize:15,width:28,height:28,padding:0,flexShrink:0,borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {temaOscuro?"☀️":"🌙"}
+            </button>
           </div>
           <nav style={{padding:12,display:"flex",flexDirection:"column",gap:4,flex:1,overflowY:"auto"}}>
             {TABS.map(({key,label,icon})=>(
@@ -3671,7 +3756,7 @@ function App(){
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
-          {tab==="caja"&&<Caja clientes={clientes}/>}
+          {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
           {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora}/>}
@@ -3683,6 +3768,9 @@ function App(){
         <span className="bebas" style={{fontSize:21,color:G}}>GRUNGE & FAROL</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <SyncBadge status={syncStatus} errorMsg={syncError}/>
+          <button onClick={()=>setTemaOscuro(t=>!t)} title="Cambiar fondo claro/oscuro" style={{fontSize:16,width:30,height:30,padding:0,borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            {temaOscuro?"☀️":"🌙"}
+          </button>
           <button onClick={()=>setTab("config")} style={{fontSize:14,padding:"5px 10px",borderRadius:8,background:tab==="config"?G:"none",border:`1px solid ${tab==="config"?G:BO}`,color:tab==="config"?"#fff":cal.calToken?GR:MU,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
             {cal.calToken?"📅✓":"⚙️"}
           </button>
