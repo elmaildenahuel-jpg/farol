@@ -73,6 +73,16 @@ const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
 const PEST={"Por contactar":MU,"Contactado":AM,"En negociación":GR,"Descartado":RE};
 const PEDIDO_ESTADOS={pendiente:{label:"Pendiente",color:AM},entregado:{label:"Entregado",color:GR},cancelado:{label:"Cancelado",color:RE}};
+const NOTE_COLORS=[
+  {key:"amarillo",bg:"#FEF6DC",bd:"#F0D888",tx:"#8A6D1D"},
+  {key:"verde",bg:"#E4F5EA",bd:"#178D4F55",tx:"#0F7A42"},
+  {key:"celeste",bg:"#DCEEFB",bd:"#8FC3EA",tx:"#2A6996"},
+  {key:"rosa",bg:"#FBE2ED",bd:"#EAA9C4",tx:"#A3416A"},
+  {key:"naranja",bg:"#FBE7D6",bd:"#EFC090",tx:"#B7691F"},
+  {key:"violeta",bg:"#ECE4FA",bd:"#C7AEEE",tx:"#6B4EA6"},
+  {key:"gris",bg:"#EEEFEE",bd:"#D0D0D0",tx:"#565B60"},
+];
+const colorNota=key=>NOTE_COLORS.find(c=>c.key===key)||NOTE_COLORS[0];
  
 // ── Config Google Calendar ────────────────────────────────────────
 // El Client ID se guarda en localStorage para no hardcodear credenciales.
@@ -125,6 +135,7 @@ function nombreProdEnvase(p){ return p?`${p.nombre} · ${p.envase||"PET"}`:""; }
 // ── Datos semilla ─────────────────────────────────────────────────
 const initClientes=[];
 const initProspectos=[];
+const initNotas=[];
 const initSpeeches=[
   {id:"s1",categoria:"Primer contacto",canal:"WhatsApp",titulo:"Presentación al comercio",texto:"¡Hola! 👋 Te escribo de *Cerveza Farol* 🍺, una cerveza artesanal porteña que está arrancando en tu zona.\n\nManejamos el litro en envase PET descartable: *no devolvés envase*, precio competitivo y el producto se vende solo.\n\nTenemos *Rubia Arrabalera* e *IPA Malandra*, ambas en 1 litro.\n\n¿Te interesaría que te pase precios y condiciones?"},
   {id:"s2",categoria:"Primer contacto",canal:"Instagram",titulo:"DM a local nuevo",texto:"Hola! 🍺 Vimos tu local y nos encantaría que sumes *Cerveza Farol* a tu oferta.\n\nSomos productores directos, litro PET descartable (sin retorno de envase) con buen margen para reventa.\n\nCraft porteña, precio popular, calidad premium. ¿Te paso info?"},
@@ -391,6 +402,7 @@ const I={
   zap:<svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   chart:<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
   clock:<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  note:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>,
 };
  
 // ── UI base ───────────────────────────────────────────────────────
@@ -1010,7 +1022,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora})
 }
  
 // ── INICIO ────────────────────────────────────────────────────────
-function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,setTab}){
+function Inicio({clientes,prospectos,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const totalARS=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+v.monto,0),0);
   const litros=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),0);
@@ -1119,6 +1131,24 @@ function Inicio({clientes,prospectos,pedidos,prods,metaSemanal,setMetaSemanal,se
             </button>
           );
         })}
+      </div>
+
+      {/* Notas */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:(notas||[]).length>0?`1px solid ${BO}`:"none",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>{I.note}<span style={{fontSize:16,fontWeight:700,color:CR}}>Notas</span></div>
+          <button onClick={()=>setTab("notas")} style={{fontSize:14,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}>{(notas||[]).length>0?"Ver todas":"Agregar"}{I.chev}</button>
+        </div>
+        {(notas||[]).length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,padding:"12px 16px"}}>
+            {[...notas].sort((a,b)=>new Date(b.actualizadoEn||b.creadoEn)-new Date(a.actualizadoEn||a.creadoEn)).slice(0,8).map(n=>{
+              const col=colorNota(n.color);
+              return(
+                <button key={n.id} onClick={()=>setTab("notas")} style={{padding:"6px 12px",borderRadius:20,fontSize:14,fontWeight:600,cursor:"pointer",background:col.bg,border:`1px solid ${col.bd}`,color:col.tx,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.titulo}</button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Meta semanal */}
@@ -3085,7 +3115,106 @@ function Metricas({clientes,prods}){
 }
  
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,metaSemanal,setMetaSemanal,diasMora,setDiasMora}){
+// ── NOTAS ─────────────────────────────────────────────────────────
+function FormNota({initial,onSave,onCancel,onDelete}){
+  const[f,setF]=useState({titulo:initial.titulo||"",contenido:initial.contenido||"",color:initial.color||NOTE_COLORS[0].key});
+  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div><Lbl t="Título"/><input value={f.titulo} onChange={s("titulo")} placeholder="Ej: Pedido especial Bar Norte" autoFocus/></div>
+      <div><Lbl t="Contenido"/><textarea rows={5} value={f.contenido} onChange={s("contenido")} placeholder="Escribí acá los detalles..." style={{fontFamily:"inherit",resize:"vertical"}}/></div>
+      <div>
+        <Lbl t="Color"/>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {NOTE_COLORS.map(c=>(
+            <button key={c.key} type="button" onClick={()=>setF(p=>({...p,color:c.key}))} title={c.key} style={{width:34,height:34,borderRadius:"50%",cursor:"pointer",border:`2px solid ${f.color===c.key?c.tx:c.bd}`,background:c.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{f.color===c.key&&<span style={{color:c.tx,display:"flex"}}>{I.check}</span>}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,paddingTop:4,alignItems:"center"}}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        {onDelete&&<button onClick={onDelete} title="Eliminar nota" style={{width:42,height:42,borderRadius:10,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.trash}</button>}
+        <div style={{flex:1}}/>
+        <Btn variant="green" onClick={()=>f.titulo.trim()&&onSave({...f,titulo:f.titulo.trim()})} disabled={!f.titulo.trim()}>Guardar</Btn>
+      </div>
+    </div>
+  );
+}
+
+function Notas({notas,setNotas}){
+  const[modalOpen,setModalOpen]=useState(false);
+  const[editing,setEditing]=useState(null);
+  const[filtroColor,setFiltroColor]=useState("");
+  const[busqueda,setBusqueda]=useState("");
+
+  const nuevaNota=()=>{setEditing({});setModalOpen(true);};
+  const editarNota=n=>{setEditing(n);setModalOpen(true);};
+  const cerrar=()=>{setModalOpen(false);setEditing(null);};
+
+  const guardar=f=>{
+    const ahora=new Date().toISOString();
+    if(editing&&editing.id){
+      setNotas(prev=>prev.map(n=>n.id===editing.id?{...n,...f,actualizadoEn:ahora}:n));
+    }else{
+      setNotas(prev=>[{id:uid(),...f,creadoEn:ahora,actualizadoEn:ahora},...(prev||[])]);
+    }
+    cerrar();
+  };
+  const eliminar=()=>{
+    if(!editing||!editing.id)return;
+    if(!confirm("¿Eliminar esta nota? No se puede deshacer."))return;
+    setNotas(prev=>prev.filter(n=>n.id!==editing.id));
+    cerrar();
+  };
+
+  const filtradas=useMemo(()=>{
+    const term=busqueda.trim().toLowerCase();
+    return[...(notas||[])]
+      .filter(n=>(!filtroColor||n.color===filtroColor)&&(!term||n.titulo.toLowerCase().includes(term)||(n.contenido||"").toLowerCase().includes(term)))
+      .sort((a,b)=>new Date(b.actualizadoEn||b.creadoEn)-new Date(a.actualizadoEn||a.creadoEn));
+  },[notas,filtroColor,busqueda]);
+
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4}}>
+        <span className="bebas" style={{fontSize:30,color:CR}}>Notas</span>
+        <Btn variant="green" small onClick={nuevaNota}>{I.plus}Nueva</Btn>
+      </div>
+      <p style={{fontSize:14,color:MU,marginBottom:18}}>Bloc de notas con colores para organizar ideas, pendientes y recordatorios.</p>
+
+      <input placeholder="Buscar en notas..." value={busqueda} onChange={e=>setBusqueda(e.target.value)} style={{marginBottom:10}}/>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
+        <button onClick={()=>setFiltroColor("")} style={{padding:"5px 12px",borderRadius:20,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${!filtroColor?G:BO}`,background:!filtroColor?G:"transparent",color:!filtroColor?"#fff":MU}}>Todas</button>
+        {NOTE_COLORS.map(c=>(
+          <button key={c.key} onClick={()=>setFiltroColor(f=>f===c.key?"":c.key)} title={c.key} style={{width:28,height:28,borderRadius:"50%",cursor:"pointer",border:`2px solid ${filtroColor===c.key?c.tx:c.bd}`,background:c.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{filtroColor===c.key&&<span style={{color:c.tx,display:"flex",transform:"scale(0.8)"}}>{I.check}</span>}</button>
+        ))}
+      </div>
+
+      {filtradas.length===0?(
+        <p style={{color:MU,fontSize:16,textAlign:"center",padding:"30px 16px"}}>{(notas||[]).length===0?"Todavía no cargaste notas.":"No hay notas que coincidan con la búsqueda/filtro."}</p>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {filtradas.map(n=>{
+            const col=colorNota(n.color);
+            return(
+              <button key={n.id} onClick={()=>editarNota(n)} style={{textAlign:"left",background:col.bg,border:`1px solid ${col.bd}`,borderRadius:14,padding:12,cursor:"pointer",display:"flex",flexDirection:"column",gap:6,minHeight:104}}>
+                <div style={{fontSize:15,fontWeight:700,color:col.tx,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{n.titulo}</div>
+                {n.contenido&&<div style={{fontSize:13,color:col.tx,opacity:0.85,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:4,WebkitBoxOrient:"vertical",flex:1,lineHeight:1.4}}>{n.contenido}</div>}
+                <div style={{fontSize:11,color:col.tx,opacity:0.6,marginTop:"auto"}}>{fmtDateTime(n.actualizadoEn||n.creadoEn)}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={modalOpen} onClose={cerrar} title={editing&&editing.id?"Editar nota":"Nueva nota"}>
+        {editing&&<FormNota initial={editing} onSave={guardar} onCancel={cerrar} onDelete={editing.id?eliminar:null}/>}
+      </Modal>
+    </div>
+  );
+}
+
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,metaSemanal,setMetaSemanal,diasMora,setDiasMora}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -3154,7 +3283,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   const exportarTodo=async()=>{
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
-      clientes,prospectos,pedidos,prods,speeches,
+      clientes,prospectos,pedidos,prods,speeches,notas,
       config:{metaSemanal,diasMora}
     },null,2);
     const fileName=`backup_grunge_farol_${hoyISO()}.json`;
@@ -3196,6 +3325,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           data.prospectos?`${data.prospectos.length} comercios`:null,
           data.pedidos?`${data.pedidos.length} pedidos`:null,
           data.prods?`${data.prods.length} productos`:null,
+          data.notas?`${data.notas.length} notas`:null,
         ].filter(Boolean).join(", ");
         if(!confirm(`Este backup tiene: ${resumen||"(sin datos reconocibles)"}.\n\nEsto va a REEMPLAZAR todos los datos actuales de la app en este dispositivo (y se sincroniza a la nube). Esta acción no se puede deshacer.\n\n¿Continuar?`))return;
         if(Array.isArray(data.clientes))setClientes(data.clientes);
@@ -3203,6 +3333,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         if(Array.isArray(data.pedidos))setPedidos(data.pedidos);
         if(Array.isArray(data.prods)&&data.prods.length>0)setProds(data.prods);
         if(setSpeeches&&Array.isArray(data.speeches))setSpeeches(data.speeches);
+        if(setNotas&&Array.isArray(data.notas))setNotas(data.notas);
         if(data.config){
           if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
           if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
@@ -3237,6 +3368,10 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   const borrarPedidos=()=>{
     if(!confirm(`¿Borrar los ${pedidos.length} pedidos (pendientes e historial de entregas)? No afecta las ventas ya registradas en cada cliente. Esta acción no se puede deshacer.`))return;
     setPedidos([]);
+  };
+  const borrarNotas=()=>{
+    if(!confirm(`¿Borrar las ${(notas||[]).length} notas? Esta acción no se puede deshacer.`))return;
+    setNotas([]);
   };
   const restablecerProductos=()=>{
     if(!confirm("¿Restablecer el catálogo de productos a los valores de fábrica? Se pierden los precios, promos y productos cargados manualmente."))return;
@@ -3404,6 +3539,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           <button onClick={borrarComercios} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.trash}Borrar todos los comercios ({prospectos.length})</button>
           <button onClick={borrarPedidos} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.trash}Borrar todos los pedidos ({pedidos.length})</button>
           <button onClick={restablecerProductos} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.refresh}Restablecer productos de fábrica</button>
+          <button onClick={borrarNotas} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:"none",border:`1px solid ${RE}55`,color:RE,fontSize:15,fontWeight:700,cursor:"pointer"}}>{I.trash}Borrar todas las notas ({(notas||[]).length})</button>
           <button onClick={resetGeneral} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"14px",borderRadius:14,background:RE,border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4}}>{I.refresh}Reseteo general del programa</button>
           {deshacerDisponible&&(
             <button onClick={deshacerReset} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:14,background:GLT,border:`1px solid ${G}55`,color:G,fontSize:15,fontWeight:700,cursor:"pointer"}}>↩ Deshacer último reseteo</button>
@@ -3422,16 +3558,17 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,metaSemanal,setMetaSemanal,diasMora,setDiasMora){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,metaSemanal,setMetaSemanal,diasMora,setDiasMora){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
-  const KEYS=["clientes","prospectos","speeches","pedidos","prods","config"];
+  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,config:{metaSemanal,diasMora}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,config:{metaSemanal,diasMora}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
+    notas:d=>{if(Array.isArray(d))setNotas(d);},
     config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);},
   });
   const lastSyncRef=React.useRef({});
@@ -3543,7 +3680,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,metaSemanal,diasMora]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,metaSemanal,diasMora]);
 
   return{status,errorMsg};
 }
@@ -3568,6 +3705,7 @@ const TABS=[
   {key:"cuentascorrientes",label:"Cta.Cte",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>},
   {key:"maps",label:"Buscar",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>},
   {key:"speeches",label:"Speeches",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
+  {key:"notas",label:"Notas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>},
   {key:"ventas",label:"Ventas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>},
   {key:"caja",label:"Caja",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v2m0 8v2M9.5 9.5a2.5 2.5 0 012.5-1.5c1.5 0 2.5.8 2.5 2s-1 1.7-2.5 2-2.5.7-2.5 2 1 2 2.5 2a2.5 2.5 0 002.5-1.5"/></svg>},
   {key:"metricas",label:"Métricas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
@@ -3698,6 +3836,7 @@ function App(){
   const[speeches,setSpeeches]=useState(initSpeeches);
   const[pedidos,setPedidos]=useState([]);
   const[prods,setProds]=useState(PRODS_INIT);
+  const[notas,setNotas]=useState(initNotas);
   const[metaSemanal,setMetaSemanal]=useState(0);
   const[diasMora,setDiasMora]=useState(15);
   const cal=useGoogleCalendar();
@@ -3709,6 +3848,7 @@ function App(){
     speeches,setSpeeches,
     pedidos,setPedidos,
     prods,setProds,
+    notas,setNotas,
     metaSemanal,setMetaSemanal,
     diasMora,setDiasMora
   );
@@ -3748,18 +3888,19 @@ function App(){
         </aside>
  
         <main style={{flex:1,paddingTop:56,minHeight:"100vh"}} id="mn">
-          {tab==="inicio"&&<Inicio clientes={clientes} prospectos={prospectos} pedidos={pedidos} prods={prods} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
+          {tab==="inicio"&&<Inicio clientes={clientes} prospectos={prospectos} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
+          {tab==="notas"&&<Notas notas={notas} setNotas={setNotas}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora}/>}
         </main>
       </div>
  
