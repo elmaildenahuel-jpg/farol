@@ -60,7 +60,7 @@ html.tema-oscuro ::-webkit-scrollbar-thumb{background:#666}
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState,useMemo}=React;
+const {useState,useMemo,useEffect}=React;
  
 // ── Paleta CLARA ─────────────────────────────────────────────────
 const G="#178D4F",CR="#1A1A1A",MU="#565B60",GR="#0F7A42",RE="#C62828",AM="#B7791F",
@@ -301,7 +301,7 @@ const mensajePedido=(p,nombreCliente,prods)=>{
     resumen+="\n";
   }
   const esHoy=p.fechaEntrega===hoyISO();
-  return`¡Hola${nombreCliente?" "+nombreCliente:""}! 🍺 Te confirmo tu pedido de *Cerveza Farol*:\n\n${detalle}\n${resumen}\n*Total: ${fmtARS(p.montoTotal||0)}*\n📅 Entrega: ${esHoy?"HOY":fmtDate(p.fechaEntrega)} · ${p.horaEntrega}hs\n${p.pagado?"✅ Pagado":"🧾 Cuenta corriente"}\n\n¡Gracias por la confianza!`;
+  return`¡Hola${nombreCliente?" "+nombreCliente:""}! 🍺 Te confirmo tu pedido:\n\n${detalle}\n${resumen}\n*Total: ${fmtARS(p.montoTotal||0)}*\n📅 Entrega estimada: ${esHoy?"HOY":fmtDate(p.fechaEntrega)} · ${p.horaEntrega}hs\n\n¡Gracias por la confianza!`;
 };
 const daysSince=s=>Math.floor((Date.now()-new Date(s+"T00:00:00"))/86400000);
 const lastSale=c=>c.ventas.length?[...c.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0]:null;
@@ -595,7 +595,7 @@ function ModalAgenda({open,onClose,entidad,onGuardar,cal}){
       {cal.calError&&<div style={{background:RE+"22",border:`1px solid ${RE}44`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:14,color:"#E08070",lineHeight:1.5}}>{cal.calError}</div>}
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
         <div><Lbl t="Título del recordatorio"/><input value={titulo} onChange={e=>setTitulo(e.target.value)} placeholder="Visita Farol → Local..."/></div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
           <div><Lbl t="Fecha"/><input type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/></div>
           <div><Lbl t="Hora"/><input type="time" value={hora} onChange={e=>setHora(e.target.value)}/></div>
         </div>
@@ -624,7 +624,7 @@ function ModalContacto({open,onClose,entidad,onGuardar}){
     <Modal open={open} onClose={onClose} title={`Registrar contacto · ${entidad?.nombre||""}`}>
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
         <div><Lbl t="Tipo de contacto"/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
             {CONTACTO_TIPOS.map(t=>(
               <button key={t.id} onClick={()=>setTipo(t.id)} style={{padding:"10px 8px",borderRadius:8,border:`1px solid ${tipo===t.id?G:BO}`,background:tipo===t.id?G+"22":"transparent",color:tipo===t.id?G:MU,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                 <span style={{fontSize:20}}>{t.icon}</span><span style={{fontSize:13}}>{t.label}</span>
@@ -651,7 +651,7 @@ function HistorialAgenda({entidad,agenda,historial,onAgregarAgenda,onAgregarCont
   const proxVisita=agendaSafe.filter(e=>new Date(e.fecha+"T"+e.hora)>=new Date()).sort((a,b)=>new Date(a.fecha+"T"+a.hora)-new Date(b.fecha+"T"+b.hora))[0];
   return(
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:14}}>
         <button onClick={()=>setShowAgenda(true)} style={{padding:"10px 8px",borderRadius:8,border:`1px solid ${G}44`,background:G+"11",color:G,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>📅 Agendar visita</button>
         <button onClick={()=>setShowContacto(true)} style={{padding:"10px 8px",borderRadius:8,border:`1px solid ${BO}`,background:"none",color:MU,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>💬 Registrar contacto</button>
       </div>
@@ -694,7 +694,7 @@ function FormCliente({initial,onSave,onCancel}){
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Nombre"/><input value={f.nombre} onChange={s("nombre")} placeholder="Ej: Pizzería Don Carlitos"/></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Rubro"/><select value={f.rubro} onChange={s("rubro")}>{RUBROS.map(r=><option key={r}>{r}</option>)}</select></div>
         <div><Lbl t="Zona"/><select value={f.zona} onChange={s("zona")}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></div>
       </div>
@@ -720,7 +720,7 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
       <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{prods.map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"12":"24"}/>{prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:4}}>Cada lata = 0.50L</div>}</div>
         <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={f.descuentoPct} onChange={s("descuentoPct")} placeholder="0"/></div>
       </div>
@@ -737,7 +737,7 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
         {comisionPctDefault?<>% comisión del cliente: <b style={{color:G}}>{comisionPctDefault}%</b>{gananciaEstimada!=null&&<> · Ganancia estimada: <b style={{color:G}}>{fmtARS(gananciaEstimada)}</b></>}</>:<>Este cliente no tiene % de comisión configurado (se puede cargar en su ficha).</>}
       </div>
       <div><Lbl t="¿Se cobró al momento de la entrega?"/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
           <button onClick={()=>setF(p=>({...p,pagado:true}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado?GR:BO}`,background:f.pagado?GR+"22":"transparent",color:f.pagado?GR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
           <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
         </div>
@@ -754,7 +754,7 @@ function FormProspecto({initial,onSave,onCancel}){
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Nombre"/><input value={f.nombre} onChange={s("nombre")} placeholder="Ej: Bodegón La Porteña"/></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Rubro"/><select value={f.rubro} onChange={s("rubro")}>{RUBROS.map(r=><option key={r}>{r}</option>)}</select></div>
         <div><Lbl t="Zona"/><select value={f.zona} onChange={s("zona")}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></div>
       </div>
@@ -870,7 +870,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
           </div>
  
           {/* Botones de cobro */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
             <button onClick={()=>{setShowCobroIndep(true);setShowParcial(false);}} style={{padding:"10px 0",borderRadius:10,background:"none",border:`1px dashed ${G}55`,color:G,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
               💵 Cobro en efectivo
             </button>
@@ -985,7 +985,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora})
         {!!cliente.comisionPctDefault&&<div style={{color:G,fontWeight:600}}><span style={{color:MU,fontWeight:400}}>% comisión · </span>{cliente.comisionPctDefault}%</div>}
       </div>
       {cliente.telefono&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:8}}>
           <a href={`https://wa.me/${cliente.telefono}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none"}}>{I.wa}WhatsApp</a>
           <button onClick={()=>setSpOpen(true)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:G+"22",color:G,border:`1px solid ${G}44`,cursor:"pointer"}}>{I.msg}Enviar speech</button>
         </div>
@@ -1182,7 +1182,7 @@ function Inicio({clientes,prospectos,pedidos,prods,notas,metaSemanal,setMetaSema
       </div>
  
       {/* Stats */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,marginBottom:16}}>
         {[{l:"Vendido",v:fmtARS(totalARS),ic:I.trend},{l:"Litros",v:`${litros}L`,ic:I.box},{l:"Activos",v:String(activos),ic:I.users}].map(s=>(
           <div key={s.l} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"14px 12px"}}>
             <div style={{width:26,height:26,borderRadius:9,background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{React.cloneElement(s.ic,{width:14,height:14})}</div>
@@ -1246,7 +1246,7 @@ function Inicio({clientes,prospectos,pedidos,prods,notas,metaSemanal,setMetaSema
       </div>
  
       {/* Accesos rápidos */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:20}}>
         {[{tab:"comercios",icon:I.store,t:"Prospectos",s:"Sumar nuevas cuentas"},{tab:"speeches",icon:I.msg,t:"Speeches",s:"Copiar y mandar por WA"}].map(x=>(
           <button key={x.tab} onClick={()=>setTab(x.tab)} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,textAlign:"left",cursor:"pointer"}}>
             <div style={{color:G,marginBottom:8}}>{x.icon}</div><div style={{fontSize:16,fontWeight:600,color:CR}}>{x.t}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{x.s}</div>
@@ -1335,6 +1335,161 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora}){
   );
 }
  
+// ── ENVÍO MASIVO ──────────────────────────────────────────────────
+const ENVIO_MASIVO_LS_KEY="farol_envio_masivo_progreso";
+function EnvioMasivo({clientes}){
+  const[q,setQ]=useState("");
+  const[filtroEstado,setFiltroEstado]=useState("todos");
+  const[filtroZona,setFiltroZona]=useState("todas");
+  const[sel,setSel]=useState(()=>new Set());
+  const[mensaje,setMensaje]=useState("");
+  const[enCola,setEnCola]=useState(false);
+  const[enviados,setEnviados]=useState(()=>new Set());
+  const[idx,setIdx]=useState(0);
+  const[cargado,setCargado]=useState(false);
+
+  // Recupera el progreso guardado (por si el usuario fue a WhatsApp y volvió, o cerró la app a mitad de camino)
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem(ENVIO_MASIVO_LS_KEY);
+      if(raw){
+        const d=JSON.parse(raw);
+        if(d&&Array.isArray(d.ids)&&d.ids.length){
+          setSel(new Set(d.ids));
+          setMensaje(d.mensaje||"");
+          setEnviados(new Set(d.enviados||[]));
+          setIdx(d.idx||0);
+          setEnCola(!!d.enCola);
+        }
+      }
+    }catch(e){}
+    setCargado(true);
+  },[]);
+
+  useEffect(()=>{
+    if(!cargado)return;
+    if(!enCola&&sel.size===0){try{localStorage.removeItem(ENVIO_MASIVO_LS_KEY);}catch(e){}return;}
+    try{localStorage.setItem(ENVIO_MASIVO_LS_KEY,JSON.stringify({ids:[...sel],mensaje,enviados:[...enviados],idx,enCola}));}catch(e){}
+  },[sel,mensaje,enviados,idx,enCola,cargado]);
+
+  const conTelefono=useMemo(()=>clientes.filter(c=>c.telefono&&c.telefono.trim()),[clientes]);
+  const filtrados=useMemo(()=>conTelefono.filter(c=>{
+    const t=q.toLowerCase();
+    const okQ=!t||c.nombre.toLowerCase().includes(t)||c.zona.toLowerCase().includes(t)||c.rubro.toLowerCase().includes(t);
+    const okE=filtroEstado==="todos"||estadoC(c)===filtroEstado;
+    const okZ=filtroZona==="todas"||c.zona===filtroZona;
+    return okQ&&okE&&okZ;
+  }).sort((a,b)=>a.nombre.localeCompare(b.nombre)),[conTelefono,q,filtroEstado,filtroZona]);
+
+  const seleccionados=useMemo(()=>clientes.filter(c=>sel.has(c.id)),[clientes,sel]);
+
+  const toggle=id=>setSel(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  const toggleTodosVisibles=()=>{
+    const idsVisibles=filtrados.map(c=>c.id);
+    const todosMarcados=idsVisibles.length>0&&idsVisibles.every(id=>sel.has(id));
+    setSel(prev=>{const n=new Set(prev);idsVisibles.forEach(id=>todosMarcados?n.delete(id):n.add(id));return n;});
+  };
+  const personalizar=nombre=>mensaje.replace(/\{nombre\}/gi,(nombre||"").split(" ")[0]);
+  const iniciar=()=>{setIdx(0);setEnviados(new Set());setEnCola(true);};
+  const cancelar=()=>{
+    setEnCola(false);setSel(new Set());setEnviados(new Set());setIdx(0);setMensaje("");
+    try{localStorage.removeItem(ENVIO_MASIVO_LS_KEY);}catch(e){}
+  };
+
+  if(enCola){
+    const lista=seleccionados;
+    const actual=lista[idx];
+    if(!actual){
+      return(
+        <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto",textAlign:"center"}}>
+          <div style={{fontSize:44,marginBottom:12}}>🎉</div>
+          <div className="bebas" style={{fontSize:26,color:CR,marginBottom:6}}>¡Listo!</div>
+          <div style={{fontSize:16,color:MU,marginBottom:24}}>Enviaste a {enviados.size} de {lista.length} clientes.</div>
+          <Btn onClick={cancelar}>Volver a Difusión</Btn>
+        </div>
+      );
+    }
+    const yaEnviado=enviados.has(actual.id);
+    const link=waLink(actual.telefono,personalizar(actual.nombre));
+    return(
+      <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <span className="bebas" style={{fontSize:26,color:CR}}>Enviando...</span>
+          <button onClick={cancelar} style={{background:"none",border:"none",color:MU,fontSize:14,fontWeight:700,cursor:"pointer"}}>Cancelar</button>
+        </div>
+        <div style={{fontSize:14,color:MU,fontWeight:700,marginBottom:16}}>{enviados.size} enviados · {lista.length-enviados.size} pendientes de {lista.length}</div>
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(actual.nombre)}</div>
+            <div>
+              <div style={{fontSize:17,fontWeight:700,color:CR}}>{actual.nombre}</div>
+              <div style={{fontSize:13,color:MU}}>{actual.rubro} · {actual.zona}</div>
+            </div>
+          </div>
+          <div style={{fontSize:15,color:CR,whiteSpace:"pre-wrap",background:BG,borderRadius:10,padding:12,marginBottom:16,lineHeight:1.5}}>{personalizar(actual.nombre)}</div>
+          {link?(
+            <a href={link} target="_blank" rel="noreferrer" onClick={()=>setEnviados(prev=>new Set(prev).add(actual.id))} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,textDecoration:"none",padding:"13px 0",borderRadius:10,background:GR,color:"#fff",fontSize:16,fontWeight:700,marginBottom:10}}>{I.wa}Enviar a {actual.nombre.split(" ")[0]}</a>
+          ):(
+            <div style={{fontSize:14,color:RE,marginBottom:10}}>Teléfono inválido, no se puede abrir WhatsApp.</div>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setIdx(i=>Math.min(i+1,lista.length))} style={{flex:1,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:15,fontWeight:600,cursor:"pointer"}}>Omitir</button>
+            <button onClick={()=>{setEnviados(prev=>new Set(prev).add(actual.id));setIdx(i=>Math.min(i+1,lista.length));}} style={{flex:1,padding:"10px 0",borderRadius:10,background:yaEnviado?G:BG,border:`1px solid ${yaEnviado?G:BO}`,color:yaEnviado?"#fff":CR,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ {yaEnviado?"Enviado":"Marcar y siguiente"}</button>
+          </div>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {lista.map((c,i)=>(
+            <button key={c.id} onClick={()=>setIdx(i)} title={c.nombre} style={{width:30,height:30,borderRadius:"50%",border:`2px solid ${i===idx?G:"transparent"}`,background:enviados.has(c.id)?G:BO,color:enviados.has(c.id)?"#fff":MU,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>{enviados.has(c.id)?"✓":iniciales(c.nombre)}</button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const todosVisiblesMarcados=filtrados.length>0&&filtrados.every(c=>sel.has(c.id));
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{marginBottom:16}}>
+        <span className="bebas" style={{fontSize:30,color:CR}}>Envío masivo</span>
+        <div style={{fontSize:14,color:MU,marginTop:2}}>Seleccioná clientes y armá un mensaje. Después se abre WhatsApp de a uno para que confirmes cada envío.</div>
+      </div>
+      <div style={{position:"relative",marginBottom:12}}>
+        <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:MU,pointerEvents:"none"}}>{I.search}</span>
+        <input style={{paddingLeft:38}} placeholder="Buscar por nombre, zona o rubro..." value={q} onChange={e=>setQ(e.target.value)}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:10,overflowX:"auto",paddingBottom:4}}>
+        {[{k:"todos",l:"Todos"},{k:"activo",l:"Activos"},{k:"atencion",l:"Atención"},{k:"inactivo",l:"Inactivos"},{k:"nuevo",l:"Sin compras"}].map(f=>(
+          <button key={f.k} onClick={()=>setFiltroEstado(f.k)} style={{whiteSpace:"nowrap",padding:"6px 12px",borderRadius:20,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtroEstado===f.k?G:BO}`,background:filtroEstado===f.k?G:"transparent",color:filtroEstado===f.k?"#fff":MU}}>{f.l}</button>
+        ))}
+      </div>
+      <div style={{marginBottom:12}}>
+        <select value={filtroZona} onChange={e=>setFiltroZona(e.target.value)}>
+          <option value="todas">Todas las zonas</option>
+          {ZONAS.map(z=><option key={z} value={z}>{z}</option>)}
+        </select>
+      </div>
+      <button onClick={toggleTodosVisibles} style={{width:"100%",textAlign:"left",padding:"10px 14px",borderRadius:10,background:BG,border:`1px solid ${BO}`,color:CR,fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:10}}>
+        {todosVisiblesMarcados?"☑️ Deseleccionar todos los visibles":"⬜ Seleccionar todos los visibles"} ({filtrados.length})
+      </button>
+      <div style={{maxHeight:340,overflowY:"auto",border:`1px solid ${BO}`,borderRadius:14,marginBottom:16}}>
+        {filtrados.length===0?<p style={{color:MU,textAlign:"center",padding:"32px 0",fontSize:15}}>Sin clientes con teléfono para este filtro.</p>:filtrados.map(c=>(
+          <label key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${BO}`,cursor:"pointer"}}>
+            <input type="checkbox" checked={sel.has(c.id)} onChange={()=>toggle(c.id)} style={{width:18,height:18,flexShrink:0,accentColor:G}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:15,fontWeight:600,color:CR}}>{c.nombre}</div>
+              <div style={{fontSize:13,color:MU}}>{c.rubro} · {c.zona}</div>
+            </div>
+          </label>
+        ))}
+      </div>
+      <Lbl t={`Mensaje (${sel.size} seleccionados)`}/>
+      <textarea rows={5} placeholder="Escribí el mensaje. Usá {nombre} para que se reemplace por el nombre de pila de cada cliente." value={mensaje} onChange={e=>setMensaje(e.target.value)} style={{marginBottom:6,resize:"vertical"}}/>
+      {mensaje&&seleccionados[0]&&<div style={{fontSize:13,color:MU,marginBottom:16,fontStyle:"italic"}}>Vista previa: "{personalizar(seleccionados[0].nombre)}"</div>}
+      <Btn onClick={iniciar} disabled={sel.size===0||!mensaje.trim()}>{I.wa}Iniciar envío ({sel.size})</Btn>
+    </div>
+  );
+}
+
 // ── COMERCIOS ─────────────────────────────────────────────────────
 function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
   const[q,setQ]=useState("");
@@ -1385,7 +1540,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
         <input style={{paddingLeft:38,paddingRight:q?36:12}} placeholder="Nombre, rubro, zona, dirección o nota..." value={q} onChange={e=>setQ(e.target.value)}/>
         {q&&<button onClick={()=>setQ("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:MU,padding:2}}>{I.x}</button>}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:8}}>
         <select value={zona} onChange={e=>setZona(e.target.value)}><option value="">Todas las zonas</option>{ZONAS.map(z=><option key={z} value={z}>{z}</option>)}</select>
         <select value={rubro} onChange={e=>setRubro(e.target.value)}><option value="">Todos los rubros</option>{RUBROS.map(r=><option key={r} value={r}>{r}</option>)}</select>
         <select value={estadoF} onChange={e=>setEstadoF(e.target.value)}><option value="">Todos los estados</option>{ESTADOS_P.map(s=><option key={s} value={s}>{s}</option>)}</select>
@@ -1395,7 +1550,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
         <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:15,color:tieneTel?G:MU}}><input type="checkbox" checked={tieneTel} onChange={e=>setTieneTel(e.target.checked)} style={{width:14,height:14,accentColor:G}}/>Solo con teléfono</label>
         {hayFiltros&&<button onClick={limpiar} style={{fontSize:14,color:AM,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Limpiar filtros</button>}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:6,marginBottom:16}}>
         {[{l:"Total",v:stats.total,c:CR},{l:"Con WA",v:stats.conTel,c:GR},{l:"Por cont.",v:stats.porC,c:AM},{l:"En neg.",v:stats.enN,c:G},{l:"Score prom.",v:stats.avgScore,c:scoreLabel(stats.avgScore).c}].map(s=>(
           <div key={s.l} style={{background:CA,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
             <div className="bebas" style={{fontSize:20,color:s.c}}>{s.v}</div>
@@ -1767,7 +1922,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                         {prods.map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
                       </select>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
                       <div>
                         <Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/>
                         <input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder={prod&&prod.envase==="Lata"?"12":"12"}/>
@@ -1794,7 +1949,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                 <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(totalPedido)}</span>
               </div>
 
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
                 <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={descuentoPct} onChange={e=>setDescuentoPct(e.target.value)} placeholder="0"/></div>
                 <label style={{display:"flex",alignItems:"center",gap:8,marginTop:20,cursor:"pointer"}}>
                   <input type="checkbox" checked={incluyeIVA} onChange={e=>setIncluyeIVA(e.target.checked)} style={{width:18,height:18}}/>
@@ -1817,14 +1972,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           )}
  
           {/* Fecha y hora */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
             <div><Lbl t="Fecha de entrega"/><input type="date" value={fechaEntrega} onChange={e=>setFechaEntrega(e.target.value)}/></div>
             <div><Lbl t="Hora estimada"/><input type="time" value={horaEntrega} onChange={e=>setHoraEntrega(e.target.value)}/></div>
           </div>
  
           {/* Pago */}
           <div><Lbl t="¿Se cobra al momento de la entrega?"/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
               <button onClick={()=>setPagado(true)} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${pagado?GR:BO}`,background:pagado?GR+"22":"transparent",color:pagado?GR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
               <button onClick={()=>setPagado(false)} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!pagado?AM:BO}`,background:!pagado?AM+"22":"transparent",color:!pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
             </div>
@@ -1941,8 +2096,8 @@ function Productos({prods,setProds}){
  
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:10}}>
-        <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:10,flexWrap:"wrap"}}>
+        <div style={{minWidth:0}}>
           <span className="bebas" style={{fontSize:30,color:CR,display:"block"}}>Productos</span>
           <p style={{fontSize:14,color:MU}}>Precios y promos por volumen</p>
         </div>
@@ -1956,7 +2111,7 @@ function Productos({prods,setProds}){
       {/* ── Búsqueda, filtros y orden ── */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="🔎 Buscar por nombre, marca, envase o estilo..." style={{marginBottom:10}}/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div>
             <Lbl t="Marca"/>
             <select value={filtroMarca} onChange={e=>setFiltroMarca(e.target.value)}>
@@ -1999,7 +2154,7 @@ function Productos({prods,setProds}){
           {editId===p.id?(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
               <div><Lbl t="Nombre"/><input value={ef.nombre} onChange={e=>setEf(x=>({...x,nombre:e.target.value}))}/></div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
                 <div><Lbl t="Marca"/><input value={ef.marca||""} onChange={e=>setEf(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
                 <div><Lbl t="Envase"/><select value={ef.envase||"PET"} onChange={e=>setEf(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
               </div>
@@ -2068,7 +2223,7 @@ function Productos({prods,setProds}){
                   </div>
                 ))}
                 {showPromo===p.id?(
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,marginTop:8}}>
+                  <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) auto",gap:8,marginTop:8}}>
                     <div><Lbl t="Desde (L)"/><input type="number" value={pf.minCantidad} onChange={e=>setPf(x=>({...x,minCantidad:e.target.value}))} placeholder="48"/></div>
                     <div><Lbl t="Precio/L"/><input type="number" value={pf.precioUnitario} onChange={e=>setPf(x=>({...x,precioUnitario:e.target.value}))} placeholder="1400"/></div>
                     <div style={{display:"flex",alignItems:"flex-end",gap:6}}>
@@ -2087,7 +2242,7 @@ function Productos({prods,setProds}){
       <Modal open={showNewProd} onClose={()=>setShowNewProd(false)} title="Nuevo producto">
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <div><Lbl t="Nombre"/><input value={np.nombre} onChange={e=>setNp(x=>({...x,nombre:e.target.value}))} placeholder="Ej: Stout Malandra" autoFocus/></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
             <div><Lbl t="Marca"/><input value={np.marca} onChange={e=>setNp(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
             <div><Lbl t="Envase"/><select value={np.envase} onChange={e=>setNp(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
           </div>
@@ -2274,7 +2429,7 @@ function Speeches({speeches,setSpeeches}){
         <div key={s.id} style={{background:CA,border:`1px solid ${editId===s.id?G:BO}`,borderRadius:18,padding:16,marginBottom:10}}>
           {editId===s.id?(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
                 <div><Lbl t="Categoría"/><select value={editF.categoria} onChange={e=>setEditF(p=>({...p,categoria:e.target.value}))}>{CATS.map(c=><option key={c}>{c}</option>)}</select></div>
                 <div><Lbl t="Canal"/><select value={editF.canal} onChange={e=>setEditF(p=>({...p,canal:e.target.value}))}>{["WhatsApp","Instagram"].map(c=><option key={c}>{c}</option>)}</select></div>
               </div>
@@ -2301,7 +2456,7 @@ function Speeches({speeches,setSpeeches}){
       ))}
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo speech">
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
             <div><Lbl t="Categoría"/><select value={nF.categoria} onChange={e=>setNF(p=>({...p,categoria:e.target.value}))}>{CATS.map(c=><option key={c}>{c}</option>)}</select></div>
             <div><Lbl t="Canal"/><select value={nF.canal} onChange={e=>setNF(p=>({...p,canal:e.target.value}))}>{["WhatsApp","Instagram"].map(c=><option key={c}>{c}</option>)}</select></div>
           </div>
@@ -2348,7 +2503,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Cuentas corrientes</span>
       <p style={{fontSize:14,color:MU,marginBottom:16}}>{todasConDeuda.length} cliente{todasConDeuda.length!==1?"s":""} con saldo pendiente</p>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
         <div style={{background:CA,border:`1px solid ${RE}33`,borderRadius:18,padding:16}}>
           <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Total pendiente</div>
           <div className="bebas" style={{fontSize:24,color:"#C24545"}}>{fmtARS(deudaTotal)}</div>
@@ -2521,7 +2676,7 @@ function Caja({clientes,prods}){
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Caja</span>
       <p style={{fontSize:14,color:MU,marginBottom:20}}>Ventas totales y ganancia según el % de comisión configurado en cada cliente</p>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
         <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16}}>
           <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Total facturado</div>
           <div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(totalFacturado)}</div>
@@ -2584,7 +2739,7 @@ function Caja({clientes,prods}){
           </div>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
         </div>
@@ -2597,7 +2752,7 @@ function Caja({clientes,prods}){
           </select>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:4}}>
           <div><Lbl t="Estado"/>
             <select value={fEstado} onChange={e=>setFEstado(e.target.value)}>
               <option value="todos">Todos</option>
@@ -2619,7 +2774,7 @@ function Caja({clientes,prods}){
       {hayFiltrosActivos&&(
         <div style={{background:GDK,borderRadius:18,padding:16,marginBottom:16}}>
           <div style={{fontSize:13,color:"#8FE3B4",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Resultado del filtro · {resumenFiltrado.cantidad} venta{resumenFiltrado.cantidad!==1?"s":""}</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
             <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Facturado</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.facturado)}</div></div>
             <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Ganancia</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.ganancia)}</div></div>
             <div><div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Cobrado</div><div className="bebas" style={{fontSize:20,color:"#fff"}}>{fmtARS(resumenFiltrado.cobrado)}</div></div>
@@ -2704,7 +2859,7 @@ function Ventas({clientes,prods}){
       {/* ── Filtros ── */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🔍 Filtrar ventas</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
         </div>
@@ -2715,7 +2870,7 @@ function Ventas({clientes,prods}){
             {clientesConVentas.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Producto"/>
             <select value={fProducto} onChange={e=>setFProducto(e.target.value)}>
               <option value="">Todos</option>
@@ -2748,7 +2903,7 @@ function Ventas({clientes,prods}){
         )}
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:20}}>
         {[{l:hayFiltrosVenta?"Total filtrado":"Total histórico",v:fmtARS(totalARS),ic:I.trend},{l:"Litros",v:`${litros} L`,ic:I.box}].map(s=>(
           <div key={s.l} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16}}>
             <div style={{width:26,height:26,borderRadius:9,background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{React.cloneElement(s.ic,{width:14,height:14})}</div>
@@ -2948,7 +3103,7 @@ function Metricas({clientes,prods}){
       <p style={{fontSize:14,color:MU,marginBottom:20}}>Rankings de ventas · {todas.length} registros</p>
 
       {/* KPIs generales */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
         <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14}}>
           <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Ticket promedio</div>
           <div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(ticketPromedio)}</div>
@@ -3058,7 +3213,7 @@ function Metricas({clientes,prods}){
       </div>
  
       {/* Resumen general por producto */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
         {rankingProducto.map(p=>(
           <div key={p.id} style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:14}}>
             <div style={{fontSize:14,fontWeight:700,color:G,marginBottom:6}}>{p.nombre}</div>
@@ -3230,7 +3385,7 @@ function Notas({notas,setNotas}){
       {filtradas.length===0?(
         <p style={{color:MU,fontSize:16,textAlign:"center",padding:"30px 16px"}}>{(notas||[]).length===0?"Todavía no cargaste notas.":"No hay notas que coincidan con la búsqueda/filtro."}</p>
       ):(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
           {filtradas.map(n=>{
             const col=colorNota(n.color);
             return(
@@ -3743,6 +3898,7 @@ const TABS=[
   {key:"maps",label:"Buscar",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>},
   {key:"speeches",label:"Speeches",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
   {key:"notas",label:"Notas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>},
+  {key:"difusion",label:"Difusión",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>},
   {key:"ventas",label:"Ventas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>},
   {key:"caja",label:"Caja",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v2m0 8v2M9.5 9.5a2.5 2.5 0 012.5-1.5c1.5 0 2.5.8 2.5 2s-1 1.7-2.5 2-2.5.7-2.5 2 1 2 2.5 2a2.5 2.5 0 002.5-1.5"/></svg>},
   {key:"metricas",label:"Métricas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
@@ -3924,7 +4080,7 @@ function App(){
           </div>
         </aside>
  
-        <main style={{flex:1,paddingTop:56,minHeight:"100vh"}} id="mn">
+        <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} prospectos={prospectos} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
@@ -3933,6 +4089,7 @@ function App(){
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="notas"&&<Notas notas={notas} setNotas={setNotas}/>}
+          {tab==="difusion"&&<EnvioMasivo clientes={clientes}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
@@ -3983,7 +4140,7 @@ function App(){
           <div onClick={e=>e.stopPropagation()} style={{width:"100%",background:"#FFFFFF",borderRadius:"20px 20px 0 0",padding:"10px 16px 26px",maxHeight:"75vh",overflowY:"auto"}}>
             <div style={{width:40,height:5,borderRadius:3,background:BO,margin:"4px auto 14px"}}/>
             <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:14}}>Más secciones</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10}}>
               {MORE_TAB_KEYS.map(key=>{
                 const t=TABS.find(x=>x.key===key);
                 if(!t)return null;
