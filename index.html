@@ -1023,6 +1023,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora})
  
 // ── INICIO ────────────────────────────────────────────────────────
 function Inicio({clientes,prospectos,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}){
+  const[catalogoAbierto,setCatalogoAbierto]=useState(false);
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const totalARS=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+v.monto,0),0);
   const litros=clientes.reduce((s,c)=>s+c.ventas.reduce((a,v)=>a+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),0);
@@ -1254,10 +1255,21 @@ function Inicio({clientes,prospectos,pedidos,prods,notas,metaSemanal,setMetaSema
       </div>
  
       {/* Línea Farol */}
-      <button onClick={()=>setTab("productos")} style={{width:"100%",background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",cursor:"pointer",textAlign:"left"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px 8px"}}><span style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em"}}>Catálogo de productos</span><span style={{fontSize:13,color:G,display:"flex",alignItems:"center",gap:4}}>{I.edit}Editar precios</span></div>
-        {prods.map(p=><div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:16,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:14,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"}{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:20,color:G}}>{fmtARS(p.precio)}<span style={{fontSize:12,color:MU,fontWeight:400}}> /L</span></div></div>)}
-      </button>
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
+        <div onClick={()=>setCatalogoAbierto(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",cursor:"pointer"}}>
+          <span style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:7}}>
+            Catálogo de productos
+            <span style={{background:BG,color:MU,borderRadius:10,padding:"1px 7px",fontSize:12,fontWeight:700,textTransform:"none",letterSpacing:"normal"}}>{prods.length}</span>
+          </span>
+          <span style={{display:"flex",alignItems:"center",gap:12}}>
+            <button onClick={e=>{e.stopPropagation();setTab("productos");}} style={{fontSize:13,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>{I.edit}Editar precios</button>
+            <span style={{color:MU,display:"flex",transition:"transform 0.2s",transform:catalogoAbierto?"rotate(90deg)":"rotate(0deg)"}}>{I.chev}</span>
+          </span>
+        </div>
+        {catalogoAbierto&&prods.map(p=>(
+          <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:16,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:14,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"}{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:20,color:G}}>{fmtARS(p.precio)}<span style={{fontSize:12,color:MU,fontWeight:400}}> /L</span></div></div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1475,6 +1487,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
 function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const[showNew,setShowNew]=useState(false);
+  const[editandoId,setEditandoId]=useState(null);
   // Cabecera del pedido
   const[clienteId,setClienteId]=useState("");
   const[fechaEntrega,setFechaEntrega]=useState(hoyISO());
@@ -1489,7 +1502,20 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
     setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:""}]);
-    setDescuentoPct("");setIncluyeIVA(false);
+    setDescuentoPct("");setIncluyeIVA(false);setEditandoId(null);
+  };
+
+  const abrirEdicion=p=>{
+    setEditandoId(p.id);
+    setClienteId(p.clienteId||"");
+    setFechaEntrega(p.fechaEntrega||hoyISO());
+    setHoraEntrega(p.horaEntrega||"10:00");
+    setPagado(!!p.pagado);
+    setNotas(p.notas||"");
+    setLineas((p.lineas&&p.lineas.length>0?p.lineas:[{productoId:"rubia",cantidad:"",monto:""}]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||"")})));
+    setDescuentoPct(p.descuentoPct?String(p.descuentoPct):"");
+    setIncluyeIVA(!!p.incluyeIVA);
+    setShowNew(true);
   };
  
   const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:""}]);
@@ -1522,14 +1548,24 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
     if(!clienteId||lineasValidas.length===0)return;
     // Factor de ajuste (descuento + IVA) que se reparte proporcionalmente entre las líneas al confirmar la entrega
     const factor=totalPedido>0?totalFinal/totalPedido:1;
-    const nuevoPedido={
-      id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
-      lineas:lineasValidas.map(l=>({...l,cantidad:Number(l.cantidad),monto:Number(l.monto||0)})),
-      descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
-      montoTotal:totalFinal,
-      estado:"pendiente",creadoEn:new Date().toISOString()
-    };
-    setPedidos(p=>[nuevoPedido,...p]);
+    const lineasFinal=lineasValidas.map(l=>({...l,cantidad:Number(l.cantidad),monto:Number(l.monto||0)}));
+    if(editandoId){
+      setPedidos(prev=>prev.map(p=>p.id!==editandoId?p:{
+        ...p,clienteId,fechaEntrega,horaEntrega,pagado,notas,
+        lineas:lineasFinal,
+        descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
+        montoTotal:totalFinal,
+      }));
+    }else{
+      const nuevoPedido={
+        id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
+        lineas:lineasFinal,
+        descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
+        montoTotal:totalFinal,
+        estado:"pendiente",creadoEn:new Date().toISOString()
+      };
+      setPedidos(p=>[nuevoPedido,...p]);
+    }
     setShowNew(false);
     resetForm();
   };
@@ -1616,7 +1652,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
       {pendientes.length===0
         ?<div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:24,textAlign:"center",marginBottom:20}}>
           <div style={{fontSize:16,color:MU,marginBottom:8}}>Sin entregas pendientes</div>
-          <Btn onClick={()=>setShowNew(true)}>{I.plus}Cargar primer pedido</Btn>
+          <Btn onClick={()=>{resetForm();setShowNew(true);}}>{I.plus}Cargar primer pedido</Btn>
         </div>
         :<div style={{marginBottom:20}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
@@ -1670,6 +1706,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
                 {p.notas&&<div style={{fontSize:14,color:"#A89682",marginBottom:10}}>{p.notas}</div>}
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>marcarEntregado(p.id)} style={{flex:1,minHeight:44,padding:"9px 0",borderRadius:22,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.check} Marcar entregado</button>
+                  <button onClick={()=>abrirEdicion(p)} title="Editar pedido" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"none",color:G,border:`1px solid ${G}44`,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.edit}</button>
                   {cliente&&cliente.telefono?(
                     <a href={waLink(cliente.telefono,mensajePedido(p,nombreCliente,prods))} target="_blank" rel="noreferrer" title="Enviar pedido por WhatsApp" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"#25D36615",color:"#25D366",border:"1px solid #25D36640",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}>{I.wa}</a>
                   ):(
@@ -1707,7 +1744,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
         </div>
       )}
  
-      <Modal open={showNew} onClose={()=>{setShowNew(false);resetForm();}} title="Nuevo pedido">
+      <Modal open={showNew} onClose={()=>{setShowNew(false);resetForm();}} title={editandoId?"Editar pedido":"Nuevo pedido"}>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {/* Cliente */}
           <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
@@ -1801,7 +1838,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
           <div><Lbl t="Notas (opcional)"/><textarea rows={2} value={notas} onChange={e=>setNotas(e.target.value)} placeholder="Alguna aclaración para la entrega..."/></div>
           <div style={{display:"flex",gap:8,paddingTop:4}}>
             <Btn variant="ghost" onClick={()=>{setShowNew(false);resetForm();}}>Cancelar</Btn>
-            <Btn variant="green" onClick={confirmarPedido} disabled={!clienteId||lineasValidas.length===0}>{I.box}Confirmar pedido</Btn>
+            <Btn variant="green" onClick={confirmarPedido} disabled={!clienteId||lineasValidas.length===0}>{I.box}{editandoId?"Guardar cambios":"Confirmar pedido"}</Btn>
           </div>
         </div>
       </Modal>
