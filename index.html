@@ -321,6 +321,22 @@ function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
 }
 const uid=()=>"id"+Date.now()+Math.random().toString(36).slice(2);
 const hoyISO=()=>new Date().toISOString().slice(0,10);
+const reproducirBeep=()=>{
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    [0,320,640].forEach(delay=>{
+      setTimeout(()=>{
+        const o=ctx.createOscillator(),g=ctx.createGain();
+        o.type="sine";o.frequency.value=880;
+        o.connect(g);g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.001,ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.3,ctx.currentTime+0.02);
+        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.28);
+        o.start();o.stop(ctx.currentTime+0.3);
+      },delay);
+    });
+  }catch(e){}
+};
  
 // ── Cuenta corriente ──────────────────────────────────────────────
 function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
@@ -418,8 +434,8 @@ function Btn({children,onClick,variant,disabled,small}){
 function Modal({open,onClose,title,children}){
   if(!open)return null;
   return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.5)"}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${BO}`,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -8px 40px rgba(0,0,0,0.15)"}}>
+    <div style={{position:"fixed",inset:0,zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.5)",padding:20}}>
+      <div style={{background:SU,border:`1px solid ${BO}`,borderRadius:20,width:"100%",maxWidth:540,maxHeight:"88vh",overflowY:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 20px",borderBottom:`1px solid ${BO}`,position:"sticky",top:0,background:SU}}>
           <span className="bebas" style={{fontSize:24,color:CR}}>{title}</span>
           <button onClick={onClose} style={{background:"none",border:"none",color:MU,cursor:"pointer",padding:4,fontSize:22}}>✕</button>
@@ -1902,7 +1918,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds}){
       <Modal open={showNew} onClose={()=>{setShowNew(false);resetForm();}} title={editandoId?"Editar pedido":"Nuevo pedido"}>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {/* Cliente */}
-          <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
+          <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{[...clientes].sort((a,b)=>a.nombre.localeCompare(b.nombre)).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
  
           {/* Líneas de productos */}
           <div>
@@ -3308,9 +3324,32 @@ function Metricas({clientes,prods}){
  
 // ── CONFIGURACIÓN ─────────────────────────────────────────────────
 // ── NOTAS ─────────────────────────────────────────────────────────
-function FormNota({initial,onSave,onCancel,onDelete}){
-  const[f,setF]=useState({titulo:initial.titulo||"",contenido:initial.contenido||"",color:initial.color||NOTE_COLORS[0].key});
+function FormNota({initial,onSave,onCancel,onDelete,cal}){
+  const[f,setF]=useState({
+    titulo:initial.titulo||"",contenido:initial.contenido||"",color:initial.color||NOTE_COLORS[0].key,
+    recordatorioFecha:initial.recordatorioFecha||"",recordatorioHora:initial.recordatorioHora||"09:00",
+  });
+  const[calSync,setCalSync]=useState(!!initial.calSync);
+  const[saving,setSaving]=useState(false);
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const calSafe=cal||{calToken:null,calError:"",login:()=>{},crearEvento:async()=>false};
+  const tieneRecordatorio=!!f.recordatorioFecha;
+  const guardar=async()=>{
+    if(!f.titulo.trim())return;
+    setSaving(true);
+    let calOk=false;
+    if(tieneRecordatorio&&calSync&&calSafe.calToken){
+      calOk=await calSafe.crearEvento({titulo:"📝 "+f.titulo,descripcion:f.contenido||"",fecha:f.recordatorioFecha,hora:f.recordatorioHora||"09:00",durMin:15});
+    }
+    setSaving(false);
+    onSave({
+      ...f,titulo:f.titulo.trim(),
+      recordatorioFecha:tieneRecordatorio?f.recordatorioFecha:"",
+      recordatorioHora:tieneRecordatorio?(f.recordatorioHora||"09:00"):"",
+      recordatorioDisparado:tieneRecordatorio?!!initial.recordatorioDisparado&&initial.recordatorioFecha===f.recordatorioFecha&&initial.recordatorioHora===f.recordatorioHora:false,
+      calSync:tieneRecordatorio&&calSync&&calOk,
+    });
+  };
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Título"/><input value={f.titulo} onChange={s("titulo")} placeholder="Ej: Pedido especial Bar Norte" autoFocus/></div>
@@ -3323,17 +3362,38 @@ function FormNota({initial,onSave,onCancel,onDelete}){
           ))}
         </div>
       </div>
+      <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:12,padding:14}}>
+        <Lbl t="⏰ Recordatorio (opcional)"/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:tieneRecordatorio?10:0}}>
+          <div><input type="date" value={f.recordatorioFecha} onChange={s("recordatorioFecha")}/></div>
+          <div><input type="time" value={f.recordatorioHora} onChange={s("recordatorioHora")} disabled={!tieneRecordatorio}/></div>
+        </div>
+        {tieneRecordatorio&&(
+          <>
+            <button type="button" onClick={()=>setF(p=>({...p,recordatorioFecha:""}))} style={{fontSize:13,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline",marginBottom:10}}>✕ Quitar recordatorio</button>
+            <div style={{fontSize:13,color:MU,marginBottom:10,lineHeight:1.5}}>Con la app abierta te avisamos con sonido y aviso en pantalla a esa hora.</div>
+            {calSafe.calToken?(
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:14,color:CR}}>
+                <input type="checkbox" checked={calSync} onChange={e=>setCalSync(e.target.checked)} style={{width:18,height:18,flexShrink:0,accentColor:G}}/>
+                También crear evento en Google Calendar
+              </label>
+            ):(
+              <div style={{fontSize:13,color:AM,lineHeight:1.5}}>💡 Conectá Google Calendar en Configuración para que este recordatorio también te llegue como notificación del celular, incluso con la app cerrada.</div>
+            )}
+          </>
+        )}
+      </div>
       <div style={{display:"flex",gap:8,paddingTop:4,alignItems:"center"}}>
         <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
         {onDelete&&<button onClick={onDelete} title="Eliminar nota" style={{width:42,height:42,borderRadius:10,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.trash}</button>}
         <div style={{flex:1}}/>
-        <Btn variant="green" onClick={()=>f.titulo.trim()&&onSave({...f,titulo:f.titulo.trim()})} disabled={!f.titulo.trim()}>Guardar</Btn>
+        <Btn variant="green" onClick={guardar} disabled={!f.titulo.trim()||saving}>{saving?"Guardando...":"Guardar"}</Btn>
       </div>
     </div>
   );
 }
 
-function Notas({notas,setNotas}){
+function Notas({notas,setNotas,cal}){
   const[modalOpen,setModalOpen]=useState(false);
   const[editing,setEditing]=useState(null);
   const[filtroColor,setFiltroColor]=useState("");
@@ -3366,13 +3426,23 @@ function Notas({notas,setNotas}){
       .sort((a,b)=>new Date(b.actualizadoEn||b.creadoEn)-new Date(a.actualizadoEn||a.creadoEn));
   },[notas,filtroColor,busqueda]);
 
+  const permisoNotif=typeof Notification!=="undefined"?Notification.permission:"unsupported";
+
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Notas</span>
         <Btn variant="green" small onClick={nuevaNota}>{I.plus}Nueva</Btn>
       </div>
-      <p style={{fontSize:14,color:MU,marginBottom:18}}>Bloc de notas con colores para organizar ideas, pendientes y recordatorios.</p>
+      <p style={{fontSize:14,color:MU,marginBottom:12}}>Bloc de notas con colores para organizar ideas, pendientes y recordatorios.</p>
+      {permisoNotif==="default"&&(
+        <button onClick={()=>Notification.requestPermission()} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:G+"11",border:`1px solid ${G}33`,borderRadius:10,padding:"10px 14px",marginBottom:14,cursor:"pointer",fontSize:14,color:G,fontWeight:600}}>
+          🔔 Activar avisos del celular para tus recordatorios
+        </button>
+      )}
+      {permisoNotif==="denied"&&(
+        <div style={{fontSize:13,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 14px",marginBottom:14,lineHeight:1.5}}>🔕 Los avisos del celular están bloqueados para esta app. Igual te va a avisar con sonido y aviso en pantalla mientras la tenés abierta.</div>
+      )}
 
       <input placeholder="Buscar en notas..." value={busqueda} onChange={e=>setBusqueda(e.target.value)} style={{marginBottom:10}}/>
       <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
@@ -3388,11 +3458,18 @@ function Notas({notas,setNotas}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
           {filtradas.map(n=>{
             const col=colorNota(n.color);
+            const tieneRec=!!n.recordatorioFecha;
+            const recVencido=tieneRec&&new Date(`${n.recordatorioFecha}T${n.recordatorioHora||"09:00"}:00`)<new Date();
             return(
               <button key={n.id} onClick={()=>editarNota(n)} style={{textAlign:"left",background:col.bg,border:`1px solid ${col.bd}`,borderRadius:14,padding:12,cursor:"pointer",display:"flex",flexDirection:"column",gap:6,minHeight:104}}>
                 <div style={{fontSize:15,fontWeight:700,color:col.tx,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{n.titulo}</div>
                 {n.contenido&&<div style={{fontSize:13,color:col.tx,opacity:0.85,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:4,WebkitBoxOrient:"vertical",flex:1,lineHeight:1.4}}>{n.contenido}</div>}
-                <div style={{fontSize:11,color:col.tx,opacity:0.6,marginTop:"auto"}}>{fmtDateTime(n.actualizadoEn||n.creadoEn)}</div>
+                {tieneRec&&(
+                  <div style={{fontSize:11,fontWeight:700,color:col.tx,opacity:recVencido&&n.recordatorioDisparado?0.5:1,display:"flex",alignItems:"center",gap:4,marginTop:n.contenido?0:"auto"}}>
+                    ⏰ {fmtDate(n.recordatorioFecha)} · {n.recordatorioHora}hs{n.calSync?" · 📅":""}
+                  </div>
+                )}
+                <div style={{fontSize:11,color:col.tx,opacity:0.6,marginTop:tieneRec?0:"auto"}}>{fmtDateTime(n.actualizadoEn||n.creadoEn)}</div>
               </button>
             );
           })}
@@ -3400,7 +3477,7 @@ function Notas({notas,setNotas}){
       )}
 
       <Modal open={modalOpen} onClose={cerrar} title={editing&&editing.id?"Editar nota":"Nueva nota"}>
-        {editing&&<FormNota initial={editing} onSave={guardar} onCancel={cerrar} onDelete={editing.id?eliminar:null}/>}
+        {editing&&<FormNota initial={editing} onSave={guardar} onCancel={cerrar} onDelete={editing.id?eliminar:null} cal={cal}/>}
       </Modal>
     </div>
   );
@@ -4033,6 +4110,27 @@ function App(){
   const[metaSemanal,setMetaSemanal]=useState(0);
   const[diasMora,setDiasMora]=useState(15);
   const cal=useGoogleCalendar();
+
+  // Recordatorios de Notas: chequeo periódico + alarma en pantalla, funciona en cualquier pestaña
+  const[alarmas,setAlarmas]=useState([]);
+  useEffect(()=>{
+    const chequear=()=>{
+      const ahora=new Date();
+      const vencidas=(notas||[]).filter(n=>n.recordatorioFecha&&!n.recordatorioDisparado&&new Date(`${n.recordatorioFecha}T${n.recordatorioHora||"09:00"}:00`)<=ahora);
+      if(vencidas.length===0)return;
+      vencidas.forEach(n=>{
+        if(typeof Notification!=="undefined"&&Notification.permission==="granted"){
+          try{new Notification("⏰ "+n.titulo,{body:n.contenido||"Recordatorio de Grunge & Farol",tag:n.id});}catch(e){}
+        }
+      });
+      setAlarmas(prev=>[...prev,...vencidas.map(n=>({id:n.id,titulo:n.titulo,contenido:n.contenido}))]);
+      setNotas(prev=>prev.map(n=>vencidas.some(v=>v.id===n.id)?{...n,recordatorioDisparado:true}:n));
+      reproducirBeep();
+    };
+    chequear();
+    const interval=setInterval(chequear,20000);
+    return()=>clearInterval(interval);
+  },[notas]);
  
   // Sincronización Firebase — todos los datos en la nube
   const{status:syncStatus,errorMsg:syncError}=useFirebaseSync(
@@ -4057,6 +4155,20 @@ function App(){
  
   return(
     <div style={{minHeight:"100vh",background:BG}}>
+      {alarmas.length>0&&(
+        <div style={{position:"fixed",top:64,left:0,right:0,zIndex:150,display:"flex",flexDirection:"column",gap:8,padding:"0 16px",alignItems:"center"}}>
+          {alarmas.map(a=>(
+            <div key={a.id} style={{width:"100%",maxWidth:520,background:"#1A1A1A",color:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 8px 24px rgba(0,0,0,0.35)",display:"flex",alignItems:"flex-start",gap:10}}>
+              <span style={{fontSize:20,flexShrink:0}}>⏰</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:700}}>{a.titulo}</div>
+                {a.contenido&&<div style={{fontSize:13,opacity:0.8,marginTop:2}}>{a.contenido}</div>}
+              </div>
+              <button onClick={()=>setAlarmas(prev=>prev.filter(x=>x.id!==a.id))} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",fontSize:18,padding:2,flexShrink:0}}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{display:"flex"}}>
         {/* Sidebar desktop */}
         <aside style={{width:200,height:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none",overflow:"hidden"}} id="sb">
@@ -4088,7 +4200,7 @@ function App(){
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
-          {tab==="notas"&&<Notas notas={notas} setNotas={setNotas}/>}
+          {tab==="notas"&&<Notas notas={notas} setNotas={setNotas} cal={cal}/>}
           {tab==="difusion"&&<EnvioMasivo clientes={clientes}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
