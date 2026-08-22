@@ -1451,6 +1451,7 @@ function contextoNegocio(clientes,pedidos,prods){
   const catalogo=prods.map(p=>`${nombreProdEnvase(p)} — ${fmtARS(p.precio)}/L`).join("\n");
   return`Sos el asistente comercial de Grunge & Farol, una distribuidora de cerveza artesanal en Buenos Aires (marcas Grunge y Farol, "Premium, Popular, Porteña"). Ayudás a Nahu (quien te habla) con ventas, cobranzas, atención a clientes y comercios. Respondé breve, concreto, en español rioplatense, sin vueltas.\n\nCATÁLOGO:\n${catalogo||"(sin productos cargados)"}\n\nCLIENTES (${clientes.length} en total${clientes.length>80?", mostrando los primeros 80":""}):\n${resumenClientes||"(sin clientes cargados)"}\n\nPedidos pendientes de entrega: ${pedidosPend}.\nHoy es ${fmtDate(hoyISO())}.`;
 }
+const ANALISIS_PROMPT="Analizá todo lo que ves de mi negocio (clientes, deuda, pedidos pendientes y catálogo) y dame sugerencias concretas para vender más y mejorar. Organizalo en 4 puntos cortos: 1) a qué clientes debería contactar hoy y por qué, 2) oportunidades de venta que notes, 3) alertas de cobranza urgentes si las hay, 4) cualquier otra mejora que veas. Sé específico, usá nombres y números reales de los datos, nada genérico.";
 function AsistenteIA({clientes,pedidos,prods}){
   const[url,setUrl]=useState(()=>{try{return localStorage.getItem(ASISTENTE_URL_LS_KEY)||"";}catch(e){return"";}});
   const[configurando,setConfigurando]=useState(false);
@@ -1459,8 +1460,8 @@ function AsistenteIA({clientes,pedidos,prods}){
   const[input,setInput]=useState("");
   const[cargando,setCargando]=useState(false);
   const[error,setError]=useState("");
-  const scrollRef=useState(null)[0];
   const finRef=React.useRef(null);
+  const autoDisparado=React.useRef(false);
 
   useEffect(()=>{try{localStorage.setItem(ASISTENTE_CHAT_LS_KEY,JSON.stringify(mensajes.slice(-40)));}catch(e){}},[mensajes]);
   useEffect(()=>{finRef.current&&finRef.current.scrollIntoView({behavior:"smooth"});},[mensajes,cargando]);
@@ -1472,12 +1473,13 @@ function AsistenteIA({clientes,pedidos,prods}){
     setConfigurando(false);
   };
 
-  const enviar=async(textoForzado)=>{
+  const enviar=async(textoForzado,mostrarForzado)=>{
     const texto=(textoForzado||input).trim();
     if(!texto||cargando)return;
     if(!url){setConfigurando(true);return;}
+    const mostrar=mostrarForzado||texto;
     setError("");
-    const nuevos=[...mensajes,{rol:"user",texto}];
+    const nuevos=[...mensajes,{rol:"user",texto,mostrar}];
     setMensajes(nuevos);
     setInput("");
     setCargando(true);
@@ -1485,16 +1487,28 @@ function AsistenteIA({clientes,pedidos,prods}){
       const contexto=contextoNegocio(clientes,pedidos,prods);
       const historial=nuevos.slice(-8).map(m=>({rol:m.rol,texto:m.texto}));
       const resp=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mensaje:texto,historial,contexto})});
-      if(!resp.ok)throw new Error("HTTP "+resp.status);
-      const data=await resp.json();
-      const respuesta=data.respuesta||data.reply||data.texto||"No obtuve respuesta.";
+      let data=null;
+      try{data=await resp.json();}catch(e){}
+      if(!resp.ok){
+        throw new Error(`HTTP ${resp.status}${data&&data.error?": "+data.error:""}`);
+      }
+      const respuesta=(data&&(data.respuesta||data.reply||data.texto))||"No obtuve respuesta.";
       setMensajes(prev=>[...prev,{rol:"assistant",texto:respuesta}]);
     }catch(e){
-      setError("No se pudo conectar con el asistente. Revisá la URL en Configurar o probá de nuevo.");
+      setError("No se pudo conectar con el asistente. Detalle: "+(e&&e.message?e.message:"error desconocido")+". Revisá la URL en Configurar o probá de nuevo.");
     }finally{
       setCargando(false);
     }
   };
+
+  // Al entrar sin conversación previa, el asistente analiza solo y sugiere mejoras
+  useEffect(()=>{
+    if(autoDisparado.current)return;
+    if(url&&mensajes.length===0){
+      autoDisparado.current=true;
+      enviar(ANALISIS_PROMPT,"📊 Analizá mi negocio y dame sugerencias");
+    }
+  },[url]);
 
   const sugerencias=["¿A quién le ofrezco algo hoy?","Ayudame a responder una objeción de precio","Resumen de deuda pendiente","Ideas para reactivar clientes inactivos"];
 
@@ -1503,7 +1517,7 @@ function AsistenteIA({clientes,pedidos,prods}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>✨ Asistente IA</span>
         <div style={{display:"flex",gap:6}}>
-          {mensajes.length>0&&<button onClick={()=>{if(confirm("¿Borrar la conversación?")){setMensajes([]);try{localStorage.removeItem(ASISTENTE_CHAT_LS_KEY);}catch(e){}}}} style={{fontSize:13,color:MU,background:"none",border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>Borrar chat</button>}
+          {mensajes.length>0&&<button onClick={()=>{if(confirm("¿Borrar la conversación?")){setMensajes([]);autoDisparado.current=false;try{localStorage.removeItem(ASISTENTE_CHAT_LS_KEY);}catch(e){}}}} style={{fontSize:13,color:MU,background:"none",border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>Borrar chat</button>}
           <button onClick={()=>{setUrlTmp(url);setConfigurando(true);}} style={{fontSize:13,color:MU,background:"none",border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>⚙️ Configurar</button>
         </div>
       </div>
@@ -1523,15 +1537,22 @@ function AsistenteIA({clientes,pedidos,prods}){
 
       {!url&&!configurando&&(
         <div style={{background:AM+"14",border:`1px solid ${AM}33`,borderRadius:14,padding:14,marginBottom:14,fontSize:14,color:CR,lineHeight:1.5}}>
-          💡 Todavía no está conectado. Tocá "⚙️ Configurar" y pegá la URL del asistente una vez que lo despliegues (el código y los pasos te los paso aparte).
+          💡 Todavía no está conectado. Tocá "⚙️ Configurar" y pegá la URL del asistente una vez que lo despliegues (el código y los pasos te los paso aparte). Apenas lo conectes, te va a analizar el negocio solo.
         </div>
+      )}
+
+      {url&&mensajes.length>0&&(
+        <button onClick={()=>enviar(ANALISIS_PROMPT,"📊 Analizá mi negocio y dame sugerencias")} disabled={cargando} style={{width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:10,background:GLT,border:`1px solid ${G}44`,borderRadius:12,padding:"10px 14px",marginBottom:14,cursor:"pointer",opacity:cargando?0.6:1}}>
+          <span style={{fontSize:18}}>📊</span>
+          <span style={{fontSize:14,fontWeight:700,color:G}}>Analizar mi negocio de nuevo</span>
+        </button>
       )}
 
       <div style={{flex:1,display:"flex",flexDirection:"column",gap:10,marginBottom:14,minHeight:200}}>
         {mensajes.length===0?(
           <div style={{textAlign:"center",padding:"30px 16px",color:MU}}>
             <div style={{fontSize:36,marginBottom:10}}>🍺🤖</div>
-            <div style={{fontSize:15,marginBottom:16}}>Preguntame lo que necesites sobre ventas, clientes o cobranzas.</div>
+            <div style={{fontSize:15,marginBottom:16}}>{url?"Te estoy analizando el negocio...":"Preguntame lo que necesites sobre ventas, clientes o cobranzas."}</div>
             <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"stretch"}}>
               {sugerencias.map(s=>(
                 <button key={s} onClick={()=>enviar(s)} style={{textAlign:"left",fontSize:14,color:CR,background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:"10px 14px",cursor:"pointer"}}>{s}</button>
@@ -1540,7 +1561,7 @@ function AsistenteIA({clientes,pedidos,prods}){
           </div>
         ):mensajes.map((m,i)=>(
           <div key={i} style={{display:"flex",justifyContent:m.rol==="user"?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:14,fontSize:15,lineHeight:1.5,whiteSpace:"pre-wrap",background:m.rol==="user"?G:CA,color:m.rol==="user"?"#fff":CR,border:m.rol==="user"?"none":`1px solid ${BO}`}}>{m.texto}</div>
+            <div style={{maxWidth:"85%",padding:"10px 14px",borderRadius:14,fontSize:15,lineHeight:1.5,whiteSpace:"pre-wrap",background:m.rol==="user"?G:CA,color:m.rol==="user"?"#fff":CR,border:m.rol==="user"?"none":`1px solid ${BO}`}}>{m.rol==="user"?(m.mostrar||m.texto):m.texto}</div>
           </div>
         ))}
         {cargando&&(
@@ -4272,6 +4293,13 @@ function App(){
               </div>
             ))}
           </div>
+        )}
+
+        {/* Acceso rápido flotante al Asistente IA */}
+        {tab!=="asistente"&&(
+          <button onClick={()=>setTab("asistente")} title="Asistente IA" style={{position:"fixed",right:16,bottom:78,zIndex:45,width:52,height:52,borderRadius:"50%",background:G,border:"none",color:"#fff",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(0,0,0,0.3)"}}>
+            ✨
+          </button>
         )}
 
         {/* Header mobile */}
