@@ -1963,15 +1963,16 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const[pagado,setPagado]=useState(false);
   const[notas,setNotas]=useState("");
   // Líneas del pedido (multi-producto)
-  const[lineas,setLineas]=useState([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",promoAcumulable:false,esBono:false}]);
+  const[lineas,setLineas]=useState([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
+  const[promoAplica,setPromoAplica]=useState(false);
   const[descuentoPct,setDescuentoPct]=useState("");
   const[incluyeIVA,setIncluyeIVA]=useState(false);
   const[generandoRemitoId,setGenerandoRemitoId]=useState(null);
  
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
-    setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",promoAcumulable:false,esBono:false}]);
-    setDescuentoPct("");setIncluyeIVA(false);setEditandoId(null);
+    setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
+    setDescuentoPct("");setIncluyeIVA(false);setPromoAplica(false);setEditandoId(null);
   };
 
   const abrirEdicion=p=>{
@@ -1981,20 +1982,21 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
     setHoraEntrega(p.horaEntrega||"10:00");
     setPagado(!!p.pagado);
     setNotas(p.notas||"");
-    setLineas((p.lineas&&p.lineas.length>0?p.lineas:[{productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",promoAcumulable:false,esBono:false}]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||""),descuentoPct:l.descuentoPct?String(l.descuentoPct):"",promoAcumulable:!!l.promoAcumulable,esBono:!!l.esBono})));
+    setLineas((p.lineas&&p.lineas.length>0?p.lineas:[{productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||""),descuentoPct:l.descuentoPct?String(l.descuentoPct):"",esBono:!!l.esBono})));
     setDescuentoPct(p.descuentoPct?String(p.descuentoPct):"");
     setIncluyeIVA(!!p.incluyeIVA);
+    setPromoAplica(!!p.promoAplica);
     setShowNew(true);
   };
  
-  const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:"",descuentoPct:"",promoAcumulable:false,esBono:false}]);
+  const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
   const agregarBonoPromo=()=>{
     if(!promo51||!promo51.productoBonoId||!promoProgresoSel||promoProgresoSel.bonosPendientes<=0)return;
     const cant=promo51.cantidadBono*promoProgresoSel.bonosPendientes;
     setLineas(prev=>{
       // si la primera línea está vacía y sin usar, la reemplaza; si no, agrega una nueva
-      const base=prev.length===1&&!prev[0].cantidad&&!prev[0].monto&&!prev[0].promoAcumulable&&!prev[0].esBono?prev.slice(0,-1):prev;
-      return[...base,{id:uid(),productoId:promo51.productoBonoId,cantidad:String(cant),monto:"0",descuentoPct:"",promoAcumulable:false,esBono:true}];
+      const base=prev.length===1&&!prev[0].cantidad&&!prev[0].monto&&!prev[0].esBono?prev.slice(0,-1):prev;
+      return[...base,{id:uid(),productoId:promo51.productoBonoId,cantidad:String(cant),monto:"0",descuentoPct:"",esBono:true}];
     });
   };
   const quitarLinea=id=>setLineas(prev=>prev.filter(l=>l.id!==id));
@@ -2037,14 +2039,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
         ...p,clienteId,fechaEntrega,horaEntrega,pagado,notas,
         lineas:lineasFinal,
         descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
-        montoTotal:totalFinal,
+        montoTotal:totalFinal,promoAplica,
       }));
     }else{
       const nuevoPedido={
         id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
         lineas:lineasFinal,
         descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
-        montoTotal:totalFinal,
+        montoTotal:totalFinal,promoAplica,
         estado:"pendiente",creadoEn:new Date().toISOString()
       };
       setPedidos(p=>[nuevoPedido,...p]);
@@ -2060,11 +2062,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
     // Registrar una venta por cada línea del pedido, aplicando proporcionalmente el descuento/IVA del pedido
     setClientes(prev=>prev.map(c=>{
       if(c.id!==ped.clienteId)return c;
-      const nuevasVentas=(ped.lineas||[]).map(l=>({
-        id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
-        cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado,
-        promoAcumulable:!!l.promoAcumulable,esBono:!!l.esBono,
-      }));
+      const nuevasVentas=(ped.lineas||[]).map(l=>{
+        const prod=prods.find(x=>x.id===l.productoId);
+        return{
+          id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
+          cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado,
+          promoAcumulable:!!(ped.promoAplica&&prodCuentaParaPromo(prod,promo51)),esBono:!!l.esBono,
+        };
+      });
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
     setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado"}:p));
@@ -2164,6 +2169,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                       <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:4,padding:"2px 8px",borderRadius:20,background:esHoy?G+"1a":BG,border:`1px solid ${esHoy?G+"44":BO}`}}>
                         <span style={{fontSize:13,fontWeight:esHoy?700:500,color:esHoy?G:MU}}>{esHoy?"⏰ HOY":fmtDate(p.fechaEntrega)}{" · "+p.horaEntrega+"hs"}</span>
                       </div>
+                      {p.promoAplica&&<div style={{display:"inline-block",marginTop:4,marginLeft:6,padding:"2px 8px",borderRadius:20,background:AM+"1a",border:`1px solid ${AM}44`,fontSize:12,fontWeight:700,color:AM}}>🎁 Promo</div>}
                     </div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
@@ -2178,7 +2184,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                     const prod=prods.find(x=>x.id===l.productoId);
                     return(
                       <div key={l.id||idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:idx<lineas.length-1?6:0,marginBottom:idx<lineas.length-1?6:0,borderBottom:idx<lineas.length-1?`1px solid ${BO}`:"none"}}>
-                        <span style={{fontSize:15,color:CR}}>{prod?nombreProdEnvase(prod):l.productoId}{l.descuentoPct>0&&<span style={{fontSize:12,color:RE,marginLeft:6}}>-{l.descuentoPct}%</span>}{l.promoAcumulable&&<span style={{fontSize:12,color:G,marginLeft:6}}>🎁 promo</span>}{l.esBono&&<span style={{fontSize:12,color:AM,marginLeft:6}}>🎁 bono</span>}</span>
+                        <span style={{fontSize:15,color:CR}}>{prod?nombreProdEnvase(prod):l.productoId}{l.descuentoPct>0&&<span style={{fontSize:12,color:RE,marginLeft:6}}>-{l.descuentoPct}%</span>}{l.esBono&&<span style={{fontSize:12,color:AM,marginLeft:6}}>🎁 bono</span>}</span>
                         <div style={{display:"flex",gap:12,alignItems:"center"}}>
                           <span style={{fontSize:14,color:MU}}>{l.cantidad}L</span>
                           <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(l.monto||0)}</span>
@@ -2238,18 +2244,25 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {/* Cliente */}
           <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{[...clientes].sort((a,b)=>a.nombre.localeCompare(b.nombre)).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
-          {promo51&&promo51.activo&&promoProgresoSel&&(
-            promoProgresoSel.bonosPendientes>0?(
-              <div style={{background:AM+"18",border:`1px solid ${AM}44`,borderRadius:10,padding:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                <span style={{fontSize:20}}>🎁</span>
-                <span style={{flex:1,fontSize:14,color:CR,minWidth:180}}>¡Le tocan <b>{promo51.cantidadBono*promoProgresoSel.bonosPendientes}</b> bonificado(s) de la promo {promo51.cantidadNecesaria}+{promo51.cantidadBono}!</span>
-                <button onClick={agregarBonoPromo} style={{fontSize:13,fontWeight:700,color:"#fff",background:AM,border:"none",borderRadius:8,padding:"7px 12px",cursor:"pointer",flexShrink:0}}>+ Agregar bono</button>
-              </div>
-            ):(
-              <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",fontSize:13,color:MU}}>
-                🎁 Promo {promo51.cantidadNecesaria}+{promo51.cantidadBono}: lleva {promoProgresoSel.enCicloActual}/{promo51.cantidadNecesaria} acumulados, le faltan {promoProgresoSel.faltan} para el próximo bono.
-              </div>
-            )
+          {promo51&&promo51.activo&&clienteSel&&(
+            <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={promoAplica} onChange={e=>setPromoAplica(e.target.checked)} style={{width:18,height:18,flexShrink:0,accentColor:G}}/>
+                <span style={{fontSize:14,fontWeight:600,color:promoAplica?G:CR}}>🎁 Este pedido participa de la promo {promo51.cantidadNecesaria}+{promo51.cantidadBono}</span>
+              </label>
+              {promoProgresoSel&&(
+                promoProgresoSel.bonosPendientes>0?(
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",paddingTop:4,borderTop:`1px solid ${BO}`}}>
+                    <span style={{fontSize:13,color:AM,fontWeight:600,flex:1,minWidth:150}}>🎁 ¡Le tocan {promo51.cantidadBono*promoProgresoSel.bonosPendientes} bonificado(s)!</span>
+                    <button onClick={agregarBonoPromo} style={{fontSize:13,fontWeight:700,color:"#fff",background:AM,border:"none",borderRadius:8,padding:"7px 12px",cursor:"pointer",flexShrink:0}}>+ Agregar bono</button>
+                  </div>
+                ):(
+                  <div style={{fontSize:12,color:MU,paddingTop:4,borderTop:`1px solid ${BO}`}}>
+                    Lleva {promoProgresoSel.enCicloActual}/{promo51.cantidadNecesaria} acumulados{promoAplica?" (este pedido ya lo cuenta si el producto corresponde)":""}. Faltan {promoProgresoSel.faltan}.
+                  </div>
+                )
+              )}
+            </div>
           )}
  
           {/* Líneas de productos */}
@@ -2286,12 +2299,6 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                         {sug&&!l.monto&&<div style={{fontSize:11,color:G,marginTop:2}}>Sug: {fmtARS(sug)}</div>}
                       </div>
                     </div>
-                    {promo51&&promo51.activo&&prodCuentaParaPromo(prod,promo51)&&(
-                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginTop:8,fontSize:13,color:l.promoAcumulable?G:MU}}>
-                        <input type="checkbox" checked={l.promoAcumulable} onChange={e=>updateLinea(l.id,"promoAcumulable",e.target.checked)} style={{width:16,height:16,flexShrink:0,accentColor:G}}/>
-                        🎁 Cuenta para la promo {promo51.cantidadNecesaria}+{promo51.cantidadBono}
-                      </label>
-                    )}
                     {promo51&&promo51.activo&&promo51.productoBonoId===l.productoId&&(
                       <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginTop:8,fontSize:13,color:l.esBono?AM:MU}}>
                         <input type="checkbox" checked={l.esBono} onChange={e=>updateLinea(l.id,"esBono",e.target.checked)} style={{width:16,height:16,flexShrink:0,accentColor:AM}}/>
