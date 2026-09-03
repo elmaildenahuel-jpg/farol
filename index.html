@@ -518,7 +518,7 @@ const prodCuentaParaPromo=(prod,promo51)=>{
   if(promo51.envaseCuenta&&prod.envase!==promo51.envaseCuenta)return false;
   return true;
 };
-const progresoPromo51=(cliente,promo51,prods)=>{
+const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
   if(!promo51||!promo51.activo||!promo51.marcaCuenta||!promo51.cantidadNecesaria)return null;
   const ventas=cliente.ventas||[];
   const prodMap={};(prods||[]).forEach(p=>{prodMap[p.id]=p;});
@@ -529,7 +529,12 @@ const progresoPromo51=(cliente,promo51,prods)=>{
   const bonosEntregados=cantBono>0?Math.floor(bonoEntregadoU/cantBono):0;
   const bonosPendientes=Math.max(0,bonosGanados-bonosEntregados);
   const enCicloActual=acumulado%promo51.cantidadNecesaria;
-  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual};
+  // Pendiente = lo que ya está en pedidos con la promo tildada pero todavía no entregados (referencia, no cuenta como ganado hasta que se entregue)
+  let pendiente=0;
+  (pedidos||[]).filter(p=>p.clienteId===cliente.id&&p.estado!=="entregado"&&p.promoAplica).forEach(p=>{
+    (p.lineas||[]).forEach(l=>{if(prodCuentaParaPromo(prodMap[l.productoId],promo51))pendiente+=Number(l.cantidad||0);});
+  });
+  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente};
 };
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
 const waLink=(tel,txt)=>{const n=(tel||"").replace(/\D/g,"");return n?`https://wa.me/${n}?text=${encodeURIComponent(txt)}`:null;};
@@ -1198,7 +1203,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
  
  
 // ── DetalleCliente ────────────────────────────────────────────────
-function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,promo51}){
+function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,promo51,pedidos}){
   const[vForm,setVForm]=useState(false);
   const[edit,setEdit]=useState(false);
   const[spOpen,setSpOpen]=useState(false);
@@ -1235,7 +1240,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
       <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
       {(()=>{
-        const promoProg=promo51&&promo51.activo?progresoPromo51(cliente,promo51,prods):null;
+        const promoProg=promo51&&promo51.activo?progresoPromo51(cliente,promo51,prods,pedidos):null;
         if(!promoProg)return null;
         return(
           <div style={{background:promoProg.bonosPendientes>0?AM+"14":BG,border:`1px solid ${promoProg.bonosPendientes>0?AM+"44":BO}`,borderRadius:10,padding:12,marginBottom:14}}>
@@ -1243,7 +1248,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
             {promoProg.bonosPendientes>0?(
               <div style={{fontSize:14,color:AM,fontWeight:600}}>Le tocan {promo51.cantidadBono*promoProg.bonosPendientes} bonificado(s) — sumalo en el próximo pedido.</div>
             ):(
-              <div style={{fontSize:14,color:MU}}>Lleva {promoProg.enCicloActual}/{promo51.cantidadNecesaria} acumulados. Faltan {promoProg.faltan}.</div>
+              <div style={{fontSize:14,color:MU}}>Lleva {promoProg.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado). Faltan {promoProg.faltan}.{promoProg.pendiente>0&&<span style={{color:AM}}> +{promoProg.pendiente} en pedidos pendientes de entregar.</span>}</div>
             )}
           </div>
         );
@@ -1461,7 +1466,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
-function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51}){
+function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedidos}){
   const[q,setQ]=useState("");
   const[filtro,setFiltro]=useState("todos");
   const[orden,setOrden]=useState("reciente");
@@ -1515,7 +1520,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51}){
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} onUpdate={u=>setClientes(p=>p.map(c=>c.id===u.id?u:c))} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} onUpdate={u=>setClientes(p=>p.map(c=>c.id===u.id?u:c))} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
       </Modal>
     </div>
   );
@@ -2200,7 +2205,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const totalLitros=lineas.reduce((s,l)=>s+litrosDeItem(l.cantidad,envaseMap[l.productoId]),0);
   const lineasValidas=lineas.filter(l=>l.cantidad&&Number(l.cantidad)>0);
   const clienteSel=clientes.find(c=>c.id===clienteId);
-  const promoProgresoSel=clienteSel?progresoPromo51(clienteSel,promo51,prods):null;
+  const promoProgresoSel=clienteSel?progresoPromo51(clienteSel,promo51,prods,pedidos):null;
   const comisionPctSel=clienteSel&&clienteSel.comisionPctDefault?Number(clienteSel.comisionPctDefault):0;
   const descPctNum=Number(descuentoPct)||0;
   const montoDescuento=Math.round(totalPedido*descPctNum/100);
@@ -2438,7 +2443,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                   </div>
                 ):(
                   <div style={{fontSize:12,color:MU,paddingTop:4,borderTop:`1px solid ${BO}`}}>
-                    Lleva {promoProgresoSel.enCicloActual}/{promo51.cantidadNecesaria} acumulados{promoAplica?" (este pedido ya lo cuenta si el producto corresponde)":""}. Faltan {promoProgresoSel.faltan}.
+                    Lleva {promoProgresoSel.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado){promoAplica?" (este pedido ya lo cuenta si el producto corresponde)":""}. Faltan {promoProgresoSel.faltan}.{promoProgresoSel.pendiente>0&&<span style={{color:AM}}> +{promoProgresoSel.pendiente} en otros pedidos pendientes de entregar.</span>}
                   </div>
                 )
               )}
@@ -4783,7 +4788,7 @@ function App(){
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
-          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51}/>}
+          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
