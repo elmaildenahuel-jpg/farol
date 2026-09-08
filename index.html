@@ -522,7 +522,9 @@ const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
   if(!promo51||!promo51.activo||!promo51.marcaCuenta||!promo51.cantidadNecesaria)return null;
   const ventas=cliente.ventas||[];
   const prodMap={};(prods||[]).forEach(p=>{prodMap[p.id]=p;});
-  const acumulado=ventas.filter(v=>v.promoAcumulable&&prodCuentaParaPromo(prodMap[v.producto],promo51)).reduce((s,v)=>s+Number(v.cantidad||0),0);
+  const nombreDe=id=>prodMap[id]?nombreProdEnvase(prodMap[id]):id;
+  const ventasPromo=ventas.filter(v=>v.promoAcumulable&&prodCuentaParaPromo(prodMap[v.producto],promo51));
+  const acumulado=ventasPromo.reduce((s,v)=>s+Number(v.cantidad||0),0);
   const bonoEntregadoU=ventas.filter(v=>promo51.productoBonoId&&v.producto===promo51.productoBonoId&&v.esBono).reduce((s,v)=>s+Number(v.cantidad||0),0);
   const cantBono=promo51.cantidadBono||1;
   const bonosGanados=Math.floor(acumulado/promo51.cantidadNecesaria);
@@ -531,12 +533,37 @@ const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
   const enCicloActual=acumulado%promo51.cantidadNecesaria;
   // Pendiente = lo que ya está en pedidos con la promo tildada pero todavía no entregados (referencia, no cuenta como ganado hasta que se entregue)
   let pendiente=0;
+  const detallePendiente=[];
   (pedidos||[]).filter(p=>p.clienteId===cliente.id&&p.estado!=="entregado"&&p.promoAplica).forEach(p=>{
-    (p.lineas||[]).forEach(l=>{if(prodCuentaParaPromo(prodMap[l.productoId],promo51))pendiente+=Number(l.cantidad||0);});
+    (p.lineas||[]).forEach(l=>{
+      if(prodCuentaParaPromo(prodMap[l.productoId],promo51)){
+        pendiente+=Number(l.cantidad||0);
+        detallePendiente.push({producto:nombreDe(l.productoId),cantidad:Number(l.cantidad||0),fecha:p.fechaEntrega,estado:"pendiente"});
+      }
+    });
   });
-  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente};
+  // Detalle de lo ya entregado, para tener referencia de qué se fue pidiendo (no solo el número)
+  const detalleEntregado=ventasPromo.map(v=>({producto:nombreDe(v.producto),cantidad:Number(v.cantidad||0),fecha:v.fecha,estado:"entregado"}));
+  const detalle=[...detalleEntregado,...detallePendiente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
 };
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
+function PromoDetalleLista({detalle}){
+  if(!detalle||detalle.length===0)return null;
+  return(
+    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`}}>
+      <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Ya pedido para esta promo</div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {detalle.slice(-8).map((d,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR}}>
+            <span>{d.cantidad} {d.producto}{d.estado==="pendiente"&&<span style={{color:AM}}> (pendiente)</span>}</span>
+            <span style={{color:MU,flexShrink:0,marginLeft:8}}>{fmtDate(d.fecha)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 const waLink=(tel,txt)=>{const n=(tel||"").replace(/\D/g,"");return n?`https://wa.me/${n}?text=${encodeURIComponent(txt)}`:null;};
 // Arma el mensaje de recordatorio de deuda para un cliente, mencionando la venta más antigua vencida si corresponde.
 function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
@@ -1250,6 +1277,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
             ):(
               <div style={{fontSize:14,color:MU}}>Lleva {promoProg.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado). Faltan {promoProg.faltan}.{promoProg.pendiente>0&&<span style={{color:AM}}> +{promoProg.pendiente} en pedidos pendientes de entregar.</span>}</div>
             )}
+            <PromoDetalleLista detalle={promoProg.detalle}/>
           </div>
         );
       })()}
@@ -2447,6 +2475,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                   </div>
                 )
               )}
+              <PromoDetalleLista detalle={promoProgresoSel&&promoProgresoSel.detalle}/>
             </div>
           )}
  
@@ -3488,7 +3517,13 @@ function Ventas({clientes,prods}){
 // ── MÉTRICAS ──────────────────────────────────────────────────────
 function Metricas({clientes,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+
+  // ── Filtro de período (afecta los rankings de más abajo, no la evolución mensual fija) ──
+  const[pDesde,setPDesde]=useState("");
+  const[pHasta,setPHasta]=useState("");
+  const hayFiltroPeriodo=!!(pDesde||pHasta);
+  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)),[todasSinFiltro,pDesde,pHasta,hayFiltroPeriodo]);
 
   // KPIs: ticket promedio, frecuencia de compra, cobrado vs pendiente
   const montoTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+(v.monto||0),0),[todas]);
@@ -3518,12 +3553,12 @@ function Metricas({clientes,prods}){
     }
     const map={};
     meses.forEach(m=>map[m.key]={litros:0,monto:0});
-    todas.forEach(v=>{
+    todasSinFiltro.forEach(v=>{
       const key=(v.fecha||"").slice(0,7);
       if(map[key]){map[key].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[key].monto+=v.monto||0;}
     });
     return meses.map(m=>({...m,...map[m.key]}));
-  },[todas,envaseMap]);
+  },[todasSinFiltro,envaseMap]);
   const maxMes=Math.max(1,...evolucionMensual.map(m=>m.litros));
   const maxMesMonto=Math.max(1,...evolucionMensual.map(m=>m.monto));
 
@@ -3537,13 +3572,13 @@ function Metricas({clientes,prods}){
     }
     const map={};
     meses.forEach(m=>map[m.key]=0);
-    todas.forEach(v=>{
+    todasSinFiltro.forEach(v=>{
       if(!v.pagado)return;
       const key=(v.fechaCobro||v.fecha||"").slice(0,7);
       if(key in map)map[key]+=v.monto||0;
     });
     return meses.map(m=>({...m,monto:map[m.key]}));
-  },[todas]);
+  },[todasSinFiltro]);
   const maxCobroMes=Math.max(1,...cobrosMensuales.map(m=>m.monto));
 
   // Top clientes por facturación total
@@ -3558,6 +3593,23 @@ function Metricas({clientes,prods}){
     return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.monto-a.monto).slice(0,8);
   },[todas,envaseMap]);
   const maxFacturacion=topClientesFacturacion[0]?.monto||1;
+
+  // Litros por estilo — para un cliente puntual (respeta el filtro de período)
+  const clientesConVentasNombres=useMemo(()=>[...new Set(todasSinFiltro.map(v=>v.clienteNombre))].sort((a,b)=>a.localeCompare(b)),[todasSinFiltro]);
+  const[clienteEstiloSel,setClienteEstiloSel]=useState("");
+  const litrosPorEstiloCliente=useMemo(()=>{
+    if(!clienteEstiloSel)return[];
+    const map={};
+    todas.filter(v=>v.clienteNombre===clienteEstiloSel).forEach(v=>{
+      const nombre=prods.find(p=>p.id===v.producto)?.nombre||v.producto;
+      if(!map[nombre])map[nombre]={litros:0,monto:0,pedidos:0};
+      map[nombre].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
+      map[nombre].monto+=v.monto||0;
+      map[nombre].pedidos+=1;
+    });
+    return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas,clienteEstiloSel,prods,envaseMap]);
+  const maxLitroEstilo=Math.max(1,...litrosPorEstiloCliente.map(e=>e.litros));
 
   // Ventas por tipo de envase
   const ENVASE_COLOR={PET:G,Barril:AM,Lata:"#4472BE"};
@@ -3643,7 +3695,7 @@ function Metricas({clientes,prods}){
   const maxZona=rankingZona[0]?.litros||1;
   const maxRubro=rankingRubro[0]?.litros||1;
  
-  if(todas.length===0) return(
+  if(todasSinFiltro.length===0) return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Métricas</span>
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:32,textAlign:"center",marginTop:20}}>
@@ -3656,7 +3708,16 @@ function Metricas({clientes,prods}){
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Métricas</span>
-      <p style={{fontSize:14,color:MU,marginBottom:20}}>Rankings de ventas · {todas.length} registros</p>
+      <p style={{fontSize:14,color:MU,marginBottom:14}}>Rankings de ventas · {todas.length} registro{todas.length!==1?"s":""}{hayFiltroPeriodo?" en el período":""}</p>
+
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>🔍 Período (afecta los rankings de abajo)</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+          <div><Lbl t="Desde"/><input type="date" value={pDesde} onChange={e=>setPDesde(e.target.value)} max={pHasta||undefined}/></div>
+          <div><Lbl t="Hasta"/><input type="date" value={pHasta} onChange={e=>setPHasta(e.target.value)} min={pDesde||undefined}/></div>
+        </div>
+        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
+      </div>
 
       {/* KPIs generales */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
@@ -3720,13 +3781,14 @@ function Metricas({clientes,prods}){
 
       {/* Top clientes por facturación total */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
-        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>💰 Top clientes · facturación total</span></div>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>💰 Top clientes · facturación{hayFiltroPeriodo?" (período)":" total"}</span></div>
         {topClientesFacturacion.length===0?<p style={{padding:16,fontSize:15,color:MU,textAlign:"center"}}>Sin datos.</p>:topClientesFacturacion.map((c,idx)=>(
           <div key={c.nombre} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,borderRadius:"50%",background:idx===0?GLT:BG,color:idx===0?G:MU,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14,fontWeight:700}}>{iniciales(c.nombre)}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
               <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}><div style={{width:`${(c.monto/maxFacturacion)*100}%`,height:"100%",background:G,borderRadius:2}}/></div>
+              <div style={{fontSize:12,color:MU,marginTop:3}}>Ticket prom.: {fmtARS(Math.round(c.monto/c.pedidos))}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div style={{fontSize:15,fontWeight:700,color:G}}>{fmtARS(c.monto)}</div>
@@ -3734,6 +3796,39 @@ function Metricas({clientes,prods}){
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Litros por estilo — cliente puntual */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🍺 Litros por estilo — un cliente</div>
+        <select value={clienteEstiloSel} onChange={e=>setClienteEstiloSel(e.target.value)} style={{marginBottom:12}}>
+          <option value="">Elegí un cliente...</option>
+          {clientesConVentasNombres.map(n=><option key={n} value={n}>{n}</option>)}
+        </select>
+        {clienteEstiloSel&&(
+          litrosPorEstiloCliente.length===0?(
+            <p style={{fontSize:14,color:MU,textAlign:"center",padding:"16px 0"}}>Sin compras de {clienteEstiloSel}{hayFiltroPeriodo?" en este período":""}.</p>
+          ):(
+            <>
+              <div style={{display:"flex",gap:16,marginBottom:14,paddingBottom:12,borderBottom:`1px solid ${BO}`}}>
+                <div><div style={{fontSize:12,color:MU,textTransform:"uppercase"}}>Total litros</div><div className="bebas" style={{fontSize:22,color:CR}}>{litrosPorEstiloCliente.reduce((s,x)=>s+x.litros,0)}L</div></div>
+                <div><div style={{fontSize:12,color:MU,textTransform:"uppercase"}}>Facturación</div><div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(litrosPorEstiloCliente.reduce((s,x)=>s+x.monto,0))}</div></div>
+              </div>
+              {litrosPorEstiloCliente.map((e,idx)=>(
+                <div key={e.nombre} style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:14,color:CR,marginBottom:3}}>
+                    <span style={{fontWeight:idx===0?700:500}}>{idx===0?"🥇 ":""}{e.nombre}</span>
+                    <span style={{fontWeight:700}}>{e.litros}L</span>
+                  </div>
+                  <div style={{height:8,borderRadius:4,background:BO,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${(e.litros/maxLitroEstilo)*100}%`,background:idx===0?G:GLT,borderRadius:4,transition:"width 0.4s"}}/>
+                  </div>
+                  <div style={{fontSize:12,color:MU,marginTop:2}}>{fmtARS(e.monto)} · {e.pedidos} pedido{e.pedidos!==1?"s":""}</div>
+                </div>
+              ))}
+            </>
+          )
+        )}
       </div>
 
       {/* Ventas por tipo de envase */}
