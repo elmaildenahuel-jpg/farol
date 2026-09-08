@@ -174,96 +174,155 @@ const fmtDateTime=iso=>{
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"})+" · "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
 };
 // ── Catálogo PDF (para compartir por WhatsApp) ──────────────────────
-function construirCatalogoPDF(prods){
+function construirCatalogoPDF(prods,promo51){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const pageW=210,pageH=297,marginX=15;
   const envaseColor=e=>({PET:[23,141,79],Barril:[183,121,31],Lata:[70,110,190]}[e]||[86,91,96]);
+  const marcaColor=m=>m==="Grunge"?[183,121,31]:[23,141,79];
+  const bonoProd=promo51&&promo51.activo?(prods||[]).find(p=>p.id===promo51.productoBonoId):null;
 
   // Header
   doc.setFillColor(14,74,44);
-  doc.rect(0,0,pageW,36,"F");
+  doc.rect(0,0,pageW,40,"F");
+  doc.setFillColor(23,141,79);
+  doc.rect(0,38,pageW,2,"F");
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold");
-  doc.setFontSize(20);
+  doc.setFontSize(23);
   doc.text("GRUNGE & FAROL",marginX,20);
   doc.setFont("helvetica","normal");
-  doc.setFontSize(11);
-  doc.text("Catálogo de productos",marginX,28);
+  doc.setFontSize(10.5);
+  doc.setTextColor(210,232,220);
+  doc.text("Premium · Popular · Porteña — Cerveza artesanal de Buenos Aires",marginX,28);
   doc.setFontSize(9);
   const fecha=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"long",year:"numeric"});
-  doc.text(fecha,pageW-marginX,28,{align:"right"});
+  doc.text(fecha,pageW-marginX,20,{align:"right"});
+  doc.setFontSize(8.5);
+  doc.text("Lista de precios vigente",pageW-marginX,26,{align:"right"});
 
-  let y=48;
-  (prods||[]).forEach(p=>{
-    const tienePromos=(p.promos||[]).length>0;
-    const descLines=p.descripcion?doc.splitTextToSize(String(p.descripcion),pageW-marginX*2-40):[];
-    let cardH=22+(descLines.length?descLines.length*4.2:0)+(tienePromos?7:0);
-    if(y+cardH>pageH-22){doc.addPage();y=20;}
-    const[cr,cg,cb]=envaseColor(p.envase);
+  let y=50;
+  const asegurarEspacio=h=>{if(y+h>pageH-20){doc.addPage();y=20;}};
 
-    doc.setFillColor(255,255,255);
-    doc.setDrawColor(228,231,229);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(marginX,y,pageW-marginX*2,cardH,3,3,"FD");
-    doc.setFillColor(cr,cg,cb);
-    doc.roundedRect(marginX,y,3,cardH,1.5,1.5,"F");
+  const marcas=[...new Set((prods||[]).map(p=>p.marca||"Farol"))].sort((a,b)=>a.localeCompare(b));
+  marcas.forEach(marca=>{
+    const[mr,mg,mb]=marcaColor(marca);
+    const prodsMarca=(prods||[]).filter(p=>(p.marca||"Farol")===marca);
+    if(prodsMarca.length===0)return;
 
-    doc.setTextColor(26,26,26);
+    asegurarEspacio(14);
+    doc.setFillColor(mr,mg,mb);
+    doc.roundedRect(marginX,y,pageW-marginX*2,10,2,2,"F");
+    doc.setTextColor(255,255,255);
     doc.setFont("helvetica","bold");
     doc.setFontSize(13);
-    doc.text(String(p.nombre||"Producto"),marginX+8,y+9);
-
-    doc.setFont("helvetica","normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(86,91,96);
-    doc.text(`${p.marca||"Farol"} · ${p.envase||"PET"}`,marginX+8,y+15.5);
-
-    doc.setFont("helvetica","bold");
-    doc.setFontSize(14);
-    doc.setTextColor(cr,cg,cb);
-    const precioTxt=fmtARS(p.precio||0);
-    doc.text(precioTxt,pageW-marginX-6,y+11,{align:"right"});
+    doc.text(marca.toUpperCase(),marginX+6,y+7);
     doc.setFont("helvetica","normal");
     doc.setFontSize(8.5);
-    doc.setTextColor(120,120,120);
-    doc.text("por litro",pageW-marginX-6,y+15.5,{align:"right"});
+    doc.text(`${prodsMarca.length} producto${prodsMarca.length!==1?"s":""}`,pageW-marginX-6,y+7,{align:"right"});
+    y+=14;
 
-    let yy=y+21;
-    if(descLines.length){
-      doc.setFont("helvetica","italic");
-      doc.setFontSize(9);
-      doc.setTextColor(110,114,118);
-      doc.text(descLines,marginX+8,yy);
-      yy+=descLines.length*4.2;
+    // Banner de promo 5+1, si esta marca es la que acumula
+    if(promo51&&promo51.activo&&promo51.marcaCuenta===marca&&bonoProd){
+      asegurarEspacio(16);
+      doc.setFillColor(255,247,230);
+      doc.setDrawColor(mr,mg,mb);
+      doc.setLineWidth(0.4);
+      doc.roundedRect(marginX,y,pageW-marginX*2,13,2.5,2.5,"FD");
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(11);
+      doc.setTextColor(mr,mg,mb);
+      const envaseTxt=promo51.envaseCuenta?` en ${promo51.envaseCuenta.toLowerCase()}`:"";
+      doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${marca}${envaseTxt} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
+      y+=17;
     }
-    if(tienePromos){
+
+    prodsMarca.forEach(p=>{
+      const tienePromos=(p.promos||[]).length>0;
+      const descLines=p.descripcion?doc.splitTextToSize(String(p.descripcion),pageW-marginX*2-40):[];
+      let cardH=22+(descLines.length?descLines.length*4.2:0)+(tienePromos?7.5:0);
+      asegurarEspacio(cardH+6);
+      const[cr,cg,cb]=envaseColor(p.envase);
+
+      doc.setFillColor(250,250,249);
+      doc.setDrawColor(228,231,229);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(marginX,y,pageW-marginX*2,cardH,3,3,"FD");
+      doc.setFillColor(cr,cg,cb);
+      doc.roundedRect(marginX,y,3,cardH,1.5,1.5,"F");
+
+      doc.setTextColor(26,26,26);
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(13);
+      doc.text(String(p.nombre||"Producto"),marginX+8,y+9);
+
+      // Badge de envase
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(7.5);
+      const envTxt=(p.envase||"PET").toUpperCase();
+      const envW=doc.getTextWidth(envTxt)+6;
+      doc.setFillColor(cr,cg,cb);
+      doc.roundedRect(marginX+8,y+12,envW,5,2.5,2.5,"F");
+      doc.setTextColor(255,255,255);
+      doc.text(envTxt,marginX+8+envW/2,y+15.5,{align:"center"});
+
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(15);
+      doc.setTextColor(cr,cg,cb);
+      const precioTxt=fmtARS(p.precio||0);
+      doc.text(precioTxt,pageW-marginX-6,y+11,{align:"right"});
       doc.setFont("helvetica","normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(23,141,79);
-      const promoTxt=p.promos.map(pr=>`Desde ${pr.minCantidad}u: ${fmtARS(pr.precioUnitario)} c/u`).join("   ·   ");
-      doc.text(promoTxt,marginX+8,yy+1,{maxWidth:pageW-marginX*2-14});
-    }
-    y+=cardH+6;
+      doc.setTextColor(120,120,120);
+      doc.text("por litro",pageW-marginX-6,y+15.5,{align:"right"});
+
+      let yy=y+21;
+      if(descLines.length){
+        doc.setFont("helvetica","italic");
+        doc.setFontSize(9);
+        doc.setTextColor(110,114,118);
+        doc.text(descLines,marginX+8,yy);
+        yy+=descLines.length*4.2;
+      }
+      if(tienePromos){
+        let xx=marginX+8;
+        doc.setFontSize(8);
+        p.promos.forEach(pr=>{
+          const txt=`Desde ${pr.minCantidad}u: ${fmtARS(pr.precioUnitario)} c/u`;
+          const w=doc.getTextWidth(txt)+6;
+          doc.setFillColor(228,245,234);
+          doc.roundedRect(xx,yy,w,5.5,2.5,2.5,"F");
+          doc.setFont("helvetica","bold");
+          doc.setTextColor(15,122,66);
+          doc.text(txt,xx+3,yy+3.8);
+          xx+=w+4;
+        });
+      }
+      y+=cardH+6;
+    });
+    y+=4;
   });
 
   const totalPages=doc.internal.getNumberOfPages();
   for(let i=1;i<=totalPages;i++){
     doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-16,pageW-marginX,pageH-16);
     doc.setFont("helvetica","italic");
     doc.setFontSize(9);
     doc.setTextColor(150,150,150);
-    doc.text("¡Escribinos para hacer tu pedido! · Grunge & Farol",pageW/2,pageH-12,{align:"center"});
+    doc.text("¡Escribinos para hacer tu pedido! · Grunge & Farol",pageW/2,pageH-10,{align:"center"});
   }
   return doc;
 }
-async function compartirCatalogoPDF(prods){
+async function compartirCatalogoPDF(prods,promo51){
   if(!window.jspdf||!window.jspdf.jsPDF){
     alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
     return;
   }
   try{
-    const doc=construirCatalogoPDF(prods);
+    const doc=construirCatalogoPDF(prods,promo51);
     const fileName=`catalogo-farol-${hoyISO()}.pdf`;
     const blob=doc.output("blob");
     let compartido=false;
@@ -1263,7 +1322,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
           <button onClick={()=>setSpOpen(true)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:G+"22",color:G,border:`1px solid ${G}44`,cursor:"pointer"}}>{I.msg}Enviar speech</button>
         </div>
       )}
-      <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
+      <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods,promo51);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
       <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
       {(()=>{
@@ -2017,7 +2076,7 @@ function Gastos({gastos,setGastos}){
 }
 
 // ── COMERCIOS ─────────────────────────────────────────────────────
-function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
+function Comercios({prospectos,setProspectos,onConvertir,speeches,prods,promo51}){
   const[q,setQ]=useState("");
   const[zona,setZona]=useState("");
   const[rubro,setRubro]=useState("");
@@ -2029,7 +2088,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
   const[compartiendoId,setCompartiendoId]=useState(null);
   const compartirCatalogoDesdeComercios=async(prospectoId)=>{
     setCompartiendoId(prospectoId);
-    try{ await compartirCatalogoPDF(prods||[]); }finally{ setCompartiendoId(null); }
+    try{ await compartirCatalogoPDF(prods||[],promo51); }finally{ setCompartiendoId(null); }
   };
   const[spTarget,setSpTarget]=useState(null);
   const[expandido,setExpandido]=useState(null);
@@ -2587,7 +2646,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 }
  
 // ── PRODUCTOS ─────────────────────────────────────────────────────
-function Productos({prods,setProds}){
+function Productos({prods,setProds,promo51}){
   const[editId,setEditId]=useState(null);
   const[ef,setEf]=useState(null);
   const[showPromo,setShowPromo]=useState(null);
@@ -2635,7 +2694,7 @@ function Productos({prods,setProds}){
 
   const compartirCatalogo=async()=>{
     setExportando(true);
-    try{ await compartirCatalogoPDF(prodsFiltrados); }finally{ setExportando(false); }
+    try{ await compartirCatalogoPDF(prodsFiltrados,promo51); }finally{ setExportando(false); }
   };
 
   const crearProducto=()=>{
@@ -4884,7 +4943,7 @@ function App(){
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos}/>}
-          {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
+          {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
@@ -4896,7 +4955,7 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
-          {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
+          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51}/>}
         </main>
       </div>
