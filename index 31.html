@@ -174,96 +174,175 @@ const fmtDateTime=iso=>{
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"})+" · "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
 };
 // ── Catálogo PDF (para compartir por WhatsApp) ──────────────────────
-function construirCatalogoPDF(prods){
+function construirCatalogoPDF(prods,promo51){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const pageW=210,pageH=297,marginX=15;
   const envaseColor=e=>({PET:[23,141,79],Barril:[183,121,31],Lata:[70,110,190]}[e]||[86,91,96]);
+  const marcaColor=m=>m==="Grunge"?[183,121,31]:[23,141,79];
+  const bonoProd=promo51&&promo51.activo?(prods||[]).find(p=>p.id===promo51.productoBonoId):null;
 
   // Header
   doc.setFillColor(14,74,44);
-  doc.rect(0,0,pageW,36,"F");
+  doc.rect(0,0,pageW,40,"F");
+  doc.setFillColor(23,141,79);
+  doc.rect(0,38,pageW,2,"F");
   doc.setTextColor(255,255,255);
   doc.setFont("helvetica","bold");
-  doc.setFontSize(20);
+  doc.setFontSize(23);
   doc.text("GRUNGE & FAROL",marginX,20);
   doc.setFont("helvetica","normal");
-  doc.setFontSize(11);
-  doc.text("Catálogo de productos",marginX,28);
+  doc.setFontSize(10.5);
+  doc.setTextColor(210,232,220);
+  doc.text("Premium · Popular · Porteña — Cerveza artesanal de Buenos Aires",marginX,28);
   doc.setFontSize(9);
   const fecha=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"long",year:"numeric"});
-  doc.text(fecha,pageW-marginX,28,{align:"right"});
+  doc.text(fecha,pageW-marginX,20,{align:"right"});
+  doc.setFontSize(8.5);
+  doc.text("Lista de precios vigente",pageW-marginX,26,{align:"right"});
 
-  let y=48;
-  (prods||[]).forEach(p=>{
-    const tienePromos=(p.promos||[]).length>0;
-    const descLines=p.descripcion?doc.splitTextToSize(String(p.descripcion),pageW-marginX*2-40):[];
-    let cardH=22+(descLines.length?descLines.length*4.2:0)+(tienePromos?7:0);
-    if(y+cardH>pageH-22){doc.addPage();y=20;}
-    const[cr,cg,cb]=envaseColor(p.envase);
+  let y=50;
+  const asegurarEspacio=h=>{if(y+h>pageH-20){doc.addPage();y=20;}};
 
-    doc.setFillColor(255,255,255);
-    doc.setDrawColor(228,231,229);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(marginX,y,pageW-marginX*2,cardH,3,3,"FD");
-    doc.setFillColor(cr,cg,cb);
-    doc.roundedRect(marginX,y,3,cardH,1.5,1.5,"F");
+  // Banner de promo 5+1 general, si no está restringida a un envase puntual (va arriba de todo, una sola vez)
+  if(promo51&&promo51.activo&&!promo51.envaseCuenta&&bonoProd){
+    asegurarEspacio(16);
+    const[gr,gg,gb]=marcaColor(promo51.marcaCuenta);
+    doc.setFillColor(255,247,230);
+    doc.setDrawColor(gr,gg,gb);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(marginX,y,pageW-marginX*2,13,2.5,2.5,"FD");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(11);
+    doc.setTextColor(gr,gg,gb);
+    doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
+    y+=19;
+  }
 
-    doc.setTextColor(26,26,26);
+  // Segmentos por tipo de envase, en este orden fijo
+  const SEGMENTOS=[
+    {envase:"Barril",titulo:"Barriles (Cerveza por Litro)"},
+    {envase:"Lata",titulo:"Latas 473 ml"},
+    {envase:"PET",titulo:"Pet 1 Lt"},
+  ];
+  SEGMENTOS.forEach(seg=>{
+    const prodsSeg=(prods||[]).filter(p=>(p.envase||"PET")===seg.envase).sort((a,b)=>(a.marca||"").localeCompare(b.marca||"")||(a.nombre||"").localeCompare(b.nombre||""));
+    if(prodsSeg.length===0)return;
+    const[er,eg,eb]=envaseColor(seg.envase);
+
+    asegurarEspacio(14);
+    doc.setFillColor(er,eg,eb);
+    doc.roundedRect(marginX,y,pageW-marginX*2,10,2,2,"F");
+    doc.setTextColor(255,255,255);
     doc.setFont("helvetica","bold");
     doc.setFontSize(13);
-    doc.text(String(p.nombre||"Producto"),marginX+8,y+9);
-
-    doc.setFont("helvetica","normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(86,91,96);
-    doc.text(`${p.marca||"Farol"} · ${p.envase||"PET"}`,marginX+8,y+15.5);
-
-    doc.setFont("helvetica","bold");
-    doc.setFontSize(14);
-    doc.setTextColor(cr,cg,cb);
-    const precioTxt=fmtARS(p.precio||0);
-    doc.text(precioTxt,pageW-marginX-6,y+11,{align:"right"});
+    doc.text(seg.titulo.toUpperCase(),marginX+6,y+7);
     doc.setFont("helvetica","normal");
     doc.setFontSize(8.5);
-    doc.setTextColor(120,120,120);
-    doc.text("por litro",pageW-marginX-6,y+15.5,{align:"right"});
+    doc.text(`${prodsSeg.length} producto${prodsSeg.length!==1?"s":""}`,pageW-marginX-6,y+7,{align:"right"});
+    y+=14;
 
-    let yy=y+21;
-    if(descLines.length){
-      doc.setFont("helvetica","italic");
-      doc.setFontSize(9);
-      doc.setTextColor(110,114,118);
-      doc.text(descLines,marginX+8,yy);
-      yy+=descLines.length*4.2;
+    // Banner de promo 5+1, si esta promo está restringida específicamente a este envase
+    if(promo51&&promo51.activo&&promo51.envaseCuenta===seg.envase&&bonoProd){
+      asegurarEspacio(16);
+      const[gr,gg,gb]=marcaColor(promo51.marcaCuenta);
+      doc.setFillColor(255,247,230);
+      doc.setDrawColor(gr,gg,gb);
+      doc.setLineWidth(0.4);
+      doc.roundedRect(marginX,y,pageW-marginX*2,13,2.5,2.5,"FD");
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(11);
+      doc.setTextColor(gr,gg,gb);
+      doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} en ${seg.envase.toLowerCase()} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
+      y+=17;
     }
-    if(tienePromos){
+
+    prodsSeg.forEach(p=>{
+      const tienePromos=(p.promos||[]).length>0;
+      const descLines=p.descripcion?doc.splitTextToSize(String(p.descripcion),pageW-marginX*2-40):[];
+      let cardH=22+(descLines.length?descLines.length*4.2:0)+(tienePromos?7.5:0);
+      asegurarEspacio(cardH+6);
+      const[mr,mg,mb]=marcaColor(p.marca);
+
+      doc.setFillColor(250,250,249);
+      doc.setDrawColor(228,231,229);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(marginX,y,pageW-marginX*2,cardH,3,3,"FD");
+      doc.setFillColor(mr,mg,mb);
+      doc.roundedRect(marginX,y,3,cardH,1.5,1.5,"F");
+
+      doc.setTextColor(26,26,26);
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(13);
+      doc.text(String(p.nombre||"Producto"),marginX+8,y+9);
+
+      // Badge de marca
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(7.5);
+      const marcaTxt=(p.marca||"Farol").toUpperCase();
+      const marcaW=doc.getTextWidth(marcaTxt)+6;
+      doc.setFillColor(mr,mg,mb);
+      doc.roundedRect(marginX+8,y+12,marcaW,5,2.5,2.5,"F");
+      doc.setTextColor(255,255,255);
+      doc.text(marcaTxt,marginX+8+marcaW/2,y+15.5,{align:"center"});
+
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(15);
+      doc.setTextColor(mr,mg,mb);
+      const precioTxt=fmtARS(p.precio||0);
+      doc.text(precioTxt,pageW-marginX-6,y+11,{align:"right"});
       doc.setFont("helvetica","normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(23,141,79);
-      const promoTxt=p.promos.map(pr=>`Desde ${pr.minCantidad}u: ${fmtARS(pr.precioUnitario)} c/u`).join("   ·   ");
-      doc.text(promoTxt,marginX+8,yy+1,{maxWidth:pageW-marginX*2-14});
-    }
-    y+=cardH+6;
+      doc.setTextColor(120,120,120);
+      doc.text("por litro",pageW-marginX-6,y+15.5,{align:"right"});
+
+      let yy=y+21;
+      if(descLines.length){
+        doc.setFont("helvetica","italic");
+        doc.setFontSize(9);
+        doc.setTextColor(110,114,118);
+        doc.text(descLines,marginX+8,yy);
+        yy+=descLines.length*4.2;
+      }
+      if(tienePromos){
+        let xx=marginX+8;
+        doc.setFontSize(8);
+        p.promos.forEach(pr=>{
+          const txt=`Desde ${pr.minCantidad}u: ${fmtARS(pr.precioUnitario)} c/u`;
+          const w=doc.getTextWidth(txt)+6;
+          doc.setFillColor(228,245,234);
+          doc.roundedRect(xx,yy,w,5.5,2.5,2.5,"F");
+          doc.setFont("helvetica","bold");
+          doc.setTextColor(15,122,66);
+          doc.text(txt,xx+3,yy+3.8);
+          xx+=w+4;
+        });
+      }
+      y+=cardH+6;
+    });
+    y+=4;
   });
 
   const totalPages=doc.internal.getNumberOfPages();
   for(let i=1;i<=totalPages;i++){
     doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-16,pageW-marginX,pageH-16);
     doc.setFont("helvetica","italic");
     doc.setFontSize(9);
     doc.setTextColor(150,150,150);
-    doc.text("¡Escribinos para hacer tu pedido! · Grunge & Farol",pageW/2,pageH-12,{align:"center"});
+    doc.text("¡Escribinos para hacer tu pedido! · Grunge & Farol",pageW/2,pageH-10,{align:"center"});
   }
   return doc;
 }
-async function compartirCatalogoPDF(prods){
+async function compartirCatalogoPDF(prods,promo51){
   if(!window.jspdf||!window.jspdf.jsPDF){
     alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
     return;
   }
   try{
-    const doc=construirCatalogoPDF(prods);
+    const doc=construirCatalogoPDF(prods,promo51);
     const fileName=`catalogo-farol-${hoyISO()}.pdf`;
     const blob=doc.output("blob");
     let compartido=false;
@@ -1263,7 +1342,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
           <button onClick={()=>setSpOpen(true)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:G+"22",color:G,border:`1px solid ${G}44`,cursor:"pointer"}}>{I.msg}Enviar speech</button>
         </div>
       )}
-      <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
+      <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods,promo51);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
       <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
       {(()=>{
@@ -2017,7 +2096,7 @@ function Gastos({gastos,setGastos}){
 }
 
 // ── COMERCIOS ─────────────────────────────────────────────────────
-function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
+function Comercios({prospectos,setProspectos,onConvertir,speeches,prods,promo51}){
   const[q,setQ]=useState("");
   const[zona,setZona]=useState("");
   const[rubro,setRubro]=useState("");
@@ -2029,7 +2108,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods}){
   const[compartiendoId,setCompartiendoId]=useState(null);
   const compartirCatalogoDesdeComercios=async(prospectoId)=>{
     setCompartiendoId(prospectoId);
-    try{ await compartirCatalogoPDF(prods||[]); }finally{ setCompartiendoId(null); }
+    try{ await compartirCatalogoPDF(prods||[],promo51); }finally{ setCompartiendoId(null); }
   };
   const[spTarget,setSpTarget]=useState(null);
   const[expandido,setExpandido]=useState(null);
@@ -2587,7 +2666,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 }
  
 // ── PRODUCTOS ─────────────────────────────────────────────────────
-function Productos({prods,setProds}){
+function Productos({prods,setProds,promo51}){
   const[editId,setEditId]=useState(null);
   const[ef,setEf]=useState(null);
   const[showPromo,setShowPromo]=useState(null);
@@ -2635,7 +2714,7 @@ function Productos({prods,setProds}){
 
   const compartirCatalogo=async()=>{
     setExportando(true);
-    try{ await compartirCatalogoPDF(prodsFiltrados); }finally{ setExportando(false); }
+    try{ await compartirCatalogoPDF(prodsFiltrados,promo51); }finally{ setExportando(false); }
   };
 
   const crearProducto=()=>{
@@ -3517,7 +3596,13 @@ function Ventas({clientes,prods}){
 // ── MÉTRICAS ──────────────────────────────────────────────────────
 function Metricas({clientes,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+
+  // ── Filtro de período (afecta los rankings de más abajo, no la evolución mensual fija) ──
+  const[pDesde,setPDesde]=useState("");
+  const[pHasta,setPHasta]=useState("");
+  const hayFiltroPeriodo=!!(pDesde||pHasta);
+  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)),[todasSinFiltro,pDesde,pHasta,hayFiltroPeriodo]);
 
   // KPIs: ticket promedio, frecuencia de compra, cobrado vs pendiente
   const montoTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+(v.monto||0),0),[todas]);
@@ -3547,12 +3632,12 @@ function Metricas({clientes,prods}){
     }
     const map={};
     meses.forEach(m=>map[m.key]={litros:0,monto:0});
-    todas.forEach(v=>{
+    todasSinFiltro.forEach(v=>{
       const key=(v.fecha||"").slice(0,7);
       if(map[key]){map[key].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[key].monto+=v.monto||0;}
     });
     return meses.map(m=>({...m,...map[m.key]}));
-  },[todas,envaseMap]);
+  },[todasSinFiltro,envaseMap]);
   const maxMes=Math.max(1,...evolucionMensual.map(m=>m.litros));
   const maxMesMonto=Math.max(1,...evolucionMensual.map(m=>m.monto));
 
@@ -3566,13 +3651,13 @@ function Metricas({clientes,prods}){
     }
     const map={};
     meses.forEach(m=>map[m.key]=0);
-    todas.forEach(v=>{
+    todasSinFiltro.forEach(v=>{
       if(!v.pagado)return;
       const key=(v.fechaCobro||v.fecha||"").slice(0,7);
       if(key in map)map[key]+=v.monto||0;
     });
     return meses.map(m=>({...m,monto:map[m.key]}));
-  },[todas]);
+  },[todasSinFiltro]);
   const maxCobroMes=Math.max(1,...cobrosMensuales.map(m=>m.monto));
 
   // Top clientes por facturación total
@@ -3587,6 +3672,23 @@ function Metricas({clientes,prods}){
     return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.monto-a.monto).slice(0,8);
   },[todas,envaseMap]);
   const maxFacturacion=topClientesFacturacion[0]?.monto||1;
+
+  // Litros por estilo — para un cliente puntual (respeta el filtro de período)
+  const clientesConVentasNombres=useMemo(()=>[...new Set(todasSinFiltro.map(v=>v.clienteNombre))].sort((a,b)=>a.localeCompare(b)),[todasSinFiltro]);
+  const[clienteEstiloSel,setClienteEstiloSel]=useState("");
+  const litrosPorEstiloCliente=useMemo(()=>{
+    if(!clienteEstiloSel)return[];
+    const map={};
+    todas.filter(v=>v.clienteNombre===clienteEstiloSel).forEach(v=>{
+      const nombre=prods.find(p=>p.id===v.producto)?.nombre||v.producto;
+      if(!map[nombre])map[nombre]={litros:0,monto:0,pedidos:0};
+      map[nombre].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
+      map[nombre].monto+=v.monto||0;
+      map[nombre].pedidos+=1;
+    });
+    return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas,clienteEstiloSel,prods,envaseMap]);
+  const maxLitroEstilo=Math.max(1,...litrosPorEstiloCliente.map(e=>e.litros));
 
   // Ventas por tipo de envase
   const ENVASE_COLOR={PET:G,Barril:AM,Lata:"#4472BE"};
@@ -3672,7 +3774,7 @@ function Metricas({clientes,prods}){
   const maxZona=rankingZona[0]?.litros||1;
   const maxRubro=rankingRubro[0]?.litros||1;
  
-  if(todas.length===0) return(
+  if(todasSinFiltro.length===0) return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Métricas</span>
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:32,textAlign:"center",marginTop:20}}>
@@ -3685,7 +3787,16 @@ function Metricas({clientes,prods}){
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Métricas</span>
-      <p style={{fontSize:14,color:MU,marginBottom:20}}>Rankings de ventas · {todas.length} registros</p>
+      <p style={{fontSize:14,color:MU,marginBottom:14}}>Rankings de ventas · {todas.length} registro{todas.length!==1?"s":""}{hayFiltroPeriodo?" en el período":""}</p>
+
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>🔍 Período (afecta los rankings de abajo)</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+          <div><Lbl t="Desde"/><input type="date" value={pDesde} onChange={e=>setPDesde(e.target.value)} max={pHasta||undefined}/></div>
+          <div><Lbl t="Hasta"/><input type="date" value={pHasta} onChange={e=>setPHasta(e.target.value)} min={pDesde||undefined}/></div>
+        </div>
+        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
+      </div>
 
       {/* KPIs generales */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
@@ -3749,13 +3860,14 @@ function Metricas({clientes,prods}){
 
       {/* Top clientes por facturación total */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
-        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>💰 Top clientes · facturación total</span></div>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>💰 Top clientes · facturación{hayFiltroPeriodo?" (período)":" total"}</span></div>
         {topClientesFacturacion.length===0?<p style={{padding:16,fontSize:15,color:MU,textAlign:"center"}}>Sin datos.</p>:topClientesFacturacion.map((c,idx)=>(
           <div key={c.nombre} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,borderRadius:"50%",background:idx===0?GLT:BG,color:idx===0?G:MU,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14,fontWeight:700}}>{iniciales(c.nombre)}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
               <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}><div style={{width:`${(c.monto/maxFacturacion)*100}%`,height:"100%",background:G,borderRadius:2}}/></div>
+              <div style={{fontSize:12,color:MU,marginTop:3}}>Ticket prom.: {fmtARS(Math.round(c.monto/c.pedidos))}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div style={{fontSize:15,fontWeight:700,color:G}}>{fmtARS(c.monto)}</div>
@@ -3763,6 +3875,39 @@ function Metricas({clientes,prods}){
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Litros por estilo — cliente puntual */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🍺 Litros por estilo — un cliente</div>
+        <select value={clienteEstiloSel} onChange={e=>setClienteEstiloSel(e.target.value)} style={{marginBottom:12}}>
+          <option value="">Elegí un cliente...</option>
+          {clientesConVentasNombres.map(n=><option key={n} value={n}>{n}</option>)}
+        </select>
+        {clienteEstiloSel&&(
+          litrosPorEstiloCliente.length===0?(
+            <p style={{fontSize:14,color:MU,textAlign:"center",padding:"16px 0"}}>Sin compras de {clienteEstiloSel}{hayFiltroPeriodo?" en este período":""}.</p>
+          ):(
+            <>
+              <div style={{display:"flex",gap:16,marginBottom:14,paddingBottom:12,borderBottom:`1px solid ${BO}`}}>
+                <div><div style={{fontSize:12,color:MU,textTransform:"uppercase"}}>Total litros</div><div className="bebas" style={{fontSize:22,color:CR}}>{litrosPorEstiloCliente.reduce((s,x)=>s+x.litros,0)}L</div></div>
+                <div><div style={{fontSize:12,color:MU,textTransform:"uppercase"}}>Facturación</div><div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(litrosPorEstiloCliente.reduce((s,x)=>s+x.monto,0))}</div></div>
+              </div>
+              {litrosPorEstiloCliente.map((e,idx)=>(
+                <div key={e.nombre} style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:14,color:CR,marginBottom:3}}>
+                    <span style={{fontWeight:idx===0?700:500}}>{idx===0?"🥇 ":""}{e.nombre}</span>
+                    <span style={{fontWeight:700}}>{e.litros}L</span>
+                  </div>
+                  <div style={{height:8,borderRadius:4,background:BO,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${(e.litros/maxLitroEstilo)*100}%`,background:idx===0?G:GLT,borderRadius:4,transition:"width 0.4s"}}/>
+                  </div>
+                  <div style={{fontSize:12,color:MU,marginTop:2}}>{fmtARS(e.monto)} · {e.pedidos} pedido{e.pedidos!==1?"s":""}</div>
+                </div>
+              ))}
+            </>
+          )
+        )}
       </div>
 
       {/* Ventas por tipo de envase */}
@@ -4818,7 +4963,7 @@ function App(){
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:56,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos}/>}
-          {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods}/>}
+          {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
@@ -4830,7 +4975,7 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
-          {tab==="productos"&&<Productos prods={prods} setProds={setProds}/>}
+          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51}/>}
         </main>
       </div>
