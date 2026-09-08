@@ -204,51 +204,71 @@ function construirCatalogoPDF(prods,promo51){
   let y=50;
   const asegurarEspacio=h=>{if(y+h>pageH-20){doc.addPage();y=20;}};
 
-  const marcas=[...new Set((prods||[]).map(p=>p.marca||"Farol"))].sort((a,b)=>a.localeCompare(b));
-  marcas.forEach(marca=>{
-    const[mr,mg,mb]=marcaColor(marca);
-    const prodsMarca=(prods||[]).filter(p=>(p.marca||"Farol")===marca);
-    if(prodsMarca.length===0)return;
+  // Banner de promo 5+1 general, si no está restringida a un envase puntual (va arriba de todo, una sola vez)
+  if(promo51&&promo51.activo&&!promo51.envaseCuenta&&bonoProd){
+    asegurarEspacio(16);
+    const[gr,gg,gb]=marcaColor(promo51.marcaCuenta);
+    doc.setFillColor(255,247,230);
+    doc.setDrawColor(gr,gg,gb);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(marginX,y,pageW-marginX*2,13,2.5,2.5,"FD");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(11);
+    doc.setTextColor(gr,gg,gb);
+    doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
+    y+=19;
+  }
+
+  // Segmentos por tipo de envase, en este orden fijo
+  const SEGMENTOS=[
+    {envase:"Barril",titulo:"Barriles (Cerveza por Litro)"},
+    {envase:"Lata",titulo:"Latas 473 ml"},
+    {envase:"PET",titulo:"Pet 1 Lt"},
+  ];
+  SEGMENTOS.forEach(seg=>{
+    const prodsSeg=(prods||[]).filter(p=>(p.envase||"PET")===seg.envase).sort((a,b)=>(a.marca||"").localeCompare(b.marca||"")||(a.nombre||"").localeCompare(b.nombre||""));
+    if(prodsSeg.length===0)return;
+    const[er,eg,eb]=envaseColor(seg.envase);
 
     asegurarEspacio(14);
-    doc.setFillColor(mr,mg,mb);
+    doc.setFillColor(er,eg,eb);
     doc.roundedRect(marginX,y,pageW-marginX*2,10,2,2,"F");
     doc.setTextColor(255,255,255);
     doc.setFont("helvetica","bold");
     doc.setFontSize(13);
-    doc.text(marca.toUpperCase(),marginX+6,y+7);
+    doc.text(seg.titulo.toUpperCase(),marginX+6,y+7);
     doc.setFont("helvetica","normal");
     doc.setFontSize(8.5);
-    doc.text(`${prodsMarca.length} producto${prodsMarca.length!==1?"s":""}`,pageW-marginX-6,y+7,{align:"right"});
+    doc.text(`${prodsSeg.length} producto${prodsSeg.length!==1?"s":""}`,pageW-marginX-6,y+7,{align:"right"});
     y+=14;
 
-    // Banner de promo 5+1, si esta marca es la que acumula
-    if(promo51&&promo51.activo&&promo51.marcaCuenta===marca&&bonoProd){
+    // Banner de promo 5+1, si esta promo está restringida específicamente a este envase
+    if(promo51&&promo51.activo&&promo51.envaseCuenta===seg.envase&&bonoProd){
       asegurarEspacio(16);
+      const[gr,gg,gb]=marcaColor(promo51.marcaCuenta);
       doc.setFillColor(255,247,230);
-      doc.setDrawColor(mr,mg,mb);
+      doc.setDrawColor(gr,gg,gb);
       doc.setLineWidth(0.4);
       doc.roundedRect(marginX,y,pageW-marginX*2,13,2.5,2.5,"FD");
       doc.setFont("helvetica","bold");
       doc.setFontSize(11);
-      doc.setTextColor(mr,mg,mb);
-      const envaseTxt=promo51.envaseCuenta?` en ${promo51.envaseCuenta.toLowerCase()}`:"";
-      doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${marca}${envaseTxt} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
+      doc.setTextColor(gr,gg,gb);
+      doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} en ${seg.envase.toLowerCase()} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+6,y+8,{maxWidth:pageW-marginX*2-12});
       y+=17;
     }
 
-    prodsMarca.forEach(p=>{
+    prodsSeg.forEach(p=>{
       const tienePromos=(p.promos||[]).length>0;
       const descLines=p.descripcion?doc.splitTextToSize(String(p.descripcion),pageW-marginX*2-40):[];
       let cardH=22+(descLines.length?descLines.length*4.2:0)+(tienePromos?7.5:0);
       asegurarEspacio(cardH+6);
-      const[cr,cg,cb]=envaseColor(p.envase);
+      const[mr,mg,mb]=marcaColor(p.marca);
 
       doc.setFillColor(250,250,249);
       doc.setDrawColor(228,231,229);
       doc.setLineWidth(0.3);
       doc.roundedRect(marginX,y,pageW-marginX*2,cardH,3,3,"FD");
-      doc.setFillColor(cr,cg,cb);
+      doc.setFillColor(mr,mg,mb);
       doc.roundedRect(marginX,y,3,cardH,1.5,1.5,"F");
 
       doc.setTextColor(26,26,26);
@@ -256,19 +276,19 @@ function construirCatalogoPDF(prods,promo51){
       doc.setFontSize(13);
       doc.text(String(p.nombre||"Producto"),marginX+8,y+9);
 
-      // Badge de envase
+      // Badge de marca
       doc.setFont("helvetica","bold");
       doc.setFontSize(7.5);
-      const envTxt=(p.envase||"PET").toUpperCase();
-      const envW=doc.getTextWidth(envTxt)+6;
-      doc.setFillColor(cr,cg,cb);
-      doc.roundedRect(marginX+8,y+12,envW,5,2.5,2.5,"F");
+      const marcaTxt=(p.marca||"Farol").toUpperCase();
+      const marcaW=doc.getTextWidth(marcaTxt)+6;
+      doc.setFillColor(mr,mg,mb);
+      doc.roundedRect(marginX+8,y+12,marcaW,5,2.5,2.5,"F");
       doc.setTextColor(255,255,255);
-      doc.text(envTxt,marginX+8+envW/2,y+15.5,{align:"center"});
+      doc.text(marcaTxt,marginX+8+marcaW/2,y+15.5,{align:"center"});
 
       doc.setFont("helvetica","bold");
       doc.setFontSize(15);
-      doc.setTextColor(cr,cg,cb);
+      doc.setTextColor(mr,mg,mb);
       const precioTxt=fmtARS(p.precio||0);
       doc.text(precioTxt,pageW-marginX-6,y+11,{align:"right"});
       doc.setFont("helvetica","normal");
