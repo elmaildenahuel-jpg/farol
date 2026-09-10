@@ -215,7 +215,7 @@ function construirCatalogoPDF(prods,promo51){
     doc.setFont("helvetica","bold");
     doc.setFontSize(8.5);
     doc.setTextColor(gr,gg,gb);
-    doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+5,y+6,{maxWidth:pageW-marginX*2-10});
+    doc.text(`PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+5,y+6,{maxWidth:pageW-marginX*2-10});
     y+=12.5;
   }
 
@@ -263,7 +263,7 @@ function construirCatalogoPDF(prods,promo51){
       doc.setFont("helvetica","bold");
       doc.setFontSize(8.5);
       doc.setTextColor(gr,gg,gb);
-      doc.text(`🎁 PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} en ${seg.envase.toLowerCase()} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+5,y+6,{maxWidth:pageW-marginX*2-10});
+      doc.text(`PROMO: cada ${promo51.cantidadNecesaria} ${promo51.marcaCuenta} en ${seg.envase.toLowerCase()} te regalamos ${promo51.cantidadBono>1?promo51.cantidadBono+" ":""}${nombreProdEnvase(bonoProd)}`,marginX+5,y+6,{maxWidth:pageW-marginX*2-10});
       y+=12.5;
     }
 
@@ -342,7 +342,7 @@ function construirCatalogoPDF(prods,promo51){
       doc.setFont("helvetica","bold");
       doc.setFontSize(9.5);
       doc.setTextColor(183,121,31);
-      doc.text("🎁 PROMO BARRILES 5 + 1",marginX+6,y+6);
+      doc.text("PROMO BARRILES 5 + 1",marginX+6,y+6);
       doc.setFont("helvetica","normal");
       doc.setFontSize(7.5);
       doc.setTextColor(90,70,30);
@@ -3691,7 +3691,9 @@ function Metricas({clientes,prods}){
   },[todasSinFiltro]);
   const maxCobroMes=Math.max(1,...cobrosMensuales.map(m=>m.monto));
 
-  // Top clientes por facturación total
+  // Top clientes — ordenable por facturación o litros, de mayor a menor o de menor a mayor
+  const[topCriterio,setTopCriterio]=useState("monto"); // "monto" | "litros"
+  const[topOrden,setTopOrden]=useState("desc"); // "desc" | "asc"
   const topClientesFacturacion=useMemo(()=>{
     const map={};
     todas.forEach(v=>{
@@ -3700,9 +3702,11 @@ function Metricas({clientes,prods}){
       map[v.clienteNombre].monto+=v.monto||0;
       map[v.clienteNombre].pedidos+=1;
     });
-    return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.monto-a.monto).slice(0,8);
-  },[todas,envaseMap]);
-  const maxFacturacion=topClientesFacturacion[0]?.monto||1;
+    const arr=Object.entries(map).map(([nombre,d])=>({nombre,...d}));
+    arr.sort((a,b)=>topOrden==="desc"?b[topCriterio]-a[topCriterio]:a[topCriterio]-b[topCriterio]);
+    return arr.slice(0,8);
+  },[todas,envaseMap,topCriterio,topOrden]);
+  const maxFacturacion=Math.max(1,...topClientesFacturacion.map(c=>c[topCriterio]));
 
   // Litros por estilo — para un cliente puntual (respeta el filtro de período)
   const clientesConVentasNombres=useMemo(()=>[...new Set(todasSinFiltro.map(v=>v.clienteNombre))].sort((a,b)=>a.localeCompare(b)),[todasSinFiltro]);
@@ -3856,7 +3860,7 @@ function Metricas({clientes,prods}){
         <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90}}>
           {evolucionMensual.map((m,i)=>(
             <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
-              <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.litros/maxMes)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s"}}/>
+              <div title={`${m.lbl}: ${Math.round(m.litros*10)/10} L`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.litros/maxMes)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s",cursor:"default"}}/>
               <span style={{fontSize:11,fontWeight:i===evolucionMensual.length-1?700:500,color:i===evolucionMensual.length-1?G:MU,textTransform:"capitalize"}}>{m.lbl}</span>
             </div>
           ))}
@@ -3869,7 +3873,7 @@ function Metricas({clientes,prods}){
         <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90}}>
           {evolucionMensual.map((m,i)=>(
             <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
-              <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxMesMonto)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s"}}/>
+              <div title={`${m.lbl}: ${fmtARS(m.monto)}`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxMesMonto)*68))}px`,borderRadius:6,background:i===evolucionMensual.length-1?G:GLT,transition:"height 0.4s",cursor:"default"}}/>
               <span style={{fontSize:11,fontWeight:i===evolucionMensual.length-1?700:500,color:i===evolucionMensual.length-1?G:MU,textTransform:"capitalize"}}>{m.lbl}</span>
             </div>
           ))}
@@ -3882,27 +3886,35 @@ function Metricas({clientes,prods}){
         <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90}}>
           {cobrosMensuales.map((m,i)=>(
             <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
-              <div style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxCobroMes)*68))}px`,borderRadius:6,background:i===cobrosMensuales.length-1?GR:AM+"55",transition:"height 0.4s"}}/>
+              <div title={`${m.lbl}: ${fmtARS(m.monto)}`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.monto/maxCobroMes)*68))}px`,borderRadius:6,background:i===cobrosMensuales.length-1?GR:AM+"55",transition:"height 0.4s",cursor:"default"}}/>
               <span style={{fontSize:11,fontWeight:i===cobrosMensuales.length-1?700:500,color:i===cobrosMensuales.length-1?GR:MU,textTransform:"capitalize"}}>{m.lbl}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Top clientes por facturación total */}
+      {/* Top clientes — ordenable por facturación o litros, mayor→menor o menor→mayor */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
-        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}><span style={{fontSize:16,fontWeight:700,color:CR}}>💰 Top clientes · facturación{hayFiltroPeriodo?" (período)":" total"}</span></div>
+        <div style={{padding:"12px 16px",borderBottom:`1px solid ${BO}`}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
+            <span style={{fontSize:16,fontWeight:700,color:CR}}>{topCriterio==="litros"?"🍺":"💰"} Top clientes{hayFiltroPeriodo?" (período)":""}</span>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setTopCriterio(p=>p==="monto"?"litros":"monto")} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>{topCriterio==="monto"?"$ Facturación":"🍺 Litros"}</button>
+            <button onClick={()=>setTopOrden(p=>p==="desc"?"asc":"desc")} style={{fontSize:12,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>{topOrden==="desc"?"Mayor → menor":"Menor → mayor"}</button>
+          </div>
+        </div>
         {topClientesFacturacion.length===0?<p style={{padding:16,fontSize:15,color:MU,textAlign:"center"}}>Sin datos.</p>:topClientesFacturacion.map((c,idx)=>(
           <div key={c.nombre} style={{padding:"10px 16px",borderBottom:`1px solid ${BO}`,display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,borderRadius:"50%",background:idx===0?GLT:BG,color:idx===0?G:MU,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14,fontWeight:700}}>{iniciales(c.nombre)}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
-              <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}><div style={{width:`${(c.monto/maxFacturacion)*100}%`,height:"100%",background:G,borderRadius:2}}/></div>
+              <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}><div style={{width:`${(c[topCriterio]/maxFacturacion)*100}%`,height:"100%",background:G,borderRadius:2}}/></div>
               <div style={{fontSize:12,color:MU,marginTop:3}}>Ticket prom.: {fmtARS(Math.round(c.monto/c.pedidos))}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
-              <div style={{fontSize:15,fontWeight:700,color:G}}>{fmtARS(c.monto)}</div>
-              <div style={{fontSize:13,color:MU}}>{c.litros}L · {c.pedidos} pedido{c.pedidos!==1?"s":""}</div>
+              <div style={{fontSize:15,fontWeight:700,color:G}}>{topCriterio==="litros"?`${Math.round(c.litros*10)/10}L`:fmtARS(c.monto)}</div>
+              <div style={{fontSize:13,color:MU}}>{topCriterio==="litros"?fmtARS(c.monto):`${Math.round(c.litros*10)/10}L`} · {c.pedidos} pedido{c.pedidos!==1?"s":""}</div>
             </div>
           </div>
         ))}
