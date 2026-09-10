@@ -3641,17 +3641,7 @@ function Metricas({clientes,prods}){
   const deudaTotal=totalAdeudado(clientes);
   const montoPagado=montoTotalVentas-deudaTotal;
   const pctCobrado=montoTotalVentas>0?Math.round((montoPagado/montoTotalVentas)*100):100;
-  const frecuenciaCompraDias=useMemo(()=>{
-    const gaps=[];
-    clientes.forEach(c=>{
-      const fechas=(c.ventas||[]).map(v=>v.fecha).filter(Boolean).sort();
-      for(let i=1;i<fechas.length;i++){
-        const diff=(new Date(fechas[i]+"T00:00:00")-new Date(fechas[i-1]+"T00:00:00"))/86400000;
-        if(diff>=0)gaps.push(diff);
-      }
-    });
-    return gaps.length?Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length):null;
-  },[clientes]);
+  const litrosTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),[todas,envaseMap]);
 
   // Evolución mensual (últimos 6 meses)
   const evolucionMensual=useMemo(()=>{
@@ -3840,8 +3830,8 @@ function Metricas({clientes,prods}){
           <div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(ticketPromedio)}</div>
         </div>
         <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14}}>
-          <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Frecuencia de compra</div>
-          <div className="bebas" style={{fontSize:22,color:CR}}>{frecuenciaCompraDias!=null?`${frecuenciaCompraDias} días`:"—"}</div>
+          <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Litros vendidos</div>
+          <div className="bebas" style={{fontSize:22,color:CR}}>{Math.round(litrosTotalVentas*10)/10}L</div>
         </div>
         <div style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:14}}>
           <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Cobrado</div>
@@ -3899,8 +3889,9 @@ function Metricas({clientes,prods}){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
             <span style={{fontSize:16,fontWeight:700,color:CR}}>{topCriterio==="litros"?"🍺":"💰"} Top clientes{hayFiltroPeriodo?" (período)":""}</span>
           </div>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setTopCriterio(p=>p==="monto"?"litros":"monto")} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>{topCriterio==="monto"?"$ Facturación":"🍺 Litros"}</button>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={()=>setTopCriterio("monto")} style={{fontSize:12,fontWeight:700,color:topCriterio==="monto"?G:MU,background:topCriterio==="monto"?GLT:BG,border:topCriterio==="monto"?"none":`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>$ Facturación</button>
+            <button onClick={()=>setTopCriterio("litros")} style={{fontSize:12,fontWeight:700,color:topCriterio==="litros"?G:MU,background:topCriterio==="litros"?GLT:BG,border:topCriterio==="litros"?"none":`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>🍺 Litros</button>
             <button onClick={()=>setTopOrden(p=>p==="desc"?"asc":"desc")} style={{fontSize:12,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>{topOrden==="desc"?"Mayor → menor":"Menor → mayor"}</button>
           </div>
         </div>
