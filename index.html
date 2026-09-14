@@ -590,6 +590,260 @@ async function compartirRemitoPDF(pedido,cliente,prods,onEstado){
     onEstado&&onEstado(false);
   }
 }
+function construirEstadoCuentaPDF(cliente,prods){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210,pageH=297,marginX=15;
+  const envaseMap=envaseMapDe(prods);
+  const nombreDeProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
+  const esLata=id=>envaseMap[id]==="Lata";
+  const precioListaU=id=>{const p=(prods||[]).find(x=>x.id===id);return p?(p.precio||0):0;};
+  const valorDescuento=v=>{
+    const listaTotal=precioListaU(v.producto)*(Number(v.cantidad)||0);
+    if(v.esBono)return Math.round(listaTotal);
+    if(listaTotal>(v.monto||0))return Math.round(listaTotal-(v.monto||0));
+    if(v.descuentoPct>0)return Math.round(((v.monto||0)*v.descuentoPct)/(100-v.descuentoPct));
+    return 0;
+  };
+
+  let y=0;
+  const dibujarHeader=()=>{
+    doc.setFillColor(14,74,44);
+    doc.rect(0,0,pageW,26,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(16);
+    doc.text("GRUNGE & FAROL",marginX,14);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.text("Distribución de cerveza artesanal",marginX,20.5);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(12.5);
+    doc.text("ESTADO DE CUENTA",pageW-marginX,14,{align:"right"});
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8);
+    const fechaEmision=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"});
+    doc.text(`Emitido: ${fechaEmision}`,pageW-marginX,20.5,{align:"right"});
+    y=33;
+  };
+  dibujarHeader();
+
+  const asegurarEspacio=h=>{if(y+h>pageH-16){doc.addPage();dibujarHeader();}};
+
+  // Datos del cliente
+  doc.setTextColor(26,26,26);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(13);
+  doc.text(cliente.nombre||"Cliente",marginX,y);
+  y+=6;
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(86,91,96);
+  [cliente.direccion,[cliente.rubro,cliente.zona].filter(Boolean).join(" · "),cliente.telefono?`Tel: ${cliente.telefono}`:""].filter(Boolean).forEach(t=>{doc.text(t,marginX,y);y+=5;});
+
+  const ventas=[...(cliente.ventas||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||String(a.id).localeCompare(String(b.id)));
+  const totalFacturado=ventas.reduce((s,v)=>s+(v.monto||0),0);
+  const totalCobrado=ventas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0);
+  const saldoActual=totalFacturado-totalCobrado;
+
+  // Resumen (3 recuadros)
+  y+=3;
+  asegurarEspacio(20);
+  const boxW=(pageW-marginX*2-8)/3;
+  const resumen=[["Total facturado",fmtARS(totalFacturado),[26,26,26]],["Total cobrado",fmtARS(totalCobrado),[15,122,66]],["Saldo actual",fmtARS(saldoActual),saldoActual>0?[198,40,40]:[15,122,66]]];
+  resumen.forEach((r,i)=>{
+    const bx=marginX+i*(boxW+4);
+    doc.setFillColor(248,248,247);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.25);
+    doc.roundedRect(bx,y,boxW,17,2,2,"FD");
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(120,120,120);
+    doc.text(r[0].toUpperCase(),bx+4,y+6);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(11.5);
+    doc.setTextColor(r[2][0],r[2][1],r[2][2]);
+    doc.text(r[1],bx+4,y+13);
+  });
+  y+=24;
+
+  // Tabla de movimientos: fecha remito / fecha de pago / producto / cantidad / monto / saldo acumulado
+  asegurarEspacio(12);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(26,26,26);
+  doc.text("Historial de cuenta corriente",marginX,y);
+  y+=6;
+  const colX={fecha:marginX,pago:marginX+22,prod:marginX+46,cant:marginX+108,monto:marginX+134,saldo:pageW-marginX};
+  const dibujarHeaderTabla=()=>{
+    doc.setFillColor(230,233,231);
+    doc.rect(marginX,y-4.5,pageW-marginX*2,6.5,"F");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(90,94,98);
+    doc.text("FECHA REMITO",colX.fecha+1,y);
+    doc.text("FECHA PAGO",colX.pago+1,y);
+    doc.text("PRODUCTO",colX.prod+1,y);
+    doc.text("CANT.",colX.cant+18,y,{align:"right"});
+    doc.text("MONTO",colX.monto+24,y,{align:"right"});
+    doc.text("SALDO",colX.saldo,y,{align:"right"});
+    y+=5.5;
+  };
+  dibujarHeaderTabla();
+
+  let saldoAcum=0;
+  doc.setFont("helvetica","normal");
+  ventas.forEach(v=>{
+    asegurarEspacio(7);
+    if(y<40){dibujarHeaderTabla();}
+    saldoAcum+=v.pagado?0:(v.monto||0);
+    const cantTxt=`${v.cantidad}${esLata(v.producto)?"u":"L"}`;
+    doc.setFontSize(8.3);
+    doc.setTextColor(60,60,60);
+    doc.text(fmtDate(v.fecha),colX.fecha+1,y);
+    if(v.pagado&&v.fechaCobro){
+      doc.setTextColor(15,122,66);
+      doc.text(fmtDate(v.fechaCobro),colX.pago+1,y);
+    }else{
+      doc.setTextColor(183,121,31);
+      doc.text("Pendiente",colX.pago+1,y);
+    }
+    doc.setTextColor(60,60,60);
+    doc.text(nombreDeProd(v.producto),colX.prod+1,y,{maxWidth:60});
+    doc.text(cantTxt,colX.cant+18,y,{align:"right"});
+    doc.text(fmtARS(v.monto||0),colX.monto+24,y,{align:"right"});
+    doc.setFont("helvetica","bold");
+    doc.setTextColor(saldoAcum>0?198:15,saldoAcum>0?40:122,saldoAcum>0?40:66);
+    doc.text(fmtARS(saldoAcum),colX.saldo,y,{align:"right"});
+    doc.setFont("helvetica","normal");
+    y+=6.3;
+    doc.setDrawColor(240,241,240);
+    doc.setLineWidth(0.15);
+    doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
+  });
+  if(ventas.length===0){
+    doc.setFontSize(9.5);
+    doc.setTextColor(120,120,120);
+    doc.text("Sin movimientos registrados.",marginX,y);
+    y+=6;
+  }
+
+  // Promos y descuentos aplicados
+  const conPromo=ventas.filter(v=>v.esBono||v.descuentoPct>0).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  y+=6;
+  asegurarEspacio(14);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(26,26,26);
+  doc.text("Promos y descuentos aplicados",marginX,y);
+  y+=6;
+  if(conPromo.length===0){
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120,120,120);
+    doc.text("Sin promos ni descuentos registrados en este cliente.",marginX,y);
+    y+=6;
+  }else{
+    const colP={fecha:marginX,prod:marginX+22,cant:marginX+84,tipo:marginX+108,valor:pageW-marginX};
+    const dibujarHeaderPromo=()=>{
+      doc.setFillColor(255,247,230);
+      doc.rect(marginX,y-4.5,pageW-marginX*2,6.5,"F");
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(140,100,30);
+      doc.text("FECHA",colP.fecha+1,y);
+      doc.text("PRODUCTO",colP.prod+1,y);
+      doc.text("CANT.",colP.cant+18,y,{align:"right"});
+      doc.text("TIPO",colP.tipo+1,y);
+      doc.text("VALOR",colP.valor,y,{align:"right"});
+      y+=5.5;
+    };
+    dibujarHeaderPromo();
+    let totalValorPromos=0;
+    doc.setFont("helvetica","normal");
+    conPromo.forEach(v=>{
+      asegurarEspacio(7);
+      if(y<40){dibujarHeaderPromo();}
+      const valor=valorDescuento(v);
+      totalValorPromos+=valor;
+      const cantTxt=`${v.cantidad}${esLata(v.producto)?"u":"L"}`;
+      doc.setFontSize(8.3);
+      doc.setTextColor(60,60,60);
+      doc.text(fmtDate(v.fecha),colP.fecha+1,y);
+      doc.text(nombreDeProd(v.producto),colP.prod+1,y,{maxWidth:58});
+      doc.text(cantTxt,colP.cant+18,y,{align:"right"});
+      doc.setTextColor(183,121,31);
+      doc.text(v.esBono?"Bonificado":`-${v.descuentoPct}% desc.`,colP.tipo+1,y);
+      doc.setTextColor(198,40,40);
+      doc.text(`-${fmtARS(valor)}`,colP.valor,y,{align:"right"});
+      y+=6.3;
+      doc.setDrawColor(250,240,220);
+      doc.setLineWidth(0.15);
+      doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
+    });
+    asegurarEspacio(8);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(9);
+    doc.setTextColor(183,121,31);
+    doc.text("Total bonificado/descontado",colP.tipo+1,y);
+    doc.text(`-${fmtARS(totalValorPromos)}`,colP.valor,y,{align:"right"});
+    y+=6;
+  }
+
+  const totalPages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){
+    doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-12,pageW-marginX,pageH-12);
+    doc.setFont("helvetica","italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(150,150,150);
+    doc.text("Grunge & Farol · Cerveza artesanal — Estado de cuenta generado automáticamente",pageW/2,pageH-7,{align:"center"});
+  }
+  return doc;
+}
+async function compartirEstadoCuentaPDF(cliente,prods,onEstado){
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
+    return;
+  }
+  try{
+    onEstado&&onEstado(true);
+    const doc=construirEstadoCuentaPDF(cliente,prods);
+    const fileName=`estado-cuenta-${(cliente&&cliente.nombre?cliente.nombre.replace(/\s+/g,"-").toLowerCase():"cliente")}.pdf`;
+    const blob=doc.output("blob");
+    let compartido=false;
+
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],fileName,{type:"application/pdf"});
+        if(navigator.canShare({files:[file]})){
+          await navigator.share({files:[file],title:"Estado de cuenta Grunge & Farol",text:`Estado de cuenta — ${cliente?cliente.nombre:""}`});
+          compartido=true;
+        }
+      }catch(e){
+        if(e&&e.name==="AbortError")compartido=true;
+      }
+    }
+
+    if(!compartido){
+      const url=URL.createObjectURL(blob);
+      const nuevaVentana=window.open(url,"_blank");
+      if(!nuevaVentana){
+        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        alert("Se abrió/descargó el estado de cuenta. Si no ves nada, revisá si el navegador bloqueó una ventana emergente y permitila para este sitio.");
+      }
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
+  }catch(e){
+    alert("No se pudo generar el estado de cuenta:\n\n"+(e&&e.message?e.message:String(e))+"\n\nMandame este mensaje para arreglarlo.");
+  }finally{
+    onEstado&&onEstado(false);
+  }
+}
 const iniciales=nombre=>{
   if(!nombre)return"?";
   const partes=nombre.trim().split(/\s+/).filter(Boolean);
@@ -1176,7 +1430,7 @@ function SpeechPicker({open,onClose,speeches,telefono,nombre}){
 }
  
 // ── CuentaCorriente ───────────────────────────────────────────────
-function CuentaCorriente({cliente,onUpdate,diasMora}){
+function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
   const[montoPago,setMontoPago]=useState("");
   const[showParcial,setShowParcial]=useState(false);
   const[showHistorial,setShowHistorial]=useState(false);
@@ -1185,6 +1439,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
   const[notaCobro,setNotaCobro]=useState("");
   const[medioPago,setMedioPago]=useState("Efectivo");
   const[fechaCobroSel,setFechaCobroSel]=useState(hoyISO());
+  const[compartiendoEC,setCompartiendoEC]=useState(false);
  
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
@@ -1209,12 +1464,13 @@ function CuentaCorriente({cliente,onUpdate,diasMora}){
   return(
     <div style={{background:saldo>0?RE+"11":GR+"11",border:`1px solid ${saldo>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:14}}>
       {/* Saldo siempre visible */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:saldo>0?12:0}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <span style={{fontSize:16,fontWeight:700,color:saldo>0?"#C62828":GR}}>
           {saldo>0?"💰 Cuenta corriente":"✓ Sin deuda pendiente"}
         </span>
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
+      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{});}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!(cliente.ventas||[]).length} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
  
       {saldo>0&&(
         <>
@@ -1375,7 +1631,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
       )}
       <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods,promo51);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
-      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
+      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora} prods={prods}/>
       {(()=>{
         const promoProg=promo51&&promo51.activo?progresoPromo51(cliente,promo51,prods,pedidos):null;
         if(!promoProg)return null;
@@ -3299,6 +3555,17 @@ function Caja({clientes,prods}){
   const facturadoMes=delMes.reduce((s,v)=>s+(v.monto||0),0);
   const gananciaMes=delMes.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
 
+  const dHoy=new Date();
+  const dMesAnterior=new Date(dHoy.getFullYear(),dHoy.getMonth()-1,1);
+  const mesAnterior=`${dMesAnterior.getFullYear()}-${String(dMesAnterior.getMonth()+1).padStart(2,"0")}`;
+  const lblMesAnterior=dMesAnterior.toLocaleDateString("es-AR",{month:"long",year:"numeric"});
+  const delMesAnterior=todas.filter(v=>(v.fecha||"").slice(0,7)===mesAnterior);
+  const facturadoMesAnterior=delMesAnterior.reduce((s,v)=>s+(v.monto||0),0);
+  const gananciaMesAnterior=delMesAnterior.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const pctVar=(actual,anterior)=>anterior>0?Math.round(((actual-anterior)/anterior)*100):(actual>0?100:0);
+  const varFacturado=pctVar(facturadoMes,facturadoMesAnterior);
+  const varGanancia=pctVar(gananciaMes,gananciaMesAnterior);
+
   const evolucionGanancia=useMemo(()=>{
     const hoyD=new Date();
     const meses=[];
@@ -3400,6 +3667,24 @@ function Caja({clientes,prods}){
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Ganancia</div>
             <div className="bebas" style={{fontSize:22,color:"#fff"}}>{fmtARS(gananciaMes)}</div>
+          </div>
+        </div>
+        <div style={{borderTop:"1px solid rgba(255,255,255,0.15)",margin:"14px 0 10px"}}/>
+        <div style={{fontSize:13,color:"#8FE3B4",textTransform:"capitalize",marginBottom:4}}>{lblMesAnterior}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+          <div>
+            <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Facturado</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+              <span className="bebas" style={{fontSize:18,color:"#fff"}}>{fmtARS(facturadoMesAnterior)}</span>
+              {facturadoMesAnterior>0&&<span style={{fontSize:11,fontWeight:700,color:varFacturado>=0?"#8FE3B4":"#F3A6A6"}}>{varFacturado>=0?"▲":"▼"} {Math.abs(varFacturado)}%</span>}
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Ganancia</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
+              <span className="bebas" style={{fontSize:18,color:"#fff"}}>{fmtARS(gananciaMesAnterior)}</span>
+              {gananciaMesAnterior>0&&<span style={{fontSize:11,fontWeight:700,color:varGanancia>=0?"#8FE3B4":"#F3A6A6"}}>{varGanancia>=0?"▲":"▼"} {Math.abs(varGanancia)}%</span>}
+            </div>
           </div>
         </div>
       </div>
