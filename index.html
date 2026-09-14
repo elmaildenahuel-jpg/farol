@@ -3540,7 +3540,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   );
 }
 
-function Caja({clientes,setClientes,prods}){
+function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
@@ -3549,41 +3549,42 @@ function Caja({clientes,setClientes,prods}){
   const gananciaCobrada=todas.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
   const gananciaPendiente=totalGanancia-gananciaCobrada;
 
-  // Liquidación de comisiones: de lo ya cobrado al cliente, cuánto te pagaron efectivamente a vos (liquidado) y cuánto falta liquidarte
-  const ventasPendientesLiquidar=useMemo(()=>todas.filter(v=>v.pagado&&!v.liquidada&&(v.comisionPct||0)>0).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)),[todas]);
-  const gananciaLiquidada=todas.filter(v=>v.pagado&&v.liquidada).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
-  const gananciaPendienteLiquidar=ventasPendientesLiquidar.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
-  const historialLiquidaciones=useMemo(()=>{
-    const map={};
-    todas.filter(v=>v.liquidada&&v.fechaLiquidacion).forEach(v=>{
-      const k=v.fechaLiquidacion;
-      if(!map[k])map[k]={monto:0,cant:0};
-      map[k].monto+=Math.round((v.monto||0)*(v.comisionPct||0)/100);
-      map[k].cant+=1;
-    });
-    return Object.entries(map).map(([fecha,d])=>({fecha,...d})).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
-  },[todas]);
+  // Liquidación de comisiones: la fábrica te paga en montos sueltos, sin relación 1 a 1 con ventas puntuales.
+  // Se lleva como una cuenta corriente aparte: DEBE = ganancia cobrada acumulada, HABER = liquidaciones registradas (monto libre).
+  const liquidacionesOrdenadas=useMemo(()=>[...(comisiones||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||String(a.id).localeCompare(String(b.id))),[comisiones]);
+  const totalLiquidado=liquidacionesOrdenadas.reduce((s,l)=>s+(Number(l.monto)||0),0);
+  const pendienteLiquidar=gananciaCobrada-totalLiquidado;
 
   const[showLiquidar,setShowLiquidar]=useState(false);
-  const[seleccionLiquidar,setSeleccionLiquidar]=useState({});
-  const toggleSeleccion=id=>setSeleccionLiquidar(p=>({...p,[id]:!p[id]}));
-  const seleccionarTodoLiquidar=()=>{
-    const todo={};ventasPendientesLiquidar.forEach(v=>todo[v.id]=true);
-    setSeleccionLiquidar(todo);
-  };
-  const gananciaSeleccionada=ventasPendientesLiquidar.filter(v=>seleccionLiquidar[v.id]).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const[montoLiquidar,setMontoLiquidar]=useState("");
+  const[fechaLiquidar,setFechaLiquidar]=useState(hoyISO());
+  const[notaLiquidar,setNotaLiquidar]=useState("");
+  const abrirLiquidar=()=>{setMontoLiquidar(pendienteLiquidar>0?String(pendienteLiquidar):"");setFechaLiquidar(hoyISO());setNotaLiquidar("");setShowLiquidar(true);};
   const confirmarLiquidacion=()=>{
-    const idsSel=new Set(Object.keys(seleccionLiquidar).filter(id=>seleccionLiquidar[id]));
-    if(idsSel.size===0)return;
-    const fechaLiq=hoyISO();
-    setClientes(prev=>prev.map(c=>({...c,ventas:(c.ventas||[]).map(v=>idsSel.has(v.id)?{...v,liquidada:true,fechaLiquidacion:fechaLiq}:v)})));
-    setSeleccionLiquidar({});setShowLiquidar(false);
+    const monto=Number(montoLiquidar);
+    if(!monto||monto<=0)return;
+    setComisiones(prev=>[...(prev||[]),{id:uid(),fecha:fechaLiquidar||hoyISO(),monto,nota:notaLiquidar.trim()}]);
+    setShowLiquidar(false);setMontoLiquidar("");setNotaLiquidar("");
   };
-  const liquidarTodoDirecto=()=>{
-    if(ventasPendientesLiquidar.length===0)return;
-    const fechaLiq=hoyISO();
-    const idsTodo=new Set(ventasPendientesLiquidar.map(v=>v.id));
-    setClientes(prev=>prev.map(c=>({...c,ventas:(c.ventas||[]).map(v=>idsTodo.has(v.id)?{...v,liquidada:true,fechaLiquidacion:fechaLiq}:v)})));
+  const borrarLiquidacion=id=>{
+    if(!confirm("¿Borrar esta liquidación? Esta acción no se puede deshacer."))return;
+    setComisiones(prev=>(prev||[]).filter(l=>l.id!==id));
+  };
+  const exportarComisiones=()=>{
+    const header="Fecha,Concepto,Debe (ganancia generada),Haber (liquidado),Saldo,Nota";
+    const filas=[];
+    let saldo=0;
+    // Movimientos "debe": ganancia generada por cada venta ya cobrada, en orden cronológico
+    const debes=todas.filter(v=>v.pagado).map(v=>({tipo:"debe",fecha:v.fecha,monto:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta ${v.clienteNombre}`}));
+    const haberes=liquidacionesOrdenadas.map(l=>({tipo:"haber",fecha:l.fecha,monto:Number(l.monto)||0,concepto:l.nota?`Liquidación — ${l.nota}`:"Liquidación de comisión",id:l.id}));
+    const movs=[...debes,...haberes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+    movs.forEach(m=>{
+      saldo+=m.tipo==="debe"?m.monto:-m.monto;
+      filas.push([m.fecha,`"${m.concepto}"`,m.tipo==="debe"?m.monto:"",m.tipo==="haber"?m.monto:"",saldo,""].join(","));
+    });
+    const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`comisiones_ctacte_${hoyISO()}.csv`;a.click();
   };
 
   const hoy=hoyISO();
@@ -3658,10 +3659,10 @@ function Caja({clientes,setClientes,prods}){
   const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFCliente("");setFEstado("todos");setFComision("todos");};
 
   const exportarFiltrado=()=>{
-    const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago,Liquidada,Fecha liquidación";
+    const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago";
     const filas=filtradas.map(v=>[
       `"${v.clienteNombre}"`,v.fecha,v.fechaCobro||"",`"${v.producto}"`,v.cantidad,v.monto,v.comisionPct||0,
-      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`,v.liquidada?"Sí":"No",v.fechaLiquidacion||""
+      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`
     ].join(","));
     const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);
@@ -3694,58 +3695,60 @@ function Caja({clientes,setClientes,prods}){
         </div>
       </div>
 
-      {/* Liquidación de comisiones */}
+      {/* Liquidación de comisiones — cuenta corriente aparte con la fábrica, montos libres */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:14}}>
           <div>
             <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Liquidado</div>
-            <div className="bebas" style={{fontSize:20,color:GR}}>{fmtARS(gananciaLiquidada)}</div>
+            <div className="bebas" style={{fontSize:20,color:GR}}>{fmtARS(totalLiquidado)}</div>
           </div>
           <div>
             <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendiente de liquidar</div>
-            <div className="bebas" style={{fontSize:20,color:gananciaPendienteLiquidar>0?"#C24545":CR}}>{fmtARS(gananciaPendienteLiquidar)}</div>
+            <div className="bebas" style={{fontSize:20,color:pendienteLiquidar>0?"#C24545":CR}}>{fmtARS(pendienteLiquidar)}</div>
           </div>
         </div>
-        <button onClick={()=>setShowLiquidar(p=>!p)} disabled={ventasPendientesLiquidar.length===0} style={{width:"100%",padding:"14px 0",borderRadius:12,fontSize:16,fontWeight:700,background:ventasPendientesLiquidar.length===0?BO:G,color:"#fff",border:"none",cursor:ventasPendientesLiquidar.length===0?"not-allowed":"pointer",opacity:ventasPendientesLiquidar.length===0?0.6:1}}>
-          💵 {ventasPendientesLiquidar.length===0?"No hay comisiones pendientes de liquidar":`Liquidar comisiones · ${fmtARS(gananciaPendienteLiquidar)}`}
+        <p style={{fontSize:12,color:MU,marginBottom:12,lineHeight:1.4}}>La fábrica te liquida en montos sueltos, sin relación directa con ventas puntuales. Acá llevás esa cuenta corriente aparte: lo que se te fue generando de ganancia (sobre lo ya cobrado a los clientes) vs. lo que ya te pagaron.</p>
+        <button onClick={abrirLiquidar} style={{width:"100%",padding:"14px 0",borderRadius:12,fontSize:16,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer"}}>
+          💵 Registrar liquidación
         </button>
 
-        {showLiquidar&&ventasPendientesLiquidar.length>0&&(
+        {showLiquidar&&(
           <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontSize:13,fontWeight:700,color:MU}}>Elegí qué ventas liquidar (ya cobradas al cliente)</span>
-              <button onClick={seleccionarTodoLiquidar} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>Seleccionar todo</button>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div>
+                <label style={{fontSize:12,color:MU,display:"block",marginBottom:4}}>Monto liquidado</label>
+                <input type="number" inputMode="decimal" value={montoLiquidar} onChange={e=>setMontoLiquidar(e.target.value)} placeholder="Ej: 45000" style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${BO}`,fontSize:15}}/>
+              </div>
+              <div>
+                <label style={{fontSize:12,color:MU,display:"block",marginBottom:4}}>Fecha</label>
+                <input type="date" value={fechaLiquidar} onChange={e=>setFechaLiquidar(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${BO}`,fontSize:15}}/>
+              </div>
             </div>
-            <div style={{maxHeight:280,overflowY:"auto",border:`1px solid ${BO}`,borderRadius:12}}>
-              {ventasPendientesLiquidar.map(v=>{
-                const gan=Math.round((v.monto||0)*(v.comisionPct||0)/100);
-                return(
-                  <label key={v.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:`1px solid ${BO}`,cursor:"pointer"}}>
-                    <input type="checkbox" checked={!!seleccionLiquidar[v.id]} onChange={()=>toggleSeleccion(v.id)} style={{width:18,height:18,flexShrink:0}}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.clienteNombre}</div>
-                      <div style={{fontSize:12,color:MU}}>{fmtDate(v.fecha)} · {v.comisionPct}% comisión</div>
-                    </div>
-                    <div style={{fontSize:14,fontWeight:700,color:G,flexShrink:0}}>{fmtARS(gan)}</div>
-                  </label>
-                );
-              })}
+            <label style={{fontSize:12,color:MU,display:"block",marginBottom:4}}>Nota (opcional)</label>
+            <input type="text" value={notaLiquidar} onChange={e=>setNotaLiquidar(e.target.value)} placeholder="Ej: transferencia, efectivo, etc." style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${BO}`,fontSize:15,marginBottom:12}}/>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setShowLiquidar(false)} style={{flex:1,padding:"10px 0",borderRadius:10,fontSize:14,fontWeight:600,background:"transparent",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Cancelar</button>
+              <button onClick={confirmarLiquidacion} disabled={!Number(montoLiquidar)||Number(montoLiquidar)<=0} style={{flex:2,padding:"10px 0",borderRadius:10,fontSize:14,fontWeight:700,background:(!Number(montoLiquidar)||Number(montoLiquidar)<=0)?BO:G,color:"#fff",border:"none",cursor:"pointer"}}>Confirmar liquidación</button>
             </div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,gap:10}}>
-              <span style={{fontSize:14,color:MU}}>Seleccionado: <b style={{color:CR}}>{fmtARS(gananciaSeleccionada)}</b></span>
-              <button onClick={confirmarLiquidacion} disabled={gananciaSeleccionada===0} style={{padding:"10px 16px",borderRadius:10,fontSize:14,fontWeight:700,background:gananciaSeleccionada===0?BO:G,color:"#fff",border:"none",cursor:gananciaSeleccionada===0?"not-allowed":"pointer"}}>Confirmar liquidación</button>
-            </div>
-            <button onClick={liquidarTodoDirecto} style={{width:"100%",marginTop:8,padding:"9px 0",borderRadius:10,fontSize:13,fontWeight:600,background:"transparent",color:MU,border:`1px dashed ${BO}`,cursor:"pointer"}}>Liquidar todo lo pendiente de una vez</button>
           </div>
         )}
 
-        {historialLiquidaciones.length>0&&(
+        {liquidacionesOrdenadas.length>0&&(
           <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
-            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Historial de liquidaciones</div>
-            {historialLiquidaciones.map(h=>(
-              <div key={h.fecha} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:14}}>
-                <span style={{color:MU}}>{fmtDate(h.fecha)} · {h.cant} venta{h.cant!==1?"s":""}</span>
-                <span style={{fontWeight:700,color:G}}>{fmtARS(h.monto)}</span>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Historial de liquidaciones</span>
+              <button onClick={exportarComisiones} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>↓ Exportar CSV</button>
+            </div>
+            {[...liquidacionesOrdenadas].reverse().map(l=>(
+              <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",fontSize:14,borderBottom:`1px solid ${BO}`}}>
+                <div style={{minWidth:0}}>
+                  <div style={{color:CR,fontWeight:600}}>{fmtDate(l.fecha)}</div>
+                  {l.nota&&<div style={{fontSize:12,color:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.nota}</div>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                  <span style={{fontWeight:700,color:G}}>{fmtARS(l.monto)}</span>
+                  <button onClick={()=>borrarLiquidacion(l.id)} style={{background:"none",border:"none",color:RE,cursor:"pointer",fontSize:13,padding:4}}>✕</button>
+                </div>
               </div>
             ))}
           </div>
@@ -4611,7 +4614,7 @@ function Notas({notas,setNotas,cal}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -4692,7 +4695,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   const exportarTodo=async()=>{
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
-      clientes,prospectos,pedidos,prods,speeches,notas,gastos,
+      clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,
       config:{metaSemanal,diasMora,promo51}
     },null,2);
     const fileName=`backup_grunge_farol_${hoyISO()}.json`;
@@ -4736,6 +4739,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           data.prods?`${data.prods.length} productos`:null,
           data.notas?`${data.notas.length} notas`:null,
           data.gastos?`${data.gastos.length} gastos`:null,
+          data.comisiones?`${data.comisiones.length} liquidaciones de comisión`:null,
         ].filter(Boolean).join(", ");
         if(!confirm(`Este backup tiene: ${resumen||"(sin datos reconocibles)"}.\n\nEsto va a REEMPLAZAR todos los datos actuales de la app en este dispositivo (y se sincroniza a la nube). Esta acción no se puede deshacer.\n\n¿Continuar?`))return;
         if(Array.isArray(data.clientes))setClientes(data.clientes);
@@ -4745,6 +4749,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         if(setSpeeches&&Array.isArray(data.speeches))setSpeeches(data.speeches);
         if(setNotas&&Array.isArray(data.notas))setNotas(data.notas);
         if(setGastos&&Array.isArray(data.gastos))setGastos(data.gastos);
+        if(setComisiones&&Array.isArray(data.comisiones))setComisiones(data.comisiones);
         if(data.config){
           if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
           if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
@@ -5018,18 +5023,19 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
-  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","config"];
+  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,config:{metaSemanal,diasMora,promo51}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,config:{metaSemanal,diasMora,promo51}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
     notas:d=>{if(Array.isArray(d))setNotas(d);},
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
+    comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
     config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));},
   });
   const lastSyncRef=React.useRef({});
@@ -5141,7 +5147,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,notas,metaSemanal,diasMora]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51]);
 
   return{status,errorMsg};
 }
@@ -5302,6 +5308,7 @@ function App(){
   const[prods,setProds]=useState(PRODS_INIT);
   const[notas,setNotas]=useState(initNotas);
   const[gastos,setGastos]=useState([]);
+  const[comisiones,setComisiones]=useState([]);
   const[metaSemanal,setMetaSemanal]=useState(0);
   const[diasMora,setDiasMora]=useState(15);
   const[promo51,setPromo51]=useState({activo:false,marcaCuenta:"",envaseCuenta:"",cantidadNecesaria:5,productoBonoId:"",cantidadBono:1});
@@ -5337,6 +5344,7 @@ function App(){
     prods,setProds,
     notas,setNotas,
     gastos,setGastos,
+    comisiones,setComisiones,
     metaSemanal,setMetaSemanal,
     diasMora,setDiasMora,
     promo51,setPromo51
@@ -5389,11 +5397,11 @@ function App(){
           {tab==="difusion"&&<EnvioMasivo clientes={clientes}/>}
           {tab==="asistente"&&<AsistenteIA clientes={clientes} pedidos={pedidos} prods={prods}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
-          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods}/>}
+          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51}/>}
         </main>
       </div>
     </div>
