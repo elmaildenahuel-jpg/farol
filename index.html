@@ -844,6 +844,165 @@ async function compartirEstadoCuentaPDF(cliente,prods,onEstado){
     onEstado&&onEstado(false);
   }
 }
+function construirComisionesPDF(movs,resumen){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210,pageH=297,marginX=15;
+
+  let y=0;
+  const dibujarHeader=()=>{
+    doc.setFillColor(14,74,44);
+    doc.rect(0,0,pageW,26,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(16);
+    doc.text("GRUNGE & FAROL",marginX,14);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.text("Distribución de cerveza artesanal",marginX,20.5);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(12);
+    doc.text("CUENTA CORRIENTE DE COMISIONES",pageW-marginX,14,{align:"right"});
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8);
+    const fechaEmision=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"});
+    doc.text(`Emitido: ${fechaEmision}`,pageW-marginX,20.5,{align:"right"});
+    y=34;
+  };
+  dibujarHeader();
+
+  const asegurarEspacio=h=>{if(y+h>pageH-16){doc.addPage();dibujarHeader();}};
+
+  // Resumen (3 recuadros)
+  asegurarEspacio(20);
+  const boxW=(pageW-marginX*2-8)/3;
+  const cajas=[["Ganancia generada",fmtARS(resumen.generada),[26,26,26]],["Liquidado",fmtARS(resumen.liquidado),[15,122,66]],["Pendiente de liquidar",fmtARS(resumen.pendiente),resumen.pendiente>0?[198,40,40]:[15,122,66]]];
+  cajas.forEach((r,i)=>{
+    const bx=marginX+i*(boxW+4);
+    doc.setFillColor(248,248,247);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.25);
+    doc.roundedRect(bx,y,boxW,17,2,2,"FD");
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(7);
+    doc.setTextColor(120,120,120);
+    doc.text(r[0].toUpperCase(),bx+4,y+6,{maxWidth:boxW-8});
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(11);
+    doc.setTextColor(r[2][0],r[2][1],r[2][2]);
+    doc.text(r[1],bx+4,y+13);
+  });
+  y+=24;
+
+  // Tabla de movimientos: fecha / concepto / debe / haber / saldo
+  asegurarEspacio(12);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(26,26,26);
+  doc.text("Historial de movimientos",marginX,y);
+  y+=6;
+  const colX={fecha:marginX,concepto:marginX+22,debe:marginX+118,haber:marginX+143,saldo:pageW-marginX};
+  const dibujarHeaderTabla=()=>{
+    doc.setFillColor(230,233,231);
+    doc.rect(marginX,y-4.5,pageW-marginX*2,6.5,"F");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(90,94,98);
+    doc.text("FECHA",colX.fecha+1,y);
+    doc.text("CONCEPTO",colX.concepto+1,y);
+    doc.text("DEBE",colX.debe+18,y,{align:"right"});
+    doc.text("HABER",colX.haber+18,y,{align:"right"});
+    doc.text("SALDO",colX.saldo,y,{align:"right"});
+    y+=5.5;
+  };
+  dibujarHeaderTabla();
+
+  let saldoAcum=0;
+  doc.setFont("helvetica","normal");
+  movs.forEach(m=>{
+    asegurarEspacio(7);
+    if(y<40){dibujarHeaderTabla();}
+    saldoAcum+=m.tipo==="debe"?m.monto:-m.monto;
+    doc.setFontSize(8.3);
+    doc.setTextColor(60,60,60);
+    doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+    doc.text(String(m.concepto||""),colX.concepto+1,y,{maxWidth:92});
+    if(m.tipo==="debe"){
+      doc.text(fmtARS(m.monto),colX.debe+18,y,{align:"right"});
+    }else{
+      doc.setTextColor(15,122,66);
+      doc.text(fmtARS(m.monto),colX.haber+18,y,{align:"right"});
+      doc.setTextColor(60,60,60);
+    }
+    doc.setFont("helvetica","bold");
+    doc.setTextColor(saldoAcum>0?198:15,saldoAcum>0?40:122,saldoAcum>0?40:66);
+    doc.text(fmtARS(saldoAcum),colX.saldo,y,{align:"right"});
+    doc.setFont("helvetica","normal");
+    y+=6.3;
+    doc.setDrawColor(240,241,240);
+    doc.setLineWidth(0.15);
+    doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
+  });
+  if(movs.length===0){
+    doc.setFontSize(9.5);
+    doc.setTextColor(120,120,120);
+    doc.text("Sin movimientos registrados.",marginX,y);
+    y+=6;
+  }
+
+  const totalPages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){
+    doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-12,pageW-marginX,pageH-12);
+    doc.setFont("helvetica","italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(150,150,150);
+    doc.text("Grunge & Farol · Cuenta corriente de comisiones generada automáticamente",pageW/2,pageH-7,{align:"center"});
+  }
+  return doc;
+}
+async function compartirComisionesPDF(movs,resumen,onEstado){
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
+    return;
+  }
+  try{
+    onEstado&&onEstado(true);
+    const doc=construirComisionesPDF(movs,resumen);
+    const fileName=`comisiones-ctacte-${hoyISO()}.pdf`;
+    const blob=doc.output("blob");
+    let compartido=false;
+
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],fileName,{type:"application/pdf"});
+        if(navigator.canShare({files:[file]})){
+          await navigator.share({files:[file],title:"Cuenta corriente de comisiones",text:"Cuenta corriente de comisiones — Grunge & Farol"});
+          compartido=true;
+        }
+      }catch(e){
+        if(e&&e.name==="AbortError")compartido=true;
+      }
+    }
+
+    if(!compartido){
+      const url=URL.createObjectURL(blob);
+      const nuevaVentana=window.open(url,"_blank");
+      if(!nuevaVentana){
+        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        alert("Se abrió/descargó la cuenta corriente. Si no ves nada, revisá si el navegador bloqueó una ventana emergente y permitila para este sitio.");
+      }
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
+  }catch(e){
+    alert("No se pudo generar el PDF:\n\n"+(e&&e.message?e.message:String(e))+"\n\nMandame este mensaje para arreglarlo.");
+  }finally{
+    onEstado&&onEstado(false);
+  }
+}
 const iniciales=nombre=>{
   if(!nombre)return"?";
   const partes=nombre.trim().split(/\s+/).filter(Boolean);
@@ -3570,21 +3729,60 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
     if(!confirm("¿Borrar esta liquidación? Esta acción no se puede deshacer."))return;
     setComisiones(prev=>(prev||[]).filter(l=>l.id!==id));
   };
+  const movimientosComision=useMemo(()=>{
+    const debes=todas.filter(v=>v.pagado).map(v=>({tipo:"debe",fecha:v.fecha,monto:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta ${v.clienteNombre}`}));
+    const haberes=liquidacionesOrdenadas.map(l=>({tipo:"haber",fecha:l.fecha,monto:Number(l.monto)||0,concepto:l.nota?`Liquidación — ${l.nota}`:"Liquidación de comisión"}));
+    return[...debes,...haberes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  },[todas,liquidacionesOrdenadas]);
+
+  // Comisiones mes a mes: generado, liquidado y saldo arrastrado (si un mes no se liquida del todo, el saldo sigue acumulado en los meses siguientes)
+  const comisionesPorMes=useMemo(()=>{
+    const hoyD=new Date();
+    const finKey=`${hoyD.getFullYear()}-${String(hoyD.getMonth()+1).padStart(2,"0")}`;
+    if(movimientosComision.length===0){
+      return[{key:finKey,lbl:hoyD.toLocaleDateString("es-AR",{month:"long",year:"numeric"}),generado:0,liquidado:0,saldo:0}];
+    }
+    const primeraFecha=movimientosComision.reduce((min,m)=>m.fecha<min?m.fecha:min,movimientosComision[0].fecha);
+    const inicioD=new Date(primeraFecha+"T00:00:00");
+    const meses=[];
+    let d=new Date(inicioD.getFullYear(),inicioD.getMonth(),1);
+    const fin=new Date(hoyD.getFullYear(),hoyD.getMonth(),1);
+    while(d<=fin){
+      meses.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,lbl:d.toLocaleDateString("es-AR",{month:"long",year:"numeric"})});
+      d=new Date(d.getFullYear(),d.getMonth()+1,1);
+    }
+    let saldoAcum=0;
+    const conSaldo=meses.map(m=>{
+      const generado=movimientosComision.filter(x=>x.tipo==="debe"&&(x.fecha||"").slice(0,7)===m.key).reduce((s,x)=>s+x.monto,0);
+      const liquidado=movimientosComision.filter(x=>x.tipo==="haber"&&(x.fecha||"").slice(0,7)===m.key).reduce((s,x)=>s+x.monto,0);
+      saldoAcum+=generado-liquidado;
+      return{...m,generado,liquidado,saldo:saldoAcum};
+    });
+    return[...conSaldo].reverse(); // más reciente primero
+  },[movimientosComision]);
+  const mesActualComision=comisionesPorMes[0]||{generado:0,liquidado:0,saldo:0};
+  const mesAnteriorComision=comisionesPorMes[1]||null;
+
   const exportarComisiones=()=>{
     const header="Fecha,Concepto,Debe (ganancia generada),Haber (liquidado),Saldo,Nota";
     const filas=[];
     let saldo=0;
-    // Movimientos "debe": ganancia generada por cada venta ya cobrada, en orden cronológico
-    const debes=todas.filter(v=>v.pagado).map(v=>({tipo:"debe",fecha:v.fecha,monto:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta ${v.clienteNombre}`}));
-    const haberes=liquidacionesOrdenadas.map(l=>({tipo:"haber",fecha:l.fecha,monto:Number(l.monto)||0,concepto:l.nota?`Liquidación — ${l.nota}`:"Liquidación de comisión",id:l.id}));
-    const movs=[...debes,...haberes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
-    movs.forEach(m=>{
+    movimientosComision.forEach(m=>{
       saldo+=m.tipo==="debe"?m.monto:-m.monto;
       filas.push([m.fecha,`"${m.concepto}"`,m.tipo==="debe"?m.monto:"",m.tipo==="haber"?m.monto:"",saldo,""].join(","));
     });
     const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);
     a.download=`comisiones_ctacte_${hoyISO()}.csv`;a.click();
+  };
+  const[exportandoComisionesPDF,setExportandoComisionesPDF]=useState(false);
+  const exportarComisionesPDF=async()=>{
+    setExportandoComisionesPDF(true);
+    try{
+      await compartirComisionesPDF(movimientosComision,{generada:gananciaCobrada,liquidado:totalLiquidado,pendiente:pendienteLiquidar},()=>{});
+    }finally{
+      setExportandoComisionesPDF(false);
+    }
   };
 
   const hoy=hoyISO();
@@ -3733,11 +3931,73 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
           </div>
         )}
 
+        {/* Comparación mes actual vs. mes anterior — mismo formato que Facturado/Ganancia */}
+        <div style={{background:GDK,borderRadius:14,padding:16,marginTop:14}}>
+          <div style={{fontSize:12,color:"#8FE3B4",textTransform:"capitalize",letterSpacing:"0.06em",marginBottom:4}}>{mesActualComision.lbl||"Este mes"}</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+            <div>
+              <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Generado</div>
+              <div className="bebas" style={{fontSize:19,color:"#fff"}}>{fmtARS(mesActualComision.generado)}</div>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Liquidado</div>
+              <div className="bebas" style={{fontSize:19,color:"#fff"}}>{fmtARS(mesActualComision.liquidado)}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Saldo a fin de mes</div>
+              <div className="bebas" style={{fontSize:19,color:mesActualComision.saldo>0?"#F3A6A6":"#fff"}}>{fmtARS(mesActualComision.saldo)}</div>
+            </div>
+          </div>
+          {mesAnteriorComision&&(
+            <>
+              <div style={{borderTop:"1px solid rgba(255,255,255,0.15)",margin:"12px 0 8px"}}/>
+              <div style={{fontSize:12,color:"#8FE3B4",textTransform:"capitalize",marginBottom:4}}>{mesAnteriorComision.lbl}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                <div>
+                  <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Generado</div>
+                  <div className="bebas" style={{fontSize:16,color:"#fff"}}>{fmtARS(mesAnteriorComision.generado)}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Liquidado</div>
+                  <div className="bebas" style={{fontSize:16,color:"#fff"}}>{fmtARS(mesAnteriorComision.liquidado)}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:11,color:"#8FE3B4",marginBottom:2}}>Saldo a fin de mes</div>
+                  <div className="bebas" style={{fontSize:16,color:mesAnteriorComision.saldo>0?"#F3A6A6":"#fff"}}>{fmtARS(mesAnteriorComision.saldo)}</div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Tabla mes a mes completa, con el saldo que se va arrastrando si algún mes queda sin liquidar del todo */}
+        {comisionesPorMes.length>1&&(
+          <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Comisiones mes a mes</div>
+            <div style={{maxHeight:260,overflowY:"auto"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr",gap:6,fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",padding:"0 0 6px",position:"sticky",top:0,background:CA}}>
+                <span>Mes</span><span style={{textAlign:"right"}}>Generado</span><span style={{textAlign:"right"}}>Liquidado</span><span style={{textAlign:"right"}}>Saldo</span>
+              </div>
+              {comisionesPorMes.map(m=>(
+                <div key={m.key} style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr",gap:6,padding:"7px 0",borderBottom:`1px solid ${BO}`,fontSize:13}}>
+                  <span style={{color:CR,textTransform:"capitalize",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.lbl}</span>
+                  <span style={{textAlign:"right",color:MU}}>{fmtARS(m.generado)}</span>
+                  <span style={{textAlign:"right",color:GR}}>{fmtARS(m.liquidado)}</span>
+                  <span style={{textAlign:"right",fontWeight:700,color:m.saldo>0?"#C24545":GR}}>{fmtARS(m.saldo)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {liquidacionesOrdenadas.length>0&&(
           <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <span style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Historial de liquidaciones</span>
-              <button onClick={exportarComisiones} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>↓ Exportar CSV</button>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={exportarComisionesPDF} disabled={exportandoComisionesPDF} style={{fontSize:12,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"5px 9px",cursor:exportandoComisionesPDF?"not-allowed":"pointer",opacity:exportandoComisionesPDF?0.6:1}}>{exportandoComisionesPDF?"Generando...":"📄 PDF"}</button>
+                <button onClick={exportarComisiones} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>↓ CSV</button>
+              </div>
             </div>
             {[...liquidacionesOrdenadas].reverse().map(l=>(
               <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",fontSize:14,borderBottom:`1px solid ${BO}`}}>
