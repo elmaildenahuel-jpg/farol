@@ -3540,7 +3540,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   );
 }
 
-function Caja({clientes,prods}){
+function Caja({clientes,setClientes,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
@@ -3548,6 +3548,43 @@ function Caja({clientes,prods}){
   const totalGanancia=todas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
   const gananciaCobrada=todas.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
   const gananciaPendiente=totalGanancia-gananciaCobrada;
+
+  // Liquidación de comisiones: de lo ya cobrado al cliente, cuánto te pagaron efectivamente a vos (liquidado) y cuánto falta liquidarte
+  const ventasPendientesLiquidar=useMemo(()=>todas.filter(v=>v.pagado&&!v.liquidada&&(v.comisionPct||0)>0).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)),[todas]);
+  const gananciaLiquidada=todas.filter(v=>v.pagado&&v.liquidada).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const gananciaPendienteLiquidar=ventasPendientesLiquidar.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const historialLiquidaciones=useMemo(()=>{
+    const map={};
+    todas.filter(v=>v.liquidada&&v.fechaLiquidacion).forEach(v=>{
+      const k=v.fechaLiquidacion;
+      if(!map[k])map[k]={monto:0,cant:0};
+      map[k].monto+=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+      map[k].cant+=1;
+    });
+    return Object.entries(map).map(([fecha,d])=>({fecha,...d})).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  },[todas]);
+
+  const[showLiquidar,setShowLiquidar]=useState(false);
+  const[seleccionLiquidar,setSeleccionLiquidar]=useState({});
+  const toggleSeleccion=id=>setSeleccionLiquidar(p=>({...p,[id]:!p[id]}));
+  const seleccionarTodoLiquidar=()=>{
+    const todo={};ventasPendientesLiquidar.forEach(v=>todo[v.id]=true);
+    setSeleccionLiquidar(todo);
+  };
+  const gananciaSeleccionada=ventasPendientesLiquidar.filter(v=>seleccionLiquidar[v.id]).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const confirmarLiquidacion=()=>{
+    const idsSel=new Set(Object.keys(seleccionLiquidar).filter(id=>seleccionLiquidar[id]));
+    if(idsSel.size===0)return;
+    const fechaLiq=hoyISO();
+    setClientes(prev=>prev.map(c=>({...c,ventas:(c.ventas||[]).map(v=>idsSel.has(v.id)?{...v,liquidada:true,fechaLiquidacion:fechaLiq}:v)})));
+    setSeleccionLiquidar({});setShowLiquidar(false);
+  };
+  const liquidarTodoDirecto=()=>{
+    if(ventasPendientesLiquidar.length===0)return;
+    const fechaLiq=hoyISO();
+    const idsTodo=new Set(ventasPendientesLiquidar.map(v=>v.id));
+    setClientes(prev=>prev.map(c=>({...c,ventas:(c.ventas||[]).map(v=>idsTodo.has(v.id)?{...v,liquidada:true,fechaLiquidacion:fechaLiq}:v)})));
+  };
 
   const hoy=hoyISO();
   const mesActual=hoy.slice(0,7);
@@ -3621,10 +3658,10 @@ function Caja({clientes,prods}){
   const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFCliente("");setFEstado("todos");setFComision("todos");};
 
   const exportarFiltrado=()=>{
-    const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago";
+    const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago,Liquidada,Fecha liquidación";
     const filas=filtradas.map(v=>[
       `"${v.clienteNombre}"`,v.fecha,v.fechaCobro||"",`"${v.producto}"`,v.cantidad,v.monto,v.comisionPct||0,
-      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`
+      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`,v.liquidada?"Sí":"No",v.fechaLiquidacion||""
     ].join(","));
     const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);
@@ -3655,6 +3692,64 @@ function Caja({clientes,prods}){
           <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Ganancia pendiente</div>
           <div className="bebas" style={{fontSize:22,color:gananciaPendiente>0?"#C24545":CR}}>{fmtARS(gananciaPendiente)}</div>
         </div>
+      </div>
+
+      {/* Liquidación de comisiones */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:14}}>
+          <div>
+            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Liquidado</div>
+            <div className="bebas" style={{fontSize:20,color:GR}}>{fmtARS(gananciaLiquidada)}</div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendiente de liquidar</div>
+            <div className="bebas" style={{fontSize:20,color:gananciaPendienteLiquidar>0?"#C24545":CR}}>{fmtARS(gananciaPendienteLiquidar)}</div>
+          </div>
+        </div>
+        <button onClick={()=>setShowLiquidar(p=>!p)} disabled={ventasPendientesLiquidar.length===0} style={{width:"100%",padding:"14px 0",borderRadius:12,fontSize:16,fontWeight:700,background:ventasPendientesLiquidar.length===0?BO:G,color:"#fff",border:"none",cursor:ventasPendientesLiquidar.length===0?"not-allowed":"pointer",opacity:ventasPendientesLiquidar.length===0?0.6:1}}>
+          💵 {ventasPendientesLiquidar.length===0?"No hay comisiones pendientes de liquidar":`Liquidar comisiones · ${fmtARS(gananciaPendienteLiquidar)}`}
+        </button>
+
+        {showLiquidar&&ventasPendientesLiquidar.length>0&&(
+          <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <span style={{fontSize:13,fontWeight:700,color:MU}}>Elegí qué ventas liquidar (ya cobradas al cliente)</span>
+              <button onClick={seleccionarTodoLiquidar} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>Seleccionar todo</button>
+            </div>
+            <div style={{maxHeight:280,overflowY:"auto",border:`1px solid ${BO}`,borderRadius:12}}>
+              {ventasPendientesLiquidar.map(v=>{
+                const gan=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+                return(
+                  <label key={v.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:`1px solid ${BO}`,cursor:"pointer"}}>
+                    <input type="checkbox" checked={!!seleccionLiquidar[v.id]} onChange={()=>toggleSeleccion(v.id)} style={{width:18,height:18,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.clienteNombre}</div>
+                      <div style={{fontSize:12,color:MU}}>{fmtDate(v.fecha)} · {v.comisionPct}% comisión</div>
+                    </div>
+                    <div style={{fontSize:14,fontWeight:700,color:G,flexShrink:0}}>{fmtARS(gan)}</div>
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,gap:10}}>
+              <span style={{fontSize:14,color:MU}}>Seleccionado: <b style={{color:CR}}>{fmtARS(gananciaSeleccionada)}</b></span>
+              <button onClick={confirmarLiquidacion} disabled={gananciaSeleccionada===0} style={{padding:"10px 16px",borderRadius:10,fontSize:14,fontWeight:700,background:gananciaSeleccionada===0?BO:G,color:"#fff",border:"none",cursor:gananciaSeleccionada===0?"not-allowed":"pointer"}}>Confirmar liquidación</button>
+            </div>
+            <button onClick={liquidarTodoDirecto} style={{width:"100%",marginTop:8,padding:"9px 0",borderRadius:10,fontSize:13,fontWeight:600,background:"transparent",color:MU,border:`1px dashed ${BO}`,cursor:"pointer"}}>Liquidar todo lo pendiente de una vez</button>
+          </div>
+        )}
+
+        {historialLiquidaciones.length>0&&(
+          <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Historial de liquidaciones</div>
+            {historialLiquidaciones.map(h=>(
+              <div key={h.fecha} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:14}}>
+                <span style={{color:MU}}>{fmtDate(h.fecha)} · {h.cant} venta{h.cant!==1?"s":""}</span>
+                <span style={{fontWeight:700,color:G}}>{fmtARS(h.monto)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{background:GDK,borderRadius:18,padding:18,marginBottom:16}}>
@@ -4872,7 +4967,10 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           </div>
           <div>
             <Lbl t="Cantidad necesaria"/>
-            <input type="number" inputMode="numeric" value={promoTmp.cantidadNecesaria} onChange={e=>setPromoTmp(p=>({...p,cantidadNecesaria:e.target.value}))} placeholder="Ej: 5"/>
+            <input type="number" inputMode="numeric" value={promoTmp.cantidadNecesaria} onChange={e=>setPromoTmp(p=>({...p,cantidadNecesaria:e.target.value}))} placeholder="Ej: 250"/>
+            <div style={{fontSize:12,color:MU,marginTop:4,lineHeight:1.4}}>
+              ⚠️ Va en <b>litros</b> para Barril y PET (no en "cantidad de barriles/bidones"), y en <b>unidades</b> para Lata. Ej: si un barril tiene 50L y la promo es "cada 5 barriles", cargá <b>250</b> acá.
+            </div>
           </div>
           <div>
             <Lbl t="Producto del bono"/>
@@ -5291,7 +5389,7 @@ function App(){
           {tab==="difusion"&&<EnvioMasivo clientes={clientes}/>}
           {tab==="asistente"&&<AsistenteIA clientes={clientes} pedidos={pedidos} prods={prods}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
-          {tab==="caja"&&<Caja clientes={clientes} prods={prods}/>}
+          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51}/>}
