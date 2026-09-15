@@ -167,6 +167,7 @@ const initSpeeches=[
 // ── Helpers ───────────────────────────────────────────────────────
 const fmtARS=n=>n.toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0});
 const fmtDate=s=>new Date(s+"T00:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"});
+const fmtDateCorta=s=>{const d=new Date(s+"T00:00:00");return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;};
 const fmtDateTime=iso=>{
   if(!iso)return"—";
   const d=new Date(iso);
@@ -713,13 +714,13 @@ function construirEstadoCuentaPDF(cliente,prods){
     if(m.tipo==="venta"){
       const cantTxt=`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
       doc.setTextColor(60,60,60);
-      doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+      doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
       doc.text(nombreDeProd(m.producto),colX.prod+1,y,{maxWidth:54});
       doc.text(cantTxt,colX.monto-4,y,{align:"right"});
       doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }else{
       doc.setTextColor(15,122,66);
-      doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+      doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
       doc.text(`Pago recibido${m.medioPago?" · "+m.medioPago:""}`,colX.prod+1,y,{maxWidth:54});
       doc.text(fmtARS(m.monto),colX.saldo-24,y,{align:"right"});
     }
@@ -780,7 +781,7 @@ function construirEstadoCuentaPDF(cliente,prods){
       const cantTxt=`${v.cantidad}${esLata(v.producto)?"u":"L"}`;
       doc.setFontSize(8.3);
       doc.setTextColor(60,60,60);
-      doc.text(fmtDate(v.fecha),colP.fecha+1,y);
+      doc.text(fmtDateCorta(v.fecha),colP.fecha+1,y);
       doc.text(nombreDeProd(v.producto),colP.prod+1,y,{maxWidth:58});
       doc.text(cantTxt,colP.cant+18,y,{align:"right"});
       doc.setTextColor(183,121,31);
@@ -935,7 +936,7 @@ function construirComisionesPDF(movs,resumen){
     saldoAcum+=m.tipo==="debe"?m.monto:-m.monto;
     doc.setFontSize(8.3);
     doc.setTextColor(60,60,60);
-    doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+    doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
     doc.text(String(m.concepto||""),colX.concepto+1,y,{maxWidth:92});
     if(m.tipo==="debe"){
       doc.text(fmtARS(m.monto),colX.debe+18,y,{align:"right"});
@@ -1096,7 +1097,7 @@ function construirSolicitudLiquidacionPDF(ventas,{desde,hasta,pendiente}){
     totalCom+=com;
     doc.setFontSize(8.3);
     doc.setTextColor(60,60,60);
-    doc.text(fmtDate(v.fechaCobro||v.fecha),colX.fecha+1,y);
+    doc.text(fmtDateCorta(v.fechaCobro||v.fecha),colX.fecha+1,y);
     doc.text(String(v.clienteNombre||""),colX.cliente+1,y,{maxWidth:88});
     doc.text(fmtARS(v.monto||0),colX.pct-4,y,{align:"right"});
     doc.text(`${v.comisionPct||0}%`,colX.com-22,y,{align:"right"});
