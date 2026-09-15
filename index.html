@@ -668,25 +668,36 @@ function construirEstadoCuentaPDF(cliente,prods){
   });
   y+=24;
 
-  // Tabla de movimientos: fecha remito / fecha de pago / producto / cantidad / monto / saldo acumulado
+  // Libro de movimientos: cada venta genera una fila "venta" en su fecha de remito,
+  // y si está pagada genera además una fila "pago" en la fecha real del cobro.
+  // El saldo se acumula línea por línea, correlacionando venta con pago en el orden en que ocurrieron.
+  const movs=[];
+  ventas.forEach(v=>{
+    movs.push({id:v.id+"-v",orden:0,fecha:v.fecha,tipo:"venta",producto:v.producto,cantidad:v.cantidad,monto:v.monto||0});
+    if(v.pagado){
+      movs.push({id:v.id+"-p",orden:1,fecha:v.fechaCobro||v.fecha,tipo:"pago",medioPago:v.medioPago,monto:v.monto||0});
+    }
+  });
+  movs.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
+
   asegurarEspacio(12);
   doc.setFont("helvetica","bold");
   doc.setFontSize(10.5);
   doc.setTextColor(26,26,26);
   doc.text("Historial de cuenta corriente",marginX,y);
   y+=6;
-  const colX={fecha:marginX,pago:marginX+22,prod:marginX+46,cant:marginX+108,monto:marginX+134,saldo:pageW-marginX};
+  const colX={fecha:marginX,prod:marginX+20,cant:marginX+76,monto:marginX+92,pago:marginX+118,saldo:pageW-marginX};
   const dibujarHeaderTabla=()=>{
     doc.setFillColor(230,233,231);
     doc.rect(marginX,y-4.5,pageW-marginX*2,6.5,"F");
     doc.setFont("helvetica","bold");
     doc.setFontSize(7.5);
     doc.setTextColor(90,94,98);
-    doc.text("FECHA REMITO",colX.fecha+1,y);
-    doc.text("FECHA PAGO",colX.pago+1,y);
+    doc.text("FECHA",colX.fecha+1,y);
     doc.text("PRODUCTO",colX.prod+1,y);
-    doc.text("CANT.",colX.cant+18,y,{align:"right"});
-    doc.text("MONTO",colX.monto+24,y,{align:"right"});
+    doc.text("CANT.",colX.monto-4,y,{align:"right"});
+    doc.text("MONTO",colX.pago-2,y,{align:"right"});
+    doc.text("PAGO",colX.saldo-24,y,{align:"right"});
     doc.text("SALDO",colX.saldo,y,{align:"right"});
     y+=5.5;
   };
@@ -694,25 +705,24 @@ function construirEstadoCuentaPDF(cliente,prods){
 
   let saldoAcum=0;
   doc.setFont("helvetica","normal");
-  ventas.forEach(v=>{
+  movs.forEach(m=>{
     asegurarEspacio(7);
     if(y<40){dibujarHeaderTabla();}
-    saldoAcum+=v.pagado?0:(v.monto||0);
-    const cantTxt=`${v.cantidad}${esLata(v.producto)?"u":"L"}`;
+    saldoAcum+=m.tipo==="venta"?m.monto:-m.monto;
     doc.setFontSize(8.3);
-    doc.setTextColor(60,60,60);
-    doc.text(fmtDate(v.fecha),colX.fecha+1,y);
-    if(v.pagado&&v.fechaCobro){
-      doc.setTextColor(15,122,66);
-      doc.text(fmtDate(v.fechaCobro),colX.pago+1,y);
+    if(m.tipo==="venta"){
+      const cantTxt=`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
+      doc.setTextColor(60,60,60);
+      doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+      doc.text(nombreDeProd(m.producto),colX.prod+1,y,{maxWidth:54});
+      doc.text(cantTxt,colX.monto-4,y,{align:"right"});
+      doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }else{
-      doc.setTextColor(183,121,31);
-      doc.text("Pendiente",colX.pago+1,y);
+      doc.setTextColor(15,122,66);
+      doc.text(fmtDate(m.fecha),colX.fecha+1,y);
+      doc.text(`Pago recibido${m.medioPago?" · "+m.medioPago:""}`,colX.prod+1,y,{maxWidth:54});
+      doc.text(fmtARS(m.monto),colX.saldo-24,y,{align:"right"});
     }
-    doc.setTextColor(60,60,60);
-    doc.text(nombreDeProd(v.producto),colX.prod+1,y,{maxWidth:60});
-    doc.text(cantTxt,colX.cant+18,y,{align:"right"});
-    doc.text(fmtARS(v.monto||0),colX.monto+24,y,{align:"right"});
     doc.setFont("helvetica","bold");
     doc.setTextColor(saldoAcum>0?198:15,saldoAcum>0?40:122,saldoAcum>0?40:66);
     doc.text(fmtARS(saldoAcum),colX.saldo,y,{align:"right"});
@@ -722,7 +732,7 @@ function construirEstadoCuentaPDF(cliente,prods){
     doc.setLineWidth(0.15);
     doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
   });
-  if(ventas.length===0){
+  if(movs.length===0){
     doc.setFontSize(9.5);
     doc.setTextColor(120,120,120);
     doc.text("Sin movimientos registrados.",marginX,y);
@@ -1003,6 +1013,180 @@ async function compartirComisionesPDF(movs,resumen,onEstado){
     onEstado&&onEstado(false);
   }
 }
+// ── Solicitud de liquidación (para presentarle a la fábrica) ──────
+// Muestra el detalle de ventas ya cobradas a clientes desde la última liquidación registrada
+// (o desde el inicio si nunca liquidaste), que sustentan el monto pendiente de cobrar.
+function construirSolicitudLiquidacionPDF(ventas,{desde,hasta,pendiente}){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210,pageH=297,marginX=15;
+
+  let y=0;
+  const dibujarHeader=()=>{
+    doc.setFillColor(14,74,44);
+    doc.rect(0,0,pageW,26,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(16);
+    doc.text("GRUNGE & FAROL",marginX,14);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.text("Distribución de cerveza artesanal",marginX,20.5);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(12.5);
+    doc.text("SOLICITUD DE LIQUIDACIÓN",pageW-marginX,14,{align:"right"});
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8);
+    const fechaEmision=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"});
+    doc.text(`Emitido: ${fechaEmision}`,pageW-marginX,20.5,{align:"right"});
+    y=33;
+  };
+  dibujarHeader();
+  const asegurarEspacio=h=>{if(y+h>pageH-16){doc.addPage();dibujarHeader();}};
+
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(10);
+  doc.setTextColor(86,91,96);
+  doc.text(`Período cubierto: ${desde?fmtDate(desde):"inicio"} — ${fmtDate(hasta)}`,marginX,y);
+  y+=10;
+
+  asegurarEspacio(24);
+  doc.setFillColor(228,245,234);
+  doc.setDrawColor(15,122,66);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(marginX,y,pageW-marginX*2,22,3,3,"FD");
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(15,122,66);
+  doc.text("MONTO SOLICITADO",marginX+8,y+8);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(18);
+  doc.setTextColor(14,74,44);
+  doc.text(fmtARS(pendiente),marginX+8,y+17);
+  y+=30;
+
+  asegurarEspacio(12);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(26,26,26);
+  doc.text("Detalle de ventas cobradas que sustentan el pedido",marginX,y);
+  y+=6;
+  const colX={fecha:marginX,cliente:marginX+22,venta:marginX+114,pct:marginX+140,com:pageW-marginX};
+  const dibujarHeaderTabla=()=>{
+    doc.setFillColor(230,233,231);
+    doc.rect(marginX,y-4.5,pageW-marginX*2,6.5,"F");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(90,94,98);
+    doc.text("FECHA COBRO",colX.fecha+1,y);
+    doc.text("CLIENTE",colX.cliente+1,y);
+    doc.text("VENTA",colX.pct-4,y,{align:"right"});
+    doc.text("%",colX.com-22,y,{align:"right"});
+    doc.text("COMISIÓN",colX.com,y,{align:"right"});
+    y+=5.5;
+  };
+  dibujarHeaderTabla();
+
+  let totalCom=0;
+  doc.setFont("helvetica","normal");
+  ventas.forEach(v=>{
+    asegurarEspacio(7);
+    if(y<40){dibujarHeaderTabla();}
+    const com=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+    totalCom+=com;
+    doc.setFontSize(8.3);
+    doc.setTextColor(60,60,60);
+    doc.text(fmtDate(v.fechaCobro||v.fecha),colX.fecha+1,y);
+    doc.text(String(v.clienteNombre||""),colX.cliente+1,y,{maxWidth:88});
+    doc.text(fmtARS(v.monto||0),colX.pct-4,y,{align:"right"});
+    doc.text(`${v.comisionPct||0}%`,colX.com-22,y,{align:"right"});
+    doc.setFont("helvetica","bold");
+    doc.text(fmtARS(com),colX.com,y,{align:"right"});
+    doc.setFont("helvetica","normal");
+    y+=6.3;
+    doc.setDrawColor(240,241,240);
+    doc.setLineWidth(0.15);
+    doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
+  });
+  if(ventas.length===0){
+    doc.setFontSize(9.5);
+    doc.setTextColor(120,120,120);
+    doc.text("Sin ventas cobradas registradas en este período.",marginX,y);
+    y+=6;
+  }
+  asegurarEspacio(9);
+  y+=2;
+  doc.setDrawColor(200,200,200);
+  doc.setLineWidth(0.3);
+  doc.line(colX.pct-30,y-4,pageW-marginX,y-4);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(14,74,44);
+  doc.text("TOTAL VENTAS DEL DETALLE",colX.com-22,y,{align:"right"});
+  doc.text(fmtARS(totalCom),colX.com,y,{align:"right"});
+  y+=10;
+
+  asegurarEspacio(10);
+  doc.setFont("helvetica","italic");
+  doc.setFontSize(8);
+  doc.setTextColor(120,120,120);
+  doc.text("El monto solicitado surge de la cuenta corriente de comisiones; el detalle es de referencia y puede diferir",marginX,y,{maxWidth:pageW-marginX*2});
+  y+=4;
+  doc.text("levemente por conciliación de fechas.",marginX,y,{maxWidth:pageW-marginX*2});
+
+  const totalPages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){
+    doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-12,pageW-marginX,pageH-12);
+    doc.setFont("helvetica","italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(150,150,150);
+    doc.text("Grunge & Farol · Solicitud de liquidación generada automáticamente",pageW/2,pageH-7,{align:"center"});
+  }
+  return doc;
+}
+async function compartirSolicitudLiquidacionPDF(ventas,resumen,onEstado){
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
+    return;
+  }
+  try{
+    onEstado&&onEstado(true);
+    const doc=construirSolicitudLiquidacionPDF(ventas,resumen);
+    const fileName=`solicitud-liquidacion-${hoyISO()}.pdf`;
+    const blob=doc.output("blob");
+    let compartido=false;
+
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],fileName,{type:"application/pdf"});
+        if(navigator.canShare({files:[file]})){
+          await navigator.share({files:[file],title:"Solicitud de liquidación",text:"Solicitud de liquidación — Grunge & Farol"});
+          compartido=true;
+        }
+      }catch(e){
+        if(e&&e.name==="AbortError")compartido=true;
+      }
+    }
+
+    if(!compartido){
+      const url=URL.createObjectURL(blob);
+      const nuevaVentana=window.open(url,"_blank");
+      if(!nuevaVentana){
+        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        alert("Se abrió/descargó la solicitud de liquidación. Si no ves nada, revisá si el navegador bloqueó una ventana emergente y permitila para este sitio.");
+      }
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
+  }catch(e){
+    alert("No se pudo generar la solicitud de liquidación:\n\n"+(e&&e.message?e.message:String(e))+"\n\nMandame este mensaje para arreglarlo.");
+  }finally{
+    onEstado&&onEstado(false);
+  }
+}
 const iniciales=nombre=>{
   if(!nombre)return"?";
   const partes=nombre.trim().split(/\s+/).filter(Boolean);
@@ -1122,6 +1306,8 @@ const reproducirBeep=()=>{
 function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
 function totalAdeudado(clientes){ return clientes.reduce((s,c)=>s+saldoCliente(c),0); }
 const MEDIOS_PAGO=[{id:"Efectivo",ic:"💵"},{id:"Transferencia",ic:"🏦"},{id:"Otro",ic:"✏️"}];
+// Cada cuántos días sugerimos liquidar comisiones con la fábrica si hay saldo pendiente.
+const PERIODO_LIQUIDACION_DIAS=30;
 // Aplica un cobro (total o parcial) a las ventas pendientes de un cliente, de más antigua a más nueva.
 // Registra fechaCobro y medioPago en cada venta saldada; si el monto no alcanza a cubrir una venta, la divide en dos.
 function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",fecha=null}={}){
@@ -1588,16 +1774,62 @@ function SpeechPicker({open,onClose,speeches,telefono,nombre}){
   );
 }
  
+// ── PanelCobro (reutilizable: ficha de cliente y Cobros pendientes en Caja) ──
+// Unifica "cobro en efectivo" + "pago parcial" en un solo flujo: el monto viene
+// precargado con el saldo total (un solo click salda todo), y se puede editar para un pago parcial.
+function PanelCobro({cliente,onUpdate,onDone}){
+  const saldo=saldoCliente(cliente);
+  const[monto,setMonto]=useState(saldo>0?String(saldo):"");
+  const[medioPago,setMedioPago]=useState("Efectivo");
+  const[fecha,setFecha]=useState(hoyISO());
+  const[nota,setNota]=useState("");
+  const montoNum=Number(monto)||0;
+  const esParcial=montoNum>0&&montoNum<saldo;
+  const confirmar=()=>{
+    if(!montoNum||montoNum<=0)return;
+    onUpdate(aplicarCobroACliente(cliente,montoNum,{medioPago,nota,fecha}));
+    onDone&&onDone();
+  };
+  return(
+    <div style={{background:"#fff",border:`1px solid ${G}33`,borderRadius:10,padding:14}}>
+      <div style={{marginBottom:8}}>
+        <Lbl t="Monto cobrado"/>
+        <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
+        <div style={{display:"flex",gap:6,marginTop:6}}>
+          <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo/2)):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo/2))})</button>
+        </div>
+      </div>
+      <div style={{marginBottom:8}}>
+        <Lbl t="Fecha de cobro"/>
+        <input type="date" value={fecha} max={hoyISO()} onChange={e=>setFecha(e.target.value||hoyISO())}/>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        {MEDIOS_PAGO.map(m=>(
+          <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
+        ))}
+      </div>
+      <div style={{marginBottom:10}}><Lbl t="Nota (opcional)"/><input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ej: pagó en el local, transferencia..."/></div>
+      {montoNum>0&&(
+        <div style={{fontSize:14,color:MU,marginBottom:10}}>
+          {esParcial?"Pago parcial":"Salda toda la cuenta"} de <strong style={{color:G}}>{fmtARS(montoNum)}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-montoNum))}</strong>
+          {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(montoNum*Number(cliente.comisionPctDefault)/100))}</strong></>}
+        </div>
+      )}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onDone} style={{flex:1,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+        <button onClick={confirmar} disabled={!montoNum||montoNum<=0} style={{flex:2,padding:"10px 0",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",opacity:!montoNum||montoNum<=0?0.4:1}}>
+          ✓ Confirmar {montoNum?fmtARS(montoNum):"..."}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── CuentaCorriente ───────────────────────────────────────────────
 function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
-  const[montoPago,setMontoPago]=useState("");
-  const[showParcial,setShowParcial]=useState(false);
   const[showHistorial,setShowHistorial]=useState(false);
-  const[showCobroIndep,setShowCobroIndep]=useState(false);
-  const[montoCobroIndep,setMontoCobroIndep]=useState("");
-  const[notaCobro,setNotaCobro]=useState("");
-  const[medioPago,setMedioPago]=useState("Efectivo");
-  const[fechaCobroSel,setFechaCobroSel]=useState(hoyISO());
+  const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
  
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
@@ -1605,20 +1837,10 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
   const saldo=saldoCliente(cliente);
   const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora);
  
-  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:fechaCobroSel||hoyISO(),medioPago}:v)});
+  // Cobro rápido de una venta puntual (queda para el caso de "cobré justo esto, hoy, en efectivo").
+  // Para fecha/medio de pago distintos, o pagos parciales, se usa el panel unificado "Registrar pago".
+  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:hoyISO(),medioPago:"Efectivo"}:v)});
   const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false,fechaCobro:null}:v)});
-  const marcarTodo=()=>onUpdate(aplicarCobroACliente(cliente,saldo,{medioPago,fecha:fechaCobroSel}));
- 
-  // Cobro independiente — registra un pago sin crear venta nueva
-  const registrarCobroIndependiente=()=>{
-    onUpdate(aplicarCobroACliente(cliente,montoCobroIndep,{medioPago,nota:notaCobro,fecha:fechaCobroSel}));
-    setMontoCobroIndep("");setNotaCobro("");setShowCobroIndep(false);
-  };
- 
-  const aplicarPagoParcial=()=>{
-    onUpdate(aplicarCobroACliente(cliente,montoPago,{medioPago,fecha:fechaCobroSel}));
-    setMontoPago("");setShowParcial(false);
-  };
  
   return(
     <div style={{background:saldo>0?RE+"11":GR+"11",border:`1px solid ${saldo>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:14}}>
@@ -1656,72 +1878,14 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
             );})}
           </div>
  
-          {/* Medio de pago y fecha de cobro */}
-          <div style={{marginBottom:6}}>
-            <Lbl t="Fecha de cobro"/>
-            <input type="date" value={fechaCobroSel} max={hoyISO()} onChange={e=>setFechaCobroSel(e.target.value||hoyISO())}/>
-          </div>
-          <div style={{display:"flex",gap:6,marginBottom:10}}>
-            {MEDIOS_PAGO.map(m=>(
-              <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
-            ))}
-          </div>
- 
-          {/* Botones de cobro */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
-            <button onClick={()=>{setShowCobroIndep(true);setShowParcial(false);}} style={{padding:"10px 0",borderRadius:10,background:"none",border:`1px dashed ${G}55`,color:G,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-              💵 Cobro en efectivo
+          {/* Registrar pago — panel único (reemplaza los antiguos "efectivo"/"parcial"/"saldar todo") */}
+          {!showPago?(
+            <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              {I.check} Registrar pago
             </button>
-            <button onClick={()=>{setShowParcial(true);setShowCobroIndep(false);}} style={{padding:"10px 0",borderRadius:10,background:"none",border:`1px dashed ${AM}55`,color:AM,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-              🔢 Pago parcial
-            </button>
-          </div>
- 
-          {/* Panel cobro independiente */}
-          {showCobroIndep&&(
-            <div style={{background:"#fff",border:`1px solid ${G}33`,borderRadius:10,padding:14,marginBottom:10}}>
-              <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>💵 Registrar cobro en efectivo</div>
-              <div style={{marginBottom:8}}><Lbl t="Monto cobrado"/><input type="number" inputMode="numeric" value={montoCobroIndep} onChange={e=>setMontoCobroIndep(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/></div>
-              <div style={{marginBottom:10}}><Lbl t="Nota (opcional)"/><input value={notaCobro} onChange={e=>setNotaCobro(e.target.value)} placeholder="Ej: Cobré en el local, pagó con transferencia..."/></div>
-              {montoCobroIndep&&Number(montoCobroIndep)>0&&(
-                <div style={{fontSize:15,color:MU,marginBottom:10}}>
-                  Cobrás <strong style={{color:G}}>{fmtARS(Number(montoCobroIndep))}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-Number(montoCobroIndep)))}</strong>
-                  {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(Number(montoCobroIndep)*Number(cliente.comisionPctDefault)/100))}</strong></>}
-                </div>
-              )}
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>{setShowCobroIndep(false);setMontoCobroIndep("");setNotaCobro("");}} style={{flex:1,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
-                <button onClick={registrarCobroIndependiente} disabled={!montoCobroIndep||Number(montoCobroIndep)<=0} style={{flex:2,padding:"10px 0",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",opacity:!montoCobroIndep||Number(montoCobroIndep)<=0?0.4:1}}>
-                  ✓ Confirmar cobro
-                </button>
-              </div>
-            </div>
+          ):(
+            <PanelCobro cliente={cliente} onUpdate={onUpdate} onDone={()=>setShowPago(false)}/>
           )}
- 
-          {/* Panel pago parcial */}
-          {showParcial&&(
-            <div style={{background:"#fff",border:`1px solid ${AM}33`,borderRadius:10,padding:14,marginBottom:10}}>
-              <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🔢 Pago parcial</div>
-              <div style={{marginBottom:8}}><Lbl t="¿Cuánto te pagó?"/><input type="number" inputMode="numeric" value={montoPago} onChange={e=>setMontoPago(e.target.value)} placeholder={`Máx: ${fmtARS(saldo)}`} autoFocus/></div>
-              {montoPago&&Number(montoPago)>0&&(
-                <div style={{fontSize:15,color:MU,marginBottom:10}}>
-                  Cobro de <strong style={{color:AM}}>{fmtARS(Number(montoPago))}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-Number(montoPago)))}</strong>
-                  {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(Number(montoPago)*Number(cliente.comisionPctDefault)/100))}</strong></>}
-                </div>
-              )}
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>{setShowParcial(false);setMontoPago("");}} style={{flex:1,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
-                <button onClick={aplicarPagoParcial} disabled={!montoPago||Number(montoPago)<=0} style={{flex:2,padding:"10px 0",borderRadius:10,background:AM,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",opacity:!montoPago||Number(montoPago)<=0?0.4:1}}>
-                  ✓ Confirmar {montoPago?fmtARS(Number(montoPago)):"..."}
-                </button>
-              </div>
-            </div>
-          )}
- 
-          {/* Saldar todo */}
-          <button onClick={marcarTodo} style={{width:"100%",padding:"11px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            {I.check} Saldar toda la cuenta · {fmtARS(saldo)}
-          </button>
         </>
       )}
  
@@ -3583,10 +3747,7 @@ function Speeches({speeches,setSpeeches}){
 function CuentasCorrientes({clientes,setClientes,diasMora}){
   const[expandido,setExpandido]=useState(null);
   const[filtro,setFiltro]=useState("todos"); // todos | vencidos
-  const[medioPago,setMedioPago]=useState("Efectivo");
-  const[fechaCobroSel,setFechaCobroSel]=useState(hoyISO());
-  const[parcialAbierto,setParcialAbierto]=useState(null);
-  const[montoParcial,setMontoParcial]=useState("");
+  const[pagoAbierto,setPagoAbierto]=useState(null); // id del cliente con el panel de pago abierto
 
   const todasConDeuda=useMemo(()=>clientes
     .map(c=>({cliente:c,deuda:saldoCliente(c),pendientes:(c.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))}))
@@ -3598,15 +3759,9 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   const deudaVencida=clientesVencidos.reduce((s,x)=>s+x.vencidas.reduce((a,v)=>a+v.monto,0),0);
   const conDeuda=filtro==="vencidos"?clientesVencidos:todasConDeuda;
 
-  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:fechaCobroSel||hoyISO(),medioPago}:v)}));
-  const marcarTodoPagado=(clienteId,deuda)=>{
-    if(!confirm("¿Marcar todas las ventas pendientes de este cliente como cobradas?"))return;
-    setClientes(prev=>prev.map(c=>c.id!==clienteId?c:aplicarCobroACliente(c,deuda,{medioPago,fecha:fechaCobroSel})));
-  };
-  const confirmarParcial=cliente=>{
-    setClientes(prev=>prev.map(c=>c.id!==cliente.id?c:aplicarCobroACliente(c,montoParcial,{medioPago,fecha:fechaCobroSel})));
-    setMontoParcial("");setParcialAbierto(null);
-  };
+  // Cobro rápido de una venta puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
+  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:hoyISO(),medioPago:"Efectivo"}:v)}));
+  const actualizarCliente=u=>setClientes(prev=>prev.map(c=>c.id===u.id?u:c));
 
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
@@ -3664,31 +3819,12 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
                   <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
                 )}
 
-                <div style={{marginTop:10}}>
-                  <Lbl t="Fecha de cobro"/>
-                  <input type="date" value={fechaCobroSel} max={hoyISO()} onChange={e=>setFechaCobroSel(e.target.value||hoyISO())}/>
-                </div>
-                <div style={{display:"flex",gap:6,marginTop:8,marginBottom:8}}>
-                  {MEDIOS_PAGO.map(m=>(
-                    <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"6px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
-                  ))}
-                </div>
-
-                {parcialAbierto===cliente.id?(
-                  <div style={{background:BG,border:`1px solid ${AM}33`,borderRadius:10,padding:12,marginTop:4}}>
-                    <div style={{marginBottom:8}}><Lbl t="¿Cuánto pagó?"/><input type="number" inputMode="numeric" value={montoParcial} onChange={e=>setMontoParcial(e.target.value)} placeholder={`Máx: ${fmtARS(deuda)}`} autoFocus/>
-                      {!!cliente.comisionPctDefault&&montoParcial>0&&<div style={{fontSize:13,color:G,marginTop:4}}>Comisión ({cliente.comisionPctDefault}%) = {fmtARS(Math.round(Number(montoParcial)*Number(cliente.comisionPctDefault)/100))}</div>}
-                    </div>
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>{setParcialAbierto(null);setMontoParcial("");}} style={{flex:1,padding:"9px 0",borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:14,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
-                      <button onClick={()=>confirmarParcial(cliente)} disabled={!montoParcial||Number(montoParcial)<=0} style={{flex:2,padding:"9px 0",borderRadius:8,background:AM,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",opacity:!montoParcial||Number(montoParcial)<=0?0.4:1}}>✓ Confirmar pago parcial</button>
-                    </div>
+                {pagoAbierto===cliente.id?(
+                  <div style={{marginTop:10}}>
+                    <PanelCobro cliente={cliente} onUpdate={actualizarCliente} onDone={()=>setPagoAbierto(null)}/>
                   </div>
                 ):(
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>{setParcialAbierto(cliente.id);setMontoParcial("");}} style={{flex:1,padding:"9px",borderRadius:10,background:"none",border:`1px solid ${AM}`,color:AM,fontSize:14,fontWeight:700,cursor:"pointer"}}>🔢 Pago parcial</button>
-                    <button onClick={()=>marcarTodoPagado(cliente.id,deuda)} style={{flex:1,padding:"9px",borderRadius:10,background:"none",border:`1px solid ${G}`,color:G,fontSize:14,fontWeight:700,cursor:"pointer"}}>Marcar todo cobrado</button>
-                  </div>
+                  <button onClick={()=>setPagoAbierto(cliente.id)} style={{width:"100%",marginTop:10,padding:"10px 0",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer"}}>💰 Registrar pago</button>
                 )}
               </div>
             )}
@@ -3713,6 +3849,23 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
   const liquidacionesOrdenadas=useMemo(()=>[...(comisiones||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||String(a.id).localeCompare(String(b.id))),[comisiones]);
   const totalLiquidado=liquidacionesOrdenadas.reduce((s,l)=>s+(Number(l.monto)||0),0);
   const pendienteLiquidar=gananciaCobrada-totalLiquidado;
+
+  // Recordatorio: hace cuánto no se liquida con la fábrica, y qué ventas cobradas sustentan lo pendiente
+  // (todo lo cobrado a clientes después de la última liquidación registrada; si nunca liquidaste, todo el historial).
+  const ultimaLiquidacion=liquidacionesOrdenadas.length?liquidacionesOrdenadas[liquidacionesOrdenadas.length-1]:null;
+  const ventasCobradasOrdenadas=useMemo(()=>todas.filter(v=>v.pagado).sort((a,b)=>new Date(a.fechaCobro||a.fecha)-new Date(b.fechaCobro||b.fecha)),[todas]);
+  const diasDesdeUltimaLiquidacion=ultimaLiquidacion?daysSince(ultimaLiquidacion.fecha):(ventasCobradasOrdenadas[0]?daysSince(ventasCobradasOrdenadas[0].fechaCobro||ventasCobradasOrdenadas[0].fecha):null);
+  const sugerirLiquidar=pendienteLiquidar>0&&diasDesdeUltimaLiquidacion!==null&&diasDesdeUltimaLiquidacion>=PERIODO_LIQUIDACION_DIAS;
+  const ventasParaSolicitud=useMemo(()=>ventasCobradasOrdenadas.filter(v=>!ultimaLiquidacion||(v.fechaCobro||v.fecha)>ultimaLiquidacion.fecha),[ventasCobradasOrdenadas,ultimaLiquidacion]);
+  const[generandoSolicitud,setGenerandoSolicitud]=useState(false);
+  const generarSolicitudLiquidacion=async()=>{
+    setGenerandoSolicitud(true);
+    try{
+      await compartirSolicitudLiquidacionPDF(ventasParaSolicitud,{desde:ultimaLiquidacion?ultimaLiquidacion.fecha:(ventasParaSolicitud[0]&&(ventasParaSolicitud[0].fechaCobro||ventasParaSolicitud[0].fecha)),hasta:hoyISO(),pendiente:pendienteLiquidar},()=>{});
+    }finally{
+      setGenerandoSolicitud(false);
+    }
+  };
 
   const[showLiquidar,setShowLiquidar]=useState(false);
   const[montoLiquidar,setMontoLiquidar]=useState("");
@@ -3906,9 +4059,26 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
           </div>
         </div>
         <p style={{fontSize:12,color:MU,marginBottom:12,lineHeight:1.4}}>La fábrica te liquida en montos sueltos, sin relación directa con ventas puntuales. Acá llevás esa cuenta corriente aparte: lo que se te fue generando de ganancia (sobre lo ya cobrado a los clientes) vs. lo que ya te pagaron.</p>
-        <button onClick={abrirLiquidar} style={{width:"100%",padding:"14px 0",borderRadius:12,fontSize:16,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer"}}>
-          💵 Registrar liquidación
-        </button>
+
+        {sugerirLiquidar&&(
+          <div style={{background:"#FEF6DC",border:`1px solid ${AM}55`,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#8A6D1D",marginBottom:2}}>
+              ⏰ {ultimaLiquidacion?`Hace ${diasDesdeUltimaLiquidacion} días que no liquidás con la fábrica`:`Nunca liquidaste con la fábrica (hace ${diasDesdeUltimaLiquidacion} días que hay ganancia cobrada)`}
+            </div>
+            <div style={{fontSize:13,color:"#8A6D1D"}}>Pendiente: <strong>{fmtARS(pendienteLiquidar)}</strong> · sugerido cada {PERIODO_LIQUIDACION_DIAS} días</div>
+          </div>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:pendienteLiquidar>0||liquidacionesOrdenadas.length>0?"1fr 1fr":"1fr",gap:8}}>
+          <button onClick={abrirLiquidar} style={{padding:"14px 0",borderRadius:12,fontSize:15,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer"}}>
+            💵 Registrar liquidación
+          </button>
+          {(pendienteLiquidar>0||liquidacionesOrdenadas.length>0)&&(
+            <button onClick={generarSolicitudLiquidacion} disabled={generandoSolicitud} style={{padding:"14px 0",borderRadius:12,fontSize:15,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:generandoSolicitud?"not-allowed":"pointer",opacity:generandoSolicitud?0.6:1}}>
+              {generandoSolicitud?"Generando...":"📄 Solicitud (PDF)"}
+            </button>
+          )}
+        </div>
 
         {showLiquidar&&(
           <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:14}}>
