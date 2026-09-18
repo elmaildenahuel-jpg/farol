@@ -3869,6 +3869,8 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
   };
 
   const[showLiquidar,setShowLiquidar]=useState(false);
+  const[showMensualComision,setShowMensualComision]=useState(false);
+  const[showHistorialComision,setShowHistorialComision]=useState(false);
   const[montoLiquidar,setMontoLiquidar]=useState("");
   const[fechaLiquidar,setFechaLiquidar]=useState(hoyISO());
   const[notaLiquidar,setNotaLiquidar]=useState("");
@@ -4047,19 +4049,27 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
         </div>
       </div>
 
-      {/* Liquidación de comisiones — cuenta corriente aparte con la fábrica, montos libres */}
-      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:14}}>
+      {/* Liquidación de comisiones — cuenta corriente aparte con la fábrica, estilo idéntico a la cta cte de un cliente */}
+      <div style={{background:pendienteLiquidar>0?RE+"11":GR+"11",border:`1px solid ${pendienteLiquidar>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:16}}>
+        {/* Saldo siempre visible */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:16,fontWeight:700,color:pendienteLiquidar>0?"#C62828":GR}}>
+            {pendienteLiquidar>0?"🧾 Comisiones pendientes":"✓ Comisiones al día"}
+          </span>
+          <span className="bebas" style={{fontSize:24,color:pendienteLiquidar>0?"#C62828":GR}}>{fmtARS(pendienteLiquidar)}</span>
+        </div>
+
+        {/* Cuenta simple: dos totales históricos, sin desglose ni % que confunda */}
+        <div style={{display:"flex",gap:20,marginBottom:12,paddingBottom:12,borderBottom:`1px solid ${pendienteLiquidar>0?RE+"22":GR+"22"}`}}>
           <div>
-            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Liquidado</div>
-            <div className="bebas" style={{fontSize:20,color:GR}}>{fmtARS(totalLiquidado)}</div>
+            <div style={{fontSize:11,color:MU}}>Generado histórico</div>
+            <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(gananciaCobrada)}</div>
           </div>
           <div>
-            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendiente de liquidar</div>
-            <div className="bebas" style={{fontSize:20,color:pendienteLiquidar>0?"#C24545":CR}}>{fmtARS(pendienteLiquidar)}</div>
+            <div style={{fontSize:11,color:MU}}>Liquidado histórico</div>
+            <div style={{fontSize:16,fontWeight:700,color:GR}}>{fmtARS(totalLiquidado)}</div>
           </div>
         </div>
-        <p style={{fontSize:12,color:MU,marginBottom:12,lineHeight:1.4}}>La fábrica te liquida en montos sueltos, sin relación directa con ventas puntuales. Acá llevás esa cuenta corriente aparte: lo que se te fue generando de ganancia (sobre lo ya cobrado a los clientes) vs. lo que ya te pagaron.</p>
 
         {sugerirLiquidar&&(
           <div style={{background:"#FEF6DC",border:`1px solid ${AM}55`,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
@@ -4071,11 +4081,11 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
         )}
 
         <div style={{display:"grid",gridTemplateColumns:pendienteLiquidar>0||liquidacionesOrdenadas.length>0?"1fr 1fr":"1fr",gap:8}}>
-          <button onClick={abrirLiquidar} style={{padding:"14px 0",borderRadius:12,fontSize:15,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer"}}>
+          <button onClick={abrirLiquidar} style={{padding:"12px 0",borderRadius:10,fontSize:15,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer"}}>
             💵 Registrar liquidación
           </button>
           {(pendienteLiquidar>0||liquidacionesOrdenadas.length>0)&&(
-            <button onClick={generarSolicitudLiquidacion} disabled={generandoSolicitud} style={{padding:"14px 0",borderRadius:12,fontSize:15,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:generandoSolicitud?"not-allowed":"pointer",opacity:generandoSolicitud?0.6:1}}>
+            <button onClick={generarSolicitudLiquidacion} disabled={generandoSolicitud} style={{padding:"12px 0",borderRadius:10,fontSize:15,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:generandoSolicitud?"not-allowed":"pointer",opacity:generandoSolicitud?0.6:1}}>
               {generandoSolicitud?"Generando...":"📄 Solicitud (PDF)"}
             </button>
           )}
@@ -4102,72 +4112,14 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
           </div>
         )}
 
-        {/* Comparación mes actual vs. mes anterior — mismo formato que Facturado/Ganancia */}
-        <div style={{background:GDK,borderRadius:18,padding:18,marginTop:14}}>
-          <div style={{fontSize:13,color:"#8FE3B4",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Comisiones · este mes</div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-            <div>
-              <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Generado</div>
-              <div className="bebas" style={{fontSize:22,color:"#fff"}}>{fmtARS(mesActualComision.generado)}</div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Liquidado</div>
-              <div className="bebas" style={{fontSize:22,color:"#fff"}}>{fmtARS(mesActualComision.liquidado)}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginTop:10}}>
-            <div>
-              <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>% liquidado del mes</div>
-              <div className="bebas" style={{fontSize:18,color:"#fff"}}>{mesActualComision.generado>0?Math.round(mesActualComision.liquidado/mesActualComision.generado*100):(mesActualComision.liquidado>0?100:0)}%</div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Saldo pendiente{mesAnteriorComision&&mesAnteriorComision.saldo>0?" (con arrastre)":""}</div>
-              <div className="bebas" style={{fontSize:18,color:mesActualComision.saldo>0?"#F3A6A6":"#fff"}}>{fmtARS(mesActualComision.saldo)}</div>
-            </div>
-          </div>
-          {mesAnteriorComision&&(
-            <>
-              <div style={{borderTop:"1px solid rgba(255,255,255,0.15)",margin:"14px 0 10px"}}/>
-              <div style={{fontSize:13,color:"#8FE3B4",textTransform:"capitalize",marginBottom:4}}>{mesAnteriorComision.lbl}</div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-                <div>
-                  <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Generado</div>
-                  <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                    <span className="bebas" style={{fontSize:18,color:"#fff"}}>{fmtARS(mesAnteriorComision.generado)}</span>
-                    {mesAnteriorComision.generado>0&&<span style={{fontSize:11,fontWeight:700,color:pctVar(mesActualComision.generado,mesAnteriorComision.generado)>=0?"#8FE3B4":"#F3A6A6"}}>{pctVar(mesActualComision.generado,mesAnteriorComision.generado)>=0?"▲":"▼"} {Math.abs(pctVar(mesActualComision.generado,mesAnteriorComision.generado))}%</span>}
-                  </div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Liquidado</div>
-                  <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
-                    <span className="bebas" style={{fontSize:18,color:"#fff"}}>{fmtARS(mesAnteriorComision.liquidado)}</span>
-                    {mesAnteriorComision.liquidado>0&&<span style={{fontSize:11,fontWeight:700,color:pctVar(mesActualComision.liquidado,mesAnteriorComision.liquidado)>=0?"#8FE3B4":"#F3A6A6"}}>{pctVar(mesActualComision.liquidado,mesAnteriorComision.liquidado)>=0?"▲":"▼"} {Math.abs(pctVar(mesActualComision.liquidado,mesAnteriorComision.liquidado))}%</span>}
-                  </div>
-                </div>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginTop:10}}>
-                <div>
-                  <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>% liquidado del mes</div>
-                  <div className="bebas" style={{fontSize:16,color:"#fff"}}>{mesAnteriorComision.generado>0?Math.round(mesAnteriorComision.liquidado/mesAnteriorComision.generado*100):(mesAnteriorComision.liquidado>0?100:0)}%</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,color:"#8FE3B4",marginBottom:2}}>Saldo a fin de mes</div>
-                  <div className="bebas" style={{fontSize:16,color:mesAnteriorComision.saldo>0?"#F3A6A6":"#fff"}}>{fmtARS(mesAnteriorComision.saldo)}</div>
-                </div>
-              </div>
-              {mesAnteriorComision.saldo>0&&(
-                <div style={{fontSize:11,color:"#F3A6A6",marginTop:8,lineHeight:1.4}}>⚠ Quedaron {fmtARS(mesAnteriorComision.saldo)} sin liquidar de {mesAnteriorComision.lbl}. Ese saldo ya está sumado dentro del "Saldo pendiente" de este mes.</div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Tabla mes a mes completa, con el saldo que se va arrastrando si algún mes queda sin liquidar del todo */}
-        {comisionesPorMes.length>1&&(
-          <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
-            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Comisiones mes a mes</div>
-            <div style={{maxHeight:260,overflowY:"auto"}}>
-              <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr",gap:6,fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",padding:"0 0 6px",position:"sticky",top:0,background:CA}}>
+        {/* Liquidación mensual — colapsado por default, igual que el historial de pagos de un cliente */}
+        <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:10}}>
+          <button onClick={()=>setShowMensualComision(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
+            {showMensualComision?"▲":"▼"} Liquidación mensual ({comisionesPorMes.length} mes{comisionesPorMes.length!==1?"es":""})
+          </button>
+          {showMensualComision&&(
+            <div style={{marginTop:10,maxHeight:260,overflowY:"auto"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr",gap:6,fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",padding:"0 0 6px",position:"sticky",top:0,background:pendienteLiquidar>0?"#FCEAEA":"#EAF7EF"}}>
                 <span>Mes</span><span style={{textAlign:"right"}}>Generado</span><span style={{textAlign:"right"}}>Liquidado</span><span style={{textAlign:"right"}}>Saldo</span>
               </div>
               {comisionesPorMes.map(m=>(
@@ -4179,30 +4131,35 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
+        {/* Historial de liquidaciones individuales — también colapsado por default */}
         {liquidacionesOrdenadas.length>0&&(
-          <div style={{marginTop:14,borderTop:`1px solid ${BO}`,paddingTop:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <span style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Historial de liquidaciones</span>
-              <div style={{display:"flex",gap:6}}>
-                <button onClick={exportarComisionesPDF} disabled={exportandoComisionesPDF} style={{fontSize:12,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"5px 9px",cursor:exportandoComisionesPDF?"not-allowed":"pointer",opacity:exportandoComisionesPDF?0.6:1}}>{exportandoComisionesPDF?"Generando...":"📄 PDF"}</button>
-                <button onClick={exportarComisiones} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>↓ CSV</button>
-              </div>
-            </div>
-            {[...liquidacionesOrdenadas].reverse().map(l=>(
-              <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",fontSize:14,borderBottom:`1px solid ${BO}`}}>
-                <div style={{minWidth:0}}>
-                  <div style={{color:CR,fontWeight:600}}>{fmtDate(l.fecha)}</div>
-                  {l.nota&&<div style={{fontSize:12,color:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.nota}</div>}
+          <div style={{marginTop:12}}>
+            <button onClick={()=>setShowHistorialComision(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
+              {showHistorialComision?"▲":"▼"} Historial de liquidaciones ({liquidacionesOrdenadas.length})
+            </button>
+            {showHistorialComision&&(
+              <div style={{marginTop:10}}>
+                <div style={{display:"flex",justifyContent:"flex-end",gap:6,marginBottom:8}}>
+                  <button onClick={exportarComisionesPDF} disabled={exportandoComisionesPDF} style={{fontSize:12,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"5px 9px",cursor:exportandoComisionesPDF?"not-allowed":"pointer",opacity:exportandoComisionesPDF?0.6:1}}>{exportandoComisionesPDF?"Generando...":"📄 PDF"}</button>
+                  <button onClick={exportarComisiones} style={{fontSize:12,fontWeight:700,color:G,background:GLT,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer"}}>↓ CSV</button>
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-                  <span style={{fontWeight:700,color:G}}>{fmtARS(l.monto)}</span>
-                  <button onClick={()=>borrarLiquidacion(l.id)} style={{background:"none",border:"none",color:RE,cursor:"pointer",fontSize:13,padding:4}}>✕</button>
-                </div>
+                {[...liquidacionesOrdenadas].reverse().map(l=>(
+                  <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",fontSize:14,borderBottom:`1px solid ${BO}`}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{color:CR,fontWeight:600}}>{fmtDate(l.fecha)}</div>
+                      {l.nota&&<div style={{fontSize:12,color:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.nota}</div>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                      <span style={{fontWeight:700,color:G}}>{fmtARS(l.monto)}</span>
+                      <button onClick={()=>borrarLiquidacion(l.id)} style={{background:"none",border:"none",color:RE,cursor:"pointer",fontSize:13,padding:4}}>✕</button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </div>
