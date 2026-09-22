@@ -1286,6 +1286,13 @@ function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
 }
 const uid=()=>"id"+Date.now()+Math.random().toString(36).slice(2);
 const hoyISO=()=>new Date().toISOString().slice(0,10);
+const pad2=n=>String(n).padStart(2,"0");
+const RANGOS_PERIODO=[
+  {k:"mesActual",l:"Mes actual",f:()=>{const d=new Date();return{desde:`${d.getFullYear()}-${pad2(d.getMonth()+1)}-01`,hasta:hoyISO()};}},
+  {k:"mesAnterior",l:"Mes anterior",f:()=>{const d=new Date();const dAnt=new Date(d.getFullYear(),d.getMonth()-1,1);const finAnt=new Date(d.getFullYear(),d.getMonth(),0);return{desde:`${dAnt.getFullYear()}-${pad2(dAnt.getMonth()+1)}-01`,hasta:`${finAnt.getFullYear()}-${pad2(finAnt.getMonth()+1)}-${pad2(finAnt.getDate())}`};}},
+  {k:"ult3",l:"Últimos 3 meses",f:()=>{const d=new Date();const dIni=new Date(d.getFullYear(),d.getMonth()-2,1);return{desde:`${dIni.getFullYear()}-${pad2(dIni.getMonth()+1)}-01`,hasta:hoyISO()};}},
+  {k:"ult6",l:"Últimos 6 meses",f:()=>{const d=new Date();const dIni=new Date(d.getFullYear(),d.getMonth()-5,1);return{desde:`${dIni.getFullYear()}-${pad2(dIni.getMonth()+1)}-01`,hasta:hoyISO()};}},
+];
 const reproducirBeep=()=>{
   try{
     const ctx=new(window.AudioContext||window.webkitAudioContext)();
@@ -1390,6 +1397,19 @@ const I={
  
 // ── UI base ───────────────────────────────────────────────────────
 function Lbl({t}){return<div style={{fontSize:14,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>{t}</div>}
+function BotonesPeriodo({actual,onSelect}){
+  return(
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+      {RANGOS_PERIODO.map(r=>{
+        const rango=r.f();
+        const activo=actual&&actual.desde===rango.desde&&actual.hasta===rango.hasta;
+        return(
+          <button key={r.k} onClick={()=>onSelect(rango)} style={{fontSize:12,fontWeight:700,color:activo?"#fff":MU,background:activo?G:BG,border:`1px solid ${activo?G:BO}`,borderRadius:20,padding:"6px 11px",cursor:"pointer"}}>{r.l}</button>
+        );
+      })}
+    </div>
+  );
+}
 function Pill({children,color}){return<span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,fontSize:14,fontWeight:700,background:color+"18",color}}><span style={{width:5,height:5,borderRadius:"50%",background:color,flexShrink:0}}/>{children}</span>}
 function Btn({children,onClick,variant,disabled,small}){
   const pad=small?"8px 14px":"12px 18px",fs=small?15:16;
@@ -2246,12 +2266,13 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
  
 // ── ENVÍO MASIVO ──────────────────────────────────────────────────
 const ENVIO_MASIVO_LS_KEY="farol_envio_masivo_progreso";
-function EnvioMasivo({clientes}){
+function EnvioMasivo({clientes,speeches}){
   const[q,setQ]=useState("");
   const[filtroEstado,setFiltroEstado]=useState("todos");
   const[filtroZona,setFiltroZona]=useState("todas");
   const[sel,setSel]=useState(()=>new Set());
   const[mensaje,setMensaje]=useState("");
+  const[speechSel,setSpeechSel]=useState("");
   const[enCola,setEnCola]=useState(false);
   const[enviados,setEnviados]=useState(()=>new Set());
   const[idx,setIdx]=useState(0);
@@ -2391,8 +2412,17 @@ function EnvioMasivo({clientes}){
           </label>
         ))}
       </div>
+      {speeches&&speeches.length>0&&(
+        <div style={{marginBottom:10}}>
+          <Lbl t="Usar speech prearmado (opcional)"/>
+          <select value={speechSel} onChange={e=>{const id=e.target.value;setSpeechSel(id);const sp=speeches.find(s=>s.id===id);if(sp)setMensaje(sp.texto);}}>
+            <option value="">— Escribir mensaje propio —</option>
+            {speeches.map(s=><option key={s.id} value={s.id}>{s.titulo}</option>)}
+          </select>
+        </div>
+      )}
       <Lbl t={`Mensaje (${sel.size} seleccionados)`}/>
-      <textarea rows={5} placeholder="Escribí el mensaje. Usá {nombre} para que se reemplace por el nombre de pila de cada cliente." value={mensaje} onChange={e=>setMensaje(e.target.value)} style={{marginBottom:6,resize:"vertical"}}/>
+      <textarea rows={5} placeholder="Escribí el mensaje. Usá {nombre} para que se reemplace por el nombre de pila de cada cliente." value={mensaje} onChange={e=>{setMensaje(e.target.value);setSpeechSel("");}} style={{marginBottom:6,resize:"vertical"}}/>
       {mensaje&&seleccionados[0]&&<div style={{fontSize:13,color:MU,marginBottom:16,fontStyle:"italic"}}>Vista previa: "{personalizar(seleccionados[0].nombre)}"</div>}
       <Btn onClick={iniciar} disabled={sel.size===0||!mensaje.trim()}>{I.wa}Iniciar envío ({sel.size})</Btn>
     </div>
@@ -4226,6 +4256,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
           </div>
         </div>
 
+        <BotonesPeriodo actual={{desde:fDesde,hasta:fHasta}} onSelect={r=>{setFDesde(r.desde);setFHasta(r.hasta);}}/>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
@@ -4346,6 +4377,7 @@ function Ventas({clientes,prods}){
       {/* ── Filtros ── */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🔍 Filtrar ventas</div>
+        <BotonesPeriodo actual={{desde:fDesde,hasta:fHasta}} onSelect={r=>{setFDesde(r.desde);setFHasta(r.hasta);}}/>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
@@ -4608,6 +4640,7 @@ function Metricas({clientes,prods}){
 
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>🔍 Período (afecta los rankings de abajo)</div>
+        <BotonesPeriodo actual={{desde:pDesde,hasta:pHasta}} onSelect={r=>{setPDesde(r.desde);setPHasta(r.hasta);}}/>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
           <div><Lbl t="Desde"/><input type="date" value={pDesde} onChange={e=>setPDesde(e.target.value)} max={pHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={pHasta} onChange={e=>setPHasta(e.target.value)} min={pDesde||undefined}/></div>
@@ -5803,7 +5836,7 @@ function App(){
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="notas"&&<Notas notas={notas} setNotas={setNotas} cal={cal}/>}
-          {tab==="difusion"&&<EnvioMasivo clientes={clientes}/>}
+          {tab==="difusion"&&<EnvioMasivo clientes={clientes} speeches={speeches}/>}
           {tab==="asistente"&&<AsistenteIA clientes={clientes} pedidos={pedidos} prods={prods}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
           {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones}/>}
