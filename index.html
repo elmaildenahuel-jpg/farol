@@ -2887,6 +2887,13 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods,promo51}
 // ── PEDIDOS ───────────────────────────────────────────────────────
 function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  // Producto/cantidad por defecto al cargar un pedido: Grunge Blonde en barril, 50L — se puede cambiar como siempre.
+  const productoDefaultId=useMemo(()=>{
+    const p=(prods||[]).find(x=>(x.marca||"").trim().toLowerCase()==="grunge"&&(x.nombre||"").toLowerCase().includes("blonde")&&(x.envase||"")==="Barril")
+      ||(prods||[]).find(x=>(x.marca||"").trim().toLowerCase()==="grunge"&&(x.nombre||"").toLowerCase().includes("blonde"));
+    return p?p.id:((prods&&prods[0])?prods[0].id:"");
+  },[prods]);
+  const lineaVacia=()=>({id:uid(),productoId:productoDefaultId,cantidad:"50",monto:"",descuentoPct:"",esBono:false});
   const[showNew,setShowNew]=useState(false);
   const[editandoId,setEditandoId]=useState(null);
   // Cabecera del pedido
@@ -2896,7 +2903,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const[pagado,setPagado]=useState(false);
   const[notas,setNotas]=useState("");
   // Líneas del pedido (multi-producto)
-  const[lineas,setLineas]=useState([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
+  const[lineas,setLineas]=useState([lineaVacia()]);
   const[promoAplica,setPromoAplica]=useState(false);
   const[descuentoPct,setDescuentoPct]=useState("");
   const[incluyeIVA,setIncluyeIVA]=useState(false);
@@ -2904,7 +2911,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
  
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
-    setLineas([{id:uid(),productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
+    setLineas([lineaVacia()]);
     setDescuentoPct("");setIncluyeIVA(false);setPromoAplica(false);setEditandoId(null);
   };
 
@@ -2915,14 +2922,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
     setHoraEntrega(p.horaEntrega||"10:00");
     setPagado(!!p.pagado);
     setNotas(p.notas||"");
-    setLineas((p.lineas&&p.lineas.length>0?p.lineas:[{productoId:"rubia",cantidad:"",monto:"",descuentoPct:"",esBono:false}]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||""),descuentoPct:l.descuentoPct?String(l.descuentoPct):"",esBono:!!l.esBono})));
+    setLineas((p.lineas&&p.lineas.length>0?p.lineas:[lineaVacia()]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||""),descuentoPct:l.descuentoPct?String(l.descuentoPct):"",esBono:!!l.esBono})));
     setDescuentoPct(p.descuentoPct?String(p.descuentoPct):"");
     setIncluyeIVA(!!p.incluyeIVA);
     setPromoAplica(!!p.promoAplica);
     setShowNew(true);
   };
  
-  const agregarLinea=()=>setLineas(prev=>[...prev,{id:uid(),productoId:"ipa",cantidad:"",monto:"",descuentoPct:"",esBono:false}]);
+  const agregarLinea=()=>setLineas(prev=>[...prev,lineaVacia()]);
   const agregarBonoPromo=()=>{
     if(!promo51||!promo51.productoBonoId||!promoProgresoSel||promoProgresoSel.bonosPendientes<=0)return;
     const cant=promo51.cantidadBono*promoProgresoSel.bonosPendientes;
@@ -3307,7 +3314,8 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 }
  
 // ── PRODUCTOS ─────────────────────────────────────────────────────
-function Productos({prods,setProds,promo51}){
+function Productos({prods,setProds,promo51,envasesExtra}){
+  const envasesTodos=useMemo(()=>[...ENVASES,...(envasesExtra||[])],[envasesExtra]);
   const[editId,setEditId]=useState(null);
   const[ef,setEf]=useState(null);
   const[showPromo,setShowPromo]=useState(null);
@@ -3461,7 +3469,7 @@ function Productos({prods,setProds,promo51}){
               <div><Lbl t="Nombre"/><input value={ef.nombre} onChange={e=>setEf(x=>({...x,nombre:e.target.value}))}/></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
                 <div><Lbl t="Marca"/><input value={ef.marca||""} onChange={e=>setEf(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
-                <div><Lbl t="Envase"/><select value={ef.envase||"PET"} onChange={e=>setEf(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
+                <div><Lbl t="Envase"/><select value={ef.envase||"PET"} onChange={e=>setEf(x=>({...x,envase:e.target.value}))}>{envasesTodos.map(v=><option key={v}>{v}</option>)}</select></div>
               </div>
               <div><Lbl t="Precio base (ARS/L)"/><input type="number" value={ef.precio} onChange={e=>setEf(x=>({...x,precio:e.target.value}))}/></div>
               <div><Lbl t="Descripción corta (estilo, sabor)"/><input value={ef.descripcion||""} onChange={e=>setEf(x=>({...x,descripcion:e.target.value}))} placeholder="Ej: Rubia liviana, notas cítricas, 5% ABV" maxLength={90}/></div>
@@ -3549,7 +3557,7 @@ function Productos({prods,setProds,promo51}){
           <div><Lbl t="Nombre"/><input value={np.nombre} onChange={e=>setNp(x=>({...x,nombre:e.target.value}))} placeholder="Ej: Stout Malandra" autoFocus/></div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
             <div><Lbl t="Marca"/><input value={np.marca} onChange={e=>setNp(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
-            <div><Lbl t="Envase"/><select value={np.envase} onChange={e=>setNp(x=>({...x,envase:e.target.value}))}>{ENVASES.map(v=><option key={v}>{v}</option>)}</select></div>
+            <div><Lbl t="Envase"/><select value={np.envase} onChange={e=>setNp(x=>({...x,envase:e.target.value}))}>{envasesTodos.map(v=><option key={v}>{v}</option>)}</select></div>
           </div>
           <div><Lbl t="Precio base (ARS/L)"/><input type="number" inputMode="numeric" value={np.precio} onChange={e=>setNp(x=>({...x,precio:e.target.value}))} placeholder="1500"/></div>
           <div><Lbl t="Descripción corta (estilo, sabor)"/><input value={np.descripcion} onChange={e=>setNp(x=>({...x,descripcion:e.target.value}))} placeholder="Ej: Rubia liviana, notas cítricas, 5% ABV" maxLength={90}/></div>
@@ -4334,11 +4342,13 @@ function Ventas({clientes,prods}){
   const[fHasta,setFHasta]=useState("");
   const[fCliente,setFCliente]=useState("");
   const[fProducto,setFProducto]=useState("");
+  const[fEnvase,setFEnvase]=useState("");
   const[fEstado,setFEstado]=useState("todos"); // todos | pagado | pendiente
   const[fOrden,setFOrden]=useState("fecha-desc");
 
+  const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
   const clientesConVentas=useMemo(()=>[...clientes].filter(c=>(c.ventas||[]).length>0).sort((a,b)=>a.nombre.localeCompare(b.nombre)),[clientes]);
-  const hayFiltrosVenta=fDesde||fHasta||fCliente||fProducto||fEstado!=="todos"||fOrden!=="fecha-desc";
+  const hayFiltrosVenta=fDesde||fHasta||fCliente||fProducto||fEnvase||fEstado!=="todos"||fOrden!=="fecha-desc";
 
   const filtradas=useMemo(()=>{
     let lista=todas.filter(v=>{
@@ -4346,6 +4356,7 @@ function Ventas({clientes,prods}){
       if(fHasta&&v.fecha>fHasta)return false;
       if(fCliente&&v.clienteId!==fCliente)return false;
       if(fProducto&&v.producto!==fProducto)return false;
+      if(fEnvase&&envaseMap[v.producto]!==fEnvase)return false;
       if(fEstado==="pagado"&&!v.pagado)return false;
       if(fEstado==="pendiente"&&v.pagado)return false;
       return true;
@@ -4360,9 +4371,9 @@ function Ventas({clientes,prods}){
       }
     });
     return lista;
-  },[todas,fDesde,fHasta,fCliente,fProducto,fEstado,fOrden]);
+  },[todas,fDesde,fHasta,fCliente,fProducto,fEnvase,fEstado,fOrden]);
 
-  const limpiarFiltrosVenta=()=>{setFDesde("");setFHasta("");setFCliente("");setFProducto("");setFEstado("todos");setFOrden("fecha-desc");};
+  const limpiarFiltrosVenta=()=>{setFDesde("");setFHasta("");setFCliente("");setFProducto("");setFEnvase("");setFEstado("todos");setFOrden("fecha-desc");};
 
   const totalARS=filtradas.reduce((s,v)=>s+v.monto,0);
   const litros=filtradas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0);
@@ -4396,13 +4407,21 @@ function Ventas({clientes,prods}){
               {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
             </select>
           </div>
-          <div><Lbl t="Estado"/>
+          <div><Lbl t="Envase"/>
+            <select value={fEnvase} onChange={e=>setFEnvase(e.target.value)}>
+              <option value="">Todos</option>
+              {envasesDisponibles.map(e=><option key={e} value={e}>{e}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <Lbl t="Estado"/>
             <select value={fEstado} onChange={e=>setFEstado(e.target.value)}>
               <option value="todos">Todos</option>
               <option value="pagado">Pagado</option>
               <option value="pendiente">Pendiente</option>
             </select>
-          </div>
+
         </div>
         <div>
           <Lbl t="Ordenar por"/>
@@ -4456,8 +4475,10 @@ function Metricas({clientes,prods}){
   // ── Filtro de período (afecta los rankings de más abajo, no la evolución mensual fija) ──
   const[pDesde,setPDesde]=useState("");
   const[pHasta,setPHasta]=useState("");
-  const hayFiltroPeriodo=!!(pDesde||pHasta);
-  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)),[todasSinFiltro,pDesde,pHasta,hayFiltroPeriodo]);
+  const[pEnvase,setPEnvase]=useState("");
+  const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
+  const hayFiltroPeriodo=!!(pDesde||pHasta||pEnvase);
+  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)),[todasSinFiltro,pDesde,pHasta,pEnvase,envaseMap,hayFiltroPeriodo]);
 
   // KPIs: ticket promedio, frecuencia de compra, cobrado vs pendiente
   const montoTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+(v.monto||0),0),[todas]);
@@ -4645,7 +4666,14 @@ function Metricas({clientes,prods}){
           <div><Lbl t="Desde"/><input type="date" value={pDesde} onChange={e=>setPDesde(e.target.value)} max={pHasta||undefined}/></div>
           <div><Lbl t="Hasta"/><input type="date" value={pHasta} onChange={e=>setPHasta(e.target.value)} min={pDesde||undefined}/></div>
         </div>
-        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
+        <div style={{marginTop:10}}>
+          <Lbl t="Envase"/>
+          <select value={pEnvase} onChange={e=>setPEnvase(e.target.value)}>
+            <option value="">Todos</option>
+            {envasesDisponibles.map(e=><option key={e} value={e}>{e}</option>)}
+          </select>
+        </div>
+        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");setPEnvase("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
       </div>
 
       {/* KPIs generales */}
@@ -5056,12 +5084,13 @@ function Notas({notas,setNotas,cal}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
   const guardarMora=()=>{const n=Number(moraTmp);if(n>0)setDiasMora(n);};
   const[promoTmp,setPromoTmp]=useState(()=>({activo:promo51.activo,marcaCuenta:promo51.marcaCuenta||"",envaseCuenta:promo51.envaseCuenta||"",cantidadNecesaria:String(promo51.cantidadNecesaria||5),productoBonoId:promo51.productoBonoId||"",cantidadBono:String(promo51.cantidadBono||1)}));
+  const[nuevoEnvase,setNuevoEnvase]=useState("");
   const promoTieneCambios=promoTmp.activo!==promo51.activo||promoTmp.marcaCuenta!==(promo51.marcaCuenta||"")||promoTmp.envaseCuenta!==(promo51.envaseCuenta||"")||promoTmp.cantidadNecesaria!==String(promo51.cantidadNecesaria||5)||promoTmp.productoBonoId!==(promo51.productoBonoId||"")||promoTmp.cantidadBono!==String(promo51.cantidadBono||1);
   const guardarPromo=()=>{
     setPromo51({
@@ -5138,7 +5167,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
       clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,
-      config:{metaSemanal,diasMora,promo51}
+      config:{metaSemanal,diasMora,promo51,envasesExtra}
     },null,2);
     const fileName=`backup_grunge_farol_${hoyISO()}.json`;
     const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
@@ -5196,6 +5225,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
           if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
           if(data.config.promo51&&typeof data.config.promo51==="object")setPromo51(prev=>({...prev,...data.config.promo51}));
+          if(setEnvasesExtra&&Array.isArray(data.config.envasesExtra))setEnvasesExtra(data.config.envasesExtra);
         }
         alert("✓ Backup restaurado correctamente.");
       }catch(err){
@@ -5437,6 +5467,38 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         <Btn variant="green" onClick={guardarPromo} disabled={!promoTieneCambios}>Guardar promo</Btn>
       </div>
 
+      {/* ── Envases ── */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
+        <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:4}}>📦 Envases</div>
+        <p style={{fontSize:13,color:MU,marginBottom:14}}>Los envases base (PET, Barril, Lata) ya vienen incluidos. Acá podés agregar otros tipos (ej: Botella, Bidón) para usarlos en Productos.</p>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+          {ENVASES.map(e=>(
+            <span key={e} style={{fontSize:13,fontWeight:700,color:MU,background:BG,border:`1px solid ${BO}`,borderRadius:20,padding:"6px 12px"}}>{e}</span>
+          ))}
+          {(envasesExtra||[]).map(e=>(
+            <span key={e} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,color:G,background:GLT,border:`1px solid ${G}33`,borderRadius:20,padding:"6px 8px 6px 12px"}}>
+              {e}
+              <button onClick={()=>{
+                const enUso=(prods||[]).some(p=>p.envase===e);
+                if(enUso&&!confirm(`Hay productos cargados con envase "${e}". Si lo quitás de la lista, esos productos van a seguir teniendo ese envase igual, pero no vas a poder elegirlo de nuevo para productos nuevos. ¿Continuar?`))return;
+                setEnvasesExtra(prev=>(prev||[]).filter(x=>x!==e));
+              }} style={{background:"none",border:"none",color:G,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>✕</button>
+            </span>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <input type="text" value={nuevoEnvase} onChange={e=>setNuevoEnvase(e.target.value)} placeholder="Ej: Botella" style={{flex:1}}/>
+          <button onClick={()=>{
+            const v=nuevoEnvase.trim();
+            if(!v)return;
+            const todos=[...ENVASES,...(envasesExtra||[])];
+            if(todos.some(x=>x.toLowerCase()===v.toLowerCase())){alert(`El envase "${v}" ya existe.`);return;}
+            setEnvasesExtra(prev=>[...(prev||[]),v]);
+            setNuevoEnvase("");
+          }} style={{padding:"10px 16px",borderRadius:10,fontSize:14,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer",whiteSpace:"nowrap"}}>+ Agregar</button>
+        </div>
+      </div>
+
       {/* ── Zona de peligro ── */}
       <div style={{background:RE+"08",border:`1px solid ${RE}33`,borderRadius:18,padding:20,marginBottom:16}}>
         <div style={{fontSize:16,fontWeight:700,color:RE,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>{I.alert}Zona de peligro</div>
@@ -5465,20 +5527,20 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
   const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,config:{metaSemanal,diasMora,promo51}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,config:{metaSemanal,diasMora,promo51,envasesExtra}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
     notas:d=>{if(Array.isArray(d))setNotas(d);},
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));},
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);},
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
@@ -5589,7 +5651,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra]);
 
   return{status,errorMsg};
 }
@@ -5751,6 +5813,7 @@ function App(){
   const[notas,setNotas]=useState(initNotas);
   const[gastos,setGastos]=useState([]);
   const[comisiones,setComisiones]=useState([]);
+  const[envasesExtra,setEnvasesExtra]=useState([]);
   const[metaSemanal,setMetaSemanal]=useState(0);
   const[diasMora,setDiasMora]=useState(15);
   const[promo51,setPromo51]=useState({activo:false,marcaCuenta:"",envaseCuenta:"",cantidadNecesaria:5,productoBonoId:"",cantidadBono:1});
@@ -5789,7 +5852,8 @@ function App(){
     comisiones,setComisiones,
     metaSemanal,setMetaSemanal,
     diasMora,setDiasMora,
-    promo51,setPromo51
+    promo51,setPromo51,
+    envasesExtra,setEnvasesExtra
   );
  
   const convertir=p=>{
@@ -5842,8 +5906,8 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
-          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51}/>}
+          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra}/>}
         </main>
       </div>
     </div>
