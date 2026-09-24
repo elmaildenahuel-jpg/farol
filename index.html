@@ -1251,21 +1251,26 @@ const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
     });
   });
   // Detalle de lo ya entregado, para tener referencia de qué se fue pidiendo (no solo el número)
-  const detalleEntregado=ventasPromo.map(v=>({producto:nombreDe(v.producto),cantidad:Number(v.cantidad||0),fecha:v.fecha,estado:"entregado"}));
+  const detalleEntregado=ventasPromo.map(v=>({id:v.id,producto:nombreDe(v.producto),cantidad:Number(v.cantidad||0),fecha:v.fecha,estado:"entregado"}));
   const detalle=[...detalleEntregado,...detallePendiente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
 };
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
-function PromoDetalleLista({detalle}){
+function PromoDetalleLista({detalle,onQuitar}){
   if(!detalle||detalle.length===0)return null;
   return(
     <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`}}>
       <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Ya pedido para esta promo</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {detalle.slice(-8).map((d,i)=>(
-          <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR}}>
+          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,color:CR}}>
             <span>{d.cantidad} {d.producto}{d.estado==="pendiente"&&<span style={{color:AM}}> (pendiente)</span>}</span>
-            <span style={{color:MU,flexShrink:0,marginLeft:8}}>{fmtDate(d.fecha)}</span>
+            <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0,marginLeft:8}}>
+              <span style={{color:MU}}>{fmtDate(d.fecha)}</span>
+              {onQuitar&&d.estado==="entregado"&&(
+                <button onClick={()=>{if(confirm(`¿Sacar "${d.cantidad} ${d.producto}" del acumulado de la promo? La venta no se borra, solo deja de contar para la promo.`))onQuitar(d.id);}} title="Sacar del acumulado de la promo" style={{background:"none",border:"none",color:RE,cursor:"pointer",fontSize:13,padding:0}}>✕</button>
+              )}
+            </span>
           </div>
         ))}
       </div>
@@ -1286,6 +1291,13 @@ function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
 }
 const uid=()=>"id"+Date.now()+Math.random().toString(36).slice(2);
 const hoyISO=()=>new Date().toISOString().slice(0,10);
+const CANTIDAD_DEFAULT_POR_ENVASE={Lata:6,Gin:20};
+const cantidadDefaultParaProd=prod=>{
+  if(!prod)return"50";
+  const porEnvase=CANTIDAD_DEFAULT_POR_ENVASE[prod.envase];
+  if(porEnvase!=null)return String(porEnvase);
+  return"50";
+};
 const pad2=n=>String(n).padStart(2,"0");
 const RANGOS_PERIODO=[
   {k:"mesActual",l:"Mes actual",f:()=>{const d=new Date();return{desde:`${d.getFullYear()}-${pad2(d.getMonth()+1)}-01`,hasta:hoyISO()};}},
@@ -1987,7 +1999,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
             ):(
               <div style={{fontSize:14,color:MU}}>Lleva {promoProg.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado). Faltan {promoProg.faltan}.{promoProg.pendiente>0&&<span style={{color:AM}}> +{promoProg.pendiente} en pedidos pendientes de entregar.</span>}</div>
             )}
-            <PromoDetalleLista detalle={promoProg.detalle}/>
+            <PromoDetalleLista detalle={promoProg.detalle} onQuitar={id=>onUpdate({...cliente,ventas:(cliente.ventas||[]).map(v=>v.id===id?{...v,promoAcumulable:false}:v)})}/>
           </div>
         );
       })()}
@@ -2893,7 +2905,10 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       ||(prods||[]).find(x=>(x.marca||"").trim().toLowerCase()==="grunge"&&(x.nombre||"").toLowerCase().includes("blonde"));
     return p?p.id:((prods&&prods[0])?prods[0].id:"");
   },[prods]);
-  const lineaVacia=()=>({id:uid(),productoId:productoDefaultId,cantidad:"50",monto:"",descuentoPct:"",esBono:false});
+  const lineaVacia=()=>{
+    const prodDefault=(prods||[]).find(x=>x.id===productoDefaultId);
+    return{id:uid(),productoId:productoDefaultId,cantidad:cantidadDefaultParaProd(prodDefault),monto:"",descuentoPct:"",esBono:false};
+  };
   const[showNew,setShowNew]=useState(false);
   const[editandoId,setEditandoId]=useState(null);
   // Cabecera del pedido
@@ -2943,10 +2958,15 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const updateLinea=(id,campo,valor)=>setLineas(prev=>prev.map(l=>{
     if(l.id!==id)return l;
     const updated={...l,[campo]:valor};
+    // Al cambiar el producto, la cantidad vuelve al default de ese envase (50 barril/PET, 6 lata, 20 gin, etc.) — se puede reeditar después como siempre.
+    if(campo==="productoId"){
+      const nuevoProd=prods.find(p=>p.id===valor);
+      updated.cantidad=cantidadDefaultParaProd(nuevoProd);
+    }
     // Auto-calcular monto si cambia cantidad, producto o el % de descuento de la línea
     if(campo==="cantidad"||campo==="productoId"||campo==="descuentoPct"){
       const prod=prods.find(p=>p.id===(campo==="productoId"?valor:l.productoId));
-      const cant=Number(campo==="cantidad"?valor:l.cantidad);
+      const cant=Number(campo==="productoId"?updated.cantidad:(campo==="cantidad"?valor:l.cantidad));
       const descL=Number(campo==="descuentoPct"?valor:l.descuentoPct)||0;
       if(prod&&cant>0){
         const base=montoTotal(prod,cant);
