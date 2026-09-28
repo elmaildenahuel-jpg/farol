@@ -1014,6 +1014,160 @@ async function compartirComisionesPDF(movs,resumen,onEstado){
     onEstado&&onEstado(false);
   }
 }
+function construirCierreMensualPDF(d){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210,pageH=297,marginX=15;
+  let y=0;
+  const dibujarHeader=()=>{
+    doc.setFillColor(14,74,44);
+    doc.rect(0,0,pageW,26,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(16);
+    doc.text("GRUNGE & FAROL",marginX,14);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.text("Distribución de cerveza artesanal",marginX,20.5);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(12.5);
+    doc.text("CIERRE MENSUAL",pageW-marginX,14,{align:"right"});
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(9);
+    doc.setTextColor(210,232,220);
+    doc.text(d.mesLbl.toUpperCase(),pageW-marginX,20.5,{align:"right"});
+    y=34;
+  };
+  dibujarHeader();
+  const asegurarEspacio=h=>{if(y+h>pageH-16){doc.addPage();dibujarHeader();}};
+
+  const seccion=(titulo,color)=>{
+    asegurarEspacio(9);
+    doc.setFillColor(color[0],color[1],color[2]);
+    doc.roundedRect(marginX,y,pageW-marginX*2,7.5,1.5,1.5,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(10);
+    doc.text(titulo.toUpperCase(),marginX+5,y+5.2);
+    y+=11;
+  };
+  const filaCaja=(cajas)=>{
+    asegurarEspacio(20);
+    const boxW=(pageW-marginX*2-(cajas.length-1)*4)/cajas.length;
+    cajas.forEach((c,i)=>{
+      const bx=marginX+i*(boxW+4);
+      doc.setFillColor(248,248,247);
+      doc.setDrawColor(228,231,229);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(bx,y,boxW,17,2,2,"FD");
+      doc.setFont("helvetica","normal");
+      doc.setFontSize(7);
+      doc.setTextColor(120,120,120);
+      doc.text(c[0].toUpperCase(),bx+4,y+6,{maxWidth:boxW-8});
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(11);
+      doc.setTextColor(c[2][0],c[2][1],c[2][2]);
+      doc.text(c[1],bx+4,y+13);
+    });
+    y+=23;
+  };
+
+  // Ventas / Caja
+  seccion("Ventas del mes",[23,141,79]);
+  filaCaja([["Facturado",fmtARS(d.facturado),[26,26,26]],["Ganancia",fmtARS(d.ganancia),[15,122,66]],["Litros vendidos",`${Math.round(d.litros*10)/10}L`,[26,26,26]]]);
+  if(d.facturadoAnterior!=null){
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(120,120,120);
+    const varF=d.facturadoAnterior>0?Math.round(((d.facturado-d.facturadoAnterior)/d.facturadoAnterior)*100):0;
+    doc.text(`Mes anterior (${d.mesAnteriorLbl}): ${fmtARS(d.facturadoAnterior)} facturado (${varF>=0?"+":""}${varF}% vs. este mes)`,marginX,y);
+    y+=8;
+  }
+
+  // Top clientes del mes
+  if(d.topClientes&&d.topClientes.length>0){
+    asegurarEspacio(8+d.topClientes.length*6);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(26,26,26);
+    doc.text("Top clientes del mes",marginX,y);
+    y+=6;
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    d.topClientes.forEach((c,i)=>{
+      doc.setTextColor(60,60,60);
+      doc.text(`${i+1}. ${c.nombre}`,marginX+2,y);
+      doc.setFont("helvetica","bold");
+      doc.text(fmtARS(c.monto),pageW-marginX,y,{align:"right"});
+      doc.setFont("helvetica","normal");
+      y+=5.8;
+    });
+    y+=4;
+  }
+
+  // Comisiones
+  seccion("Comisiones",[183,121,31]);
+  filaCaja([["Generado",fmtARS(d.comision.generado),[26,26,26]],["Liquidado",fmtARS(d.comision.liquidado),[15,122,66]],["Saldo pendiente",fmtARS(d.comision.saldo),d.comision.saldo>0?[198,40,40]:[15,122,66]]]);
+
+  if(d.clientesSinComision>0){
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(183,121,31);
+    doc.text(`⚠ ${d.clientesSinComision} cliente(s) sin % de comisión configurado (no suman a la ganancia).`,marginX,y);
+    y+=8;
+  }
+
+  const totalPages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){
+    doc.setPage(i);
+    doc.setDrawColor(228,231,229);
+    doc.setLineWidth(0.2);
+    doc.line(marginX,pageH-12,pageW-marginX,pageH-12);
+    doc.setFont("helvetica","italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(150,150,150);
+    doc.text(`Grunge & Farol · Cierre mensual generado automáticamente · ${new Date().toLocaleDateString("es-AR")}`,pageW/2,pageH-7,{align:"center"});
+  }
+  return doc;
+}
+async function compartirCierreMensualPDF(d,onEstado){
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
+    return;
+  }
+  try{
+    onEstado&&onEstado(true);
+    const doc=construirCierreMensualPDF(d);
+    const fileName=`cierre-mensual-${hoyISO()}.pdf`;
+    const blob=doc.output("blob");
+    let compartido=false;
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],fileName,{type:"application/pdf"});
+        if(navigator.canShare({files:[file]})){
+          await navigator.share({files:[file],title:"Cierre mensual",text:`Cierre mensual — ${d.mesLbl} — Grunge & Farol`});
+          compartido=true;
+        }
+      }catch(e){
+        if(e&&e.name==="AbortError")compartido=true;
+      }
+    }
+    if(!compartido){
+      const url=URL.createObjectURL(blob);
+      const nuevaVentana=window.open(url,"_blank");
+      if(!nuevaVentana){
+        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        alert("Se abrió/descargó el cierre mensual. Si no ves nada, revisá si el navegador bloqueó una ventana emergente y permitila para este sitio.");
+      }
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
+  }catch(e){
+    alert("No se pudo generar el cierre mensual:\n\n"+(e&&e.message?e.message:String(e))+"\n\nMandame este mensaje para arreglarlo.");
+  }finally{
+    onEstado&&onEstado(false);
+  }
+}
 // ── Solicitud de liquidación (para presentarle a la fábrica) ──────
 // Muestra el detalle de ventas ya cobradas a clientes desde la última liquidación registrada
 // (o desde el inicio si nunca liquidaste), que sustentan el monto pendiente de cobrar.
@@ -1217,6 +1371,19 @@ const mensajePedido=(p,nombreCliente,prods)=>{
 const daysSince=s=>Math.floor((Date.now()-new Date(s+"T00:00:00"))/86400000);
 const lastSale=c=>c.ventas.length?[...c.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0]:null;
 const estadoC=c=>{const ls=lastSale(c);if(!ls)return"nuevo";const d=daysSince(ls.fecha);return d<=21?"activo":d<=45?"atencion":"inactivo";};
+const frecuenciaCompraCliente=c=>{
+  const fechas=(c.ventas||[]).map(v=>v.fecha).filter(Boolean).sort();
+  const gaps=[];
+  for(let i=1;i<fechas.length;i++){
+    const diff=(new Date(fechas[i]+"T00:00:00")-new Date(fechas[i-1]+"T00:00:00"))/86400000;
+    if(diff>0)gaps.push(diff);
+  }
+  if(gaps.length<2)return null; // necesita al menos 3 compras para un promedio confiable
+  const promedio=Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length);
+  const ls=lastSale(c);
+  const diasUltima=ls?daysSince(ls.fecha):null;
+  return{promedio,diasUltima,atrasado:diasUltima!=null&&diasUltima>promedio*1.5};
+};
 // Promo 5+1 (o la relación que se configure): acumula unidades marcadas con el tilde de promo,
 // contando cualquier producto de la MARCA (y envase, si se restringió) configurada — no un producto puntual —
 // y calcula cuántos bonos ya ganó el cliente vs. cuántos bonos ya se le entregaron.
@@ -1962,16 +2129,22 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
   const ls=lastSale(cliente);
   const total=cliente.ventas.reduce((s,v)=>s+v.monto,0);
   const sorted=[...cliente.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const frecuencia=useMemo(()=>frecuenciaCompraCliente(cliente),[cliente]);
   if(edit)return<FormCliente initial={cliente} onCancel={()=>setEdit(false)} onSave={f=>{onUpdate({...cliente,...f});setEdit(false);}}/>;
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:frecuencia?4:16}}>
         <Pill color={e.c}>{e.l}{ls?` · ${daysSince(ls.fecha)}d`:""}</Pill>
         <div style={{display:"flex",gap:4}}>
           <button onClick={()=>setEdit(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
           <button onClick={()=>setConfirmBorrar(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
         </div>
       </div>
+      {frecuencia&&(
+        <div style={{fontSize:13,color:frecuencia.atrasado?RE:MU,marginBottom:16,fontWeight:frecuencia.atrasado?700:400}}>
+          {frecuencia.atrasado?"⏰ ":""}Compra cada ~{frecuencia.promedio} días en promedio{frecuencia.atrasado?` · hace ${frecuencia.diasUltima} días que no pide (atrasado)`:""}
+        </div>
+      )}
       <ModalConfirmar open={confirmBorrar} onClose={()=>setConfirmBorrar(false)} onConfirmar={()=>onDelete(cliente.id)} titulo="¿Eliminar cliente?" mensaje={`Vas a eliminar a ${cliente.nombre} y todo su historial de ventas. Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
       <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14,fontSize:16}}>
         <div style={{color:CR}}><span style={{color:MU}}>Rubro · </span>{cliente.rubro}</div>
@@ -4016,6 +4189,29 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
   const varFacturado=pctVar(facturadoMes,facturadoMesAnterior);
   const varGanancia=pctVar(gananciaMes,gananciaMesAnterior);
 
+  const litrosMes=delMes.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0);
+  const topClientesMes=useMemo(()=>{
+    const map={};
+    delMes.forEach(v=>{map[v.clienteNombre]=(map[v.clienteNombre]||0)+(v.monto||0);});
+    return Object.entries(map).map(([nombre,monto])=>({nombre,monto})).sort((a,b)=>b.monto-a.monto).slice(0,5);
+  },[delMes]);
+  const[exportandoCierre,setExportandoCierre]=useState(false);
+  const exportarCierreMensual=async()=>{
+    setExportandoCierre(true);
+    try{
+      await compartirCierreMensualPDF({
+        mesLbl:new Date().toLocaleDateString("es-AR",{month:"long",year:"numeric"}),
+        facturado:facturadoMes,ganancia:gananciaMes,litros:litrosMes,
+        facturadoAnterior:facturadoMesAnterior,mesAnteriorLbl:lblMesAnterior,
+        topClientes:topClientesMes,
+        comision:{generado:mesActualComision.generado,liquidado:mesActualComision.liquidado,saldo:mesActualComision.saldo},
+        clientesSinComision:clientesSinComision.length,
+      },()=>{});
+    }finally{
+      setExportandoCierre(false);
+    }
+  };
+
   const evolucionGanancia=useMemo(()=>{
     const hoyD=new Date();
     const meses=[];
@@ -4221,6 +4417,10 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
           </div>
         )}
       </div>
+
+      <button onClick={exportarCierreMensual} disabled={exportandoCierre} style={{width:"100%",padding:"12px 0",borderRadius:12,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:exportandoCierre?"not-allowed":"pointer",opacity:exportandoCierre?0.6:1,marginBottom:16}}>
+        📊 {exportandoCierre?"Generando...":"Cierre mensual (PDF) — Caja + Comisiones + Métricas"}
+      </button>
 
       <div style={{background:GDK,borderRadius:18,padding:18,marginBottom:16}}>
         <div style={{fontSize:13,color:"#8FE3B4",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Este mes</div>
@@ -4619,6 +4819,20 @@ function Metricas({clientes,prods}){
     });
     return Object.entries(map).map(([id,d])=>({id,nombre:prods.find(p=>p.id===id)?.nombre||id,...d})).sort((a,b)=>b.litros-a.litros);
   },[todas,prods,envaseMap]);
+
+  // Resumen por marca — mismos filtros (período/envase) que el ranking por producto; si hay un cliente elegido en el selector de abajo, agrupa solo lo de ese cliente
+  const rankingMarca=useMemo(()=>{
+    const base=clienteEstiloSel?todas.filter(v=>v.clienteNombre===clienteEstiloSel):todas;
+    const map={};
+    base.forEach(v=>{
+      const marca=prods.find(p=>p.id===v.producto)?.marca||"Sin marca";
+      if(!map[marca])map[marca]={litros:0,monto:0,pedidos:0};
+      map[marca].litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
+      map[marca].monto+=v.monto;
+      map[marca].pedidos+=1;
+    });
+    return Object.entries(map).map(([marca,d])=>({marca,...d})).sort((a,b)=>b.litros-a.litros);
+  },[todas,prods,envaseMap,clienteEstiloSel]);
  
   // Ranking clientes por producto
   const rankingClientesPorProd=useMemo(()=>{
@@ -4849,7 +5063,25 @@ function Metricas({clientes,prods}){
         </div>
       </div>
  
+      {/* Resumen por marca */}
+      {rankingMarca.length>0&&(
+        <>
+          <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🏷️ Litros por marca{clienteEstiloSel?` — ${clienteEstiloSel}`:" — todos los clientes"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
+            {rankingMarca.map(m=>(
+              <div key={m.marca} style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:14}}>
+                <div style={{fontSize:14,fontWeight:700,color:G,marginBottom:6}}>{m.marca}</div>
+                <div className="bebas" style={{fontSize:28,color:CR}}>{Math.round(m.litros*10)/10}L</div>
+                <div style={{fontSize:14,color:MU,marginTop:2}}>{fmtARS(m.monto)}</div>
+                <div style={{fontSize:13,color:MU,marginTop:1}}>{m.pedidos} pedido{m.pedidos!==1?"s":""}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Resumen general por producto */}
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🍺 Litros por estilo</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
         {rankingProducto.map(p=>(
           <div key={p.id} style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:14}}>
@@ -5834,6 +6066,18 @@ function App(){
   const[gastos,setGastos]=useState([]);
   const[comisiones,setComisiones]=useState([]);
   const[envasesExtra,setEnvasesExtra]=useState([]);
+  const mostrarBadgeCaja=useMemo(()=>{
+    const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:Number(c.comisionPctDefault)||0})));
+    const gananciaCobrada=todasV.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+    const totalLiquidado=(comisiones||[]).reduce((s,l)=>s+(Number(l.monto)||0),0);
+    const pendienteLiquidar=gananciaCobrada-totalLiquidado;
+    if(pendienteLiquidar<=0)return false;
+    const liquidacionesOrd=[...(comisiones||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+    const ultimaLiquidacion=liquidacionesOrd.length?liquidacionesOrd[liquidacionesOrd.length-1]:null;
+    const cobradasOrd=todasV.filter(v=>v.pagado).sort((a,b)=>new Date(a.fechaCobro||a.fecha)-new Date(b.fechaCobro||b.fecha));
+    const dias=ultimaLiquidacion?daysSince(ultimaLiquidacion.fecha):(cobradasOrd[0]?daysSince(cobradasOrd[0].fechaCobro||cobradasOrd[0].fecha):null);
+    return dias!==null&&dias>=PERIODO_LIQUIDACION_DIAS;
+  },[clientes,comisiones]);
   const[metaSemanal,setMetaSemanal]=useState(0);
   const[diasMora,setDiasMora]=useState(15);
   const[promo51,setPromo51]=useState({activo:false,marcaCuenta:"",envaseCuenta:"",cantidadNecesaria:5,productoBonoId:"",cantidadBono:1});
@@ -5902,7 +6146,10 @@ function App(){
           </div>
           <nav style={{padding:12,display:"flex",flexDirection:"column",gap:4,flex:1,overflowY:"auto"}}>
             {TABS.map(({key,label,icon})=>(
-              <button key={key} onClick={()=>setTab(key)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,fontSize:16,fontWeight:600,cursor:"pointer",border:"none",background:tab===key?G:"transparent",color:tab===key?"#fff":MU}}>{icon}{label}</button>
+              <button key={key} onClick={()=>setTab(key)} style={{position:"relative",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,fontSize:16,fontWeight:600,cursor:"pointer",border:"none",background:tab===key?G:"transparent",color:tab===key?"#fff":MU}}>
+                {icon}{label}
+                {key==="caja"&&mostrarBadgeCaja&&<span style={{position:"absolute",top:6,left:24,width:8,height:8,borderRadius:"50%",background:RE,border:"1.5px solid #fff"}}/>}
+              </button>
             ))}
           </nav>
           <div style={{padding:"16px 20px",borderTop:`1px solid ${BO}`}}>
@@ -5979,7 +6226,10 @@ function App(){
               if(!t)return null;
               return(
                 <button key={key} onClick={()=>setTab(key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",padding:"8px 0 6px",gap:3,background:"none",border:"none",cursor:"pointer",color:tab===key?G:MU}}>
-                  <span style={{width:28,height:28,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",background:tab===key?GLT:"transparent",transition:"background 0.15s"}}>{React.cloneElement(t.icon,{width:20,height:20})}</span>
+                  <span style={{position:"relative",width:28,height:28,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",background:tab===key?GLT:"transparent",transition:"background 0.15s"}}>
+                    {React.cloneElement(t.icon,{width:20,height:20})}
+                    {key==="caja"&&mostrarBadgeCaja&&<span style={{position:"absolute",top:1,right:1,width:8,height:8,borderRadius:"50%",background:RE,border:"1.5px solid #fff"}}/>}
+                  </span>
                   <span style={{fontSize:12,fontWeight:700}}>{t.label}</span>
                 </button>
               );
