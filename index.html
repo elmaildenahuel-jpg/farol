@@ -7083,6 +7083,99 @@ function SyncBadge({status,errorMsg}){
 // ── Stock ──────────────────────────────────────────────────────────
 // Cantidad disponible por producto, comparada contra lo que ya está comprometido
 // en pedidos pendientes (aún no entregados): te dice qué te falta reponer o cuánto te sobra.
+// ── Cuadro de litros en stock: marca › estilo (filas) × envase (columnas) ──────────────────
+// Todo se expresa en litros: las latas se cargan en unidades y se convierten (1 lata = 0,5 L). Cada producto es un estilo.
+function CuadroStockLitros({prods}){
+  const[abierto,setAbierto]=useState(true);
+  const fl=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");
+  const datos=useMemo(()=>{
+    const lista=prods||[];
+    const presentes=new Set(lista.map(p=>p.envase||"PET"));
+    const envases=[...ENVASES.filter(e=>presentes.has(e)),...[...presentes].filter(e=>!ENVASES.includes(e)).sort((a,b)=>a.localeCompare(b))];
+    const marcas={};
+    const totalEnvase={};
+    let total=0;
+    lista.forEach(p=>{
+      const marca=(p.marca||"").trim()||"Sin marca";
+      const env=p.envase||"PET";
+      const unid=Number(p.stock)||0;
+      const lts=litrosDeItem(unid,env);
+      const m=marcas[marca]=marcas[marca]||{marca,estilos:{},total:0,porEnvase:{}};
+      const nombre=p.nombre||"Sin nombre";
+      const e=m.estilos[nombre]=m.estilos[nombre]||{nombre,celdas:{},total:0};
+      const c=e.celdas[env]=e.celdas[env]||{litros:0,unid:0};
+      c.litros+=lts;c.unid+=unid;
+      e.total+=lts;
+      m.total+=lts;m.porEnvase[env]=(m.porEnvase[env]||0)+lts;
+      totalEnvase[env]=(totalEnvase[env]||0)+lts;
+      total+=lts;
+    });
+    // Mayor a menor litros (igual que el listado de abajo); a igualdad, por nombre
+    const arr=Object.values(marcas).map(m=>({...m,lista:Object.values(m.estilos).sort((a,b)=>b.total-a.total||a.nombre.localeCompare(b.nombre))}))
+      .sort((a,b)=>b.total-a.total||a.marca.localeCompare(b.marca));
+    return{envases,marcas:arr,totalEnvase,total};
+  },[prods]);
+
+  if(!prods||prods.length===0)return null;
+  const cols=`minmax(112px,1.7fr) repeat(${datos.envases.length},minmax(58px,1fr)) minmax(62px,1fr)`;
+  const anchoMin=112+(datos.envases.length+1)*60;
+  const celdaNum=(txt,{fuerte,suave}={})=>({textAlign:"right",fontSize:13,fontWeight:fuerte?700:500,color:suave?"#B9AA96":CR,whiteSpace:"nowrap"});
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+      <button onClick={()=>setAbierto(a=>!a)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
+        <span style={{fontSize:16,fontWeight:700,color:CR}}>🍺 Litros en stock</span>
+        <span className="bebas" style={{fontSize:24,color:datos.total>0?G:MU}}>{fl(datos.total)} L</span>
+      </button>
+      <div style={{fontSize:12,color:MU,marginTop:2,lineHeight:1.4}}>{abierto?"▲ Ocultar":"▼ Ver"} detalle por marca, estilo y envase · las latas se pasan a litros (1 lata = 0,5 L)</div>
+      {abierto&&(
+        <div style={{marginTop:12}}>
+          {datos.total===0&&<div style={{fontSize:13,color:MU,marginBottom:10}}>Todavía no cargaste stock: completalo en cada producto, acá abajo, y el cuadro se arma solo.</div>}
+          <div style={{overflowX:"auto",border:`1px solid ${BO}`,borderRadius:12,background:"#fff"}}>
+            <div style={{minWidth:anchoMin}}>
+              <div style={{display:"grid",gridTemplateColumns:cols,gap:6,padding:"7px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.04em"}}>
+                <span>Estilo</span>
+                {datos.envases.map(e=><span key={e} style={{textAlign:"right"}}>{e}</span>)}
+                <span style={{textAlign:"right"}}>Total</span>
+              </div>
+              {datos.marcas.map(m=>(
+                <div key={m.marca}>
+                  <div style={{display:"grid",gridTemplateColumns:cols,gap:6,padding:"7px 10px",background:GLT,borderTop:`1px solid ${BO}`,alignItems:"center"}}>
+                    <span style={{fontSize:13,fontWeight:700,color:GDK,textTransform:"uppercase",letterSpacing:"0.04em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.marca}</span>
+                    {datos.envases.map(e=><span key={e} style={celdaNum("",{fuerte:true,suave:m.porEnvase[e]===undefined})}>{m.porEnvase[e]===undefined?"—":fl(m.porEnvase[e])}</span>)}
+                    <span style={celdaNum("",{fuerte:true})}>{fl(m.total)} L</span>
+                  </div>
+                  {m.lista.map(es=>(
+                    <div key={es.nombre} style={{display:"grid",gridTemplateColumns:cols,gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,alignItems:"center"}}>
+                      <span style={{fontSize:13,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{es.nombre}</span>
+                      {datos.envases.map(e=>{
+                        const c=es.celdas[e];
+                        if(!c)return<span key={e} style={celdaNum("",{suave:true})}>—</span>;
+                        return(
+                          <span key={e} style={{...celdaNum("",{suave:c.litros===0}),lineHeight:1.2}}>
+                            {fl(c.litros)}
+                            {e==="Lata"&&c.unid>0&&<span style={{display:"block",fontSize:10,fontWeight:400,color:MU}}>{fl(c.unid)} u</span>}
+                          </span>
+                        );
+                      })}
+                      <span style={celdaNum("",{fuerte:true})}>{fl(es.total)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div style={{display:"grid",gridTemplateColumns:cols,gap:6,padding:"9px 10px",borderTop:`2px solid ${BO}`,background:BG,alignItems:"center"}}>
+                <span style={{fontSize:12,fontWeight:700,color:CR,textTransform:"uppercase",letterSpacing:"0.04em"}}>Total</span>
+                {datos.envases.map(e=><span key={e} style={celdaNum("",{fuerte:true})}>{fl(datos.totalEnvase[e]||0)}</span>)}
+                <span style={{...celdaNum("",{fuerte:true}),color:G}}>{fl(datos.total)} L</span>
+              </div>
+            </div>
+          </div>
+          <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.4}}>Cantidades en litros. "—" = ese estilo no existe en ese envase.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Stock({prods,setProds,pedidos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const unidadDe=id=>envaseMap[id]==="Lata"?"u":"L";
@@ -7156,6 +7249,8 @@ function Stock({prods,setProds,pedidos}){
           <div style={{fontSize:15,fontWeight:700,color:GDK}}>✓ Stock cubre todos los pedidos pendientes</div>
         </div>
       )}
+
+      <CuadroStockLitros prods={prods}/>
 
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="🔎 Buscar producto o marca..." style={{marginBottom:10}}/>
