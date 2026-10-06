@@ -612,7 +612,7 @@ async function compartirRemitoPDF(pedido,cliente,prods,onEstado){
     onEstado&&onEstado(false);
   }
 }
-function construirEstadoCuentaPDF(cliente,prods){
+function construirEstadoCuentaPDF(cliente,prods,pedidos){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const pageW=210,pageH=297,marginX=15;
@@ -620,13 +620,9 @@ function construirEstadoCuentaPDF(cliente,prods){
   const nombreDeProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
   const esLata=id=>envaseMap[id]==="Lata";
   const precioListaU=id=>{const p=(prods||[]).find(x=>x.id===id);return p?(p.precio||0):0;};
-  const valorDescuento=v=>{
-    const listaTotal=precioListaU(v.producto)*(Number(v.cantidad)||0);
-    if(v.esBono)return Math.round(listaTotal);
-    if(listaTotal>(v.monto||0))return Math.round(listaTotal-(v.monto||0));
-    if(v.descuentoPct>0)return Math.round(((v.monto||0)*v.descuentoPct)/(100-v.descuentoPct));
-    return 0;
-  };
+  const ctxDesc=ctxDescuentos(prods,pedidos);
+  const detalleDe=v=>desgloseVenta(v,cliente.id,ctxDesc);
+  const valorDescuento=v=>Math.round(detalleDe(v).beneficio);
 
   let y=0;
   const dibujarHeader=()=>{
@@ -763,7 +759,7 @@ function construirEstadoCuentaPDF(cliente,prods){
   }
 
   // Promos y descuentos aplicados
-  const conPromo=ventas.filter(v=>v.esBono||v.descuentoPct>0).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const conPromo=ventas.filter(v=>detalleDe(v).beneficio>0).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   y+=6;
   asegurarEspacio(14);
   doc.setFont("helvetica","bold");
@@ -807,7 +803,8 @@ function construirEstadoCuentaPDF(cliente,prods){
       doc.text(nombreDeProd(v.producto),colP.prod+1,y,{maxWidth:58});
       doc.text(cantTxt,colP.cant+18,y,{align:"right"});
       doc.setTextColor(183,121,31);
-      doc.text(v.esBono?"Bonificado":`-${v.descuentoPct}% desc.`,colP.tipo+1,y);
+      const dd=detalleDe(v);
+      doc.text(dd.esBono?"Bonificado":`-${fmtPct((dd.linea+dd.pedido)/((dd.neto+dd.linea+dd.pedido)||1)*100)} desc.`,colP.tipo+1,y);
       doc.setTextColor(198,40,40);
       doc.text(`-${fmtARS(valor)}`,colP.valor,y,{align:"right"});
       y+=6.3;
@@ -822,6 +819,18 @@ function construirEstadoCuentaPDF(cliente,prods){
     doc.text("Total bonificado/descontado",colP.tipo+1,y);
     doc.text(`-${fmtARS(totalValorPromos)}`,colP.valor,y,{align:"right"});
     y+=6;
+    const resAll=resumenDescuentos(ventas.map(v=>({v,d:detalleDe(v)})));
+    asegurarEspacio(12);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.3);
+    doc.setTextColor(100,100,100);
+    doc.text(`Representa el ${fmtPct(resAll.pct)} de la venta a lista (${fmtARS(Math.round(resAll.bruto))}) · ${resAll.conBeneficio} de ${resAll.ventas} venta${resAll.ventas!==1?"s":""} con descuento o bonificación.`,marginX,y,{maxWidth:pageW-marginX*2});
+    y+=5;
+    if(resAll.estimado){
+      doc.setFontSize(7.5);
+      doc.text("* Las bonificaciones anteriores al registro detallado se valúan al precio de lista actual.",marginX,y,{maxWidth:pageW-marginX*2});
+      y+=5;
+    }
   }
 
   const totalPages=doc.internal.getNumberOfPages();
@@ -837,14 +846,14 @@ function construirEstadoCuentaPDF(cliente,prods){
   }
   return doc;
 }
-async function compartirEstadoCuentaPDF(cliente,prods,onEstado){
+async function compartirEstadoCuentaPDF(cliente,prods,onEstado,pedidos){
   if(!window.jspdf||!window.jspdf.jsPDF){
     alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
     return;
   }
   try{
     onEstado&&onEstado(true);
-    const doc=construirEstadoCuentaPDF(cliente,prods);
+    const doc=construirEstadoCuentaPDF(cliente,prods,pedidos);
     const fileName=`estado-cuenta-${(cliente&&cliente.nombre?cliente.nombre.replace(/\s+/g,"-").toLowerCase():"cliente")}.pdf`;
     const blob=doc.output("blob");
     let compartido=false;
@@ -1127,6 +1136,42 @@ function construirCierreMensualPDF(d){
       y+=5.8;
     });
     y+=4;
+  }
+
+  // Descuentos y bonificaciones del mes
+  if(d.desc&&d.desc.ventas>0){
+    seccion("Descuentos y bonificaciones",[197,90,35]);
+    filaCaja([["Descontado",d.desc.descuento>0?`-${fmtARS(Math.round(d.desc.descuento))}`:"$ 0",[198,40,40]],["Bonificado",fmtARS(Math.round(d.desc.bono)),[183,121,31]],["% sobre venta a lista",fmtPct(d.desc.pct),[26,26,26]]]);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(120,120,120);
+    doc.text(`Venta a lista del mes: ${fmtARS(Math.round(d.desc.bruto))} · ${d.desc.conBeneficio} de ${d.desc.ventas} venta${d.desc.ventas!==1?"s":""} con descuento o bonificación${d.desc.litrosBono>0?` · ${Math.round(d.desc.litrosBono*10)/10} L regalados${d.desc.estimado?"*":""}`:""}`,marginX,y,{maxWidth:pageW-marginX*2});
+    y+=8;
+    if(d.desc.top&&d.desc.top.length>0){
+      asegurarEspacio(8+d.desc.top.length*6);
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(26,26,26);
+      doc.text("Clientes con más descuentos y bonificaciones",marginX,y);
+      y+=6;
+      doc.setFontSize(8.5);
+      d.desc.top.forEach((c,i)=>{
+        doc.setFont("helvetica","normal");
+        doc.setTextColor(60,60,60);
+        doc.text(`${i+1}. ${c.nombre}`,marginX+2,y);
+        doc.setFont("helvetica","bold");
+        doc.text(`-${fmtARS(Math.round(c.beneficio))}  ·  ${fmtPct(c.pct)}`,pageW-marginX,y,{align:"right"});
+        y+=5.8;
+      });
+      y+=4;
+    }
+    if(d.desc.estimado){
+      doc.setFont("helvetica","italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(120,120,120);
+      doc.text("* Las bonificaciones anteriores al registro detallado se valúan al precio de lista actual.",marginX,y);
+      y+=6;
+    }
   }
 
   // Comisiones
@@ -1516,6 +1561,181 @@ const reproducirBeep=()=>{
  
 // ── Cuenta corriente ──────────────────────────────────────────────
 function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
+
+// ── Descuentos y bonificaciones ─────────────────────────────────────────────
+// Cada venta que se genera al entregar un pedido guarda su desglose exacto (dv:1): neto facturado (sin IVA), descuento de línea,
+// descuento de pedido, bonificación (valor a precio de lista) y escala por volumen.
+// Las ventas anteriores se reconstruyen desde el pedido original cuando existe; si no, solo se usan datos explícitos
+// (% de descuento cargado a mano o bonificación). Nunca se compara contra el precio de lista actual para "adivinar" descuentos
+// (los precios cambian y daría falsos positivos). La única estimación es el valor de bonificaciones viejas (a precio de lista actual).
+const fmtPct=n=>`${(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR")}%`;
+function ctxDescuentos(prods,pedidos){
+  const prodMap={};(prods||[]).forEach(p=>{prodMap[p.id]=p;});
+  return{prodMap,envaseMap:envaseMapDe(prods),idx:indicePedidosEntregados(pedidos)};
+}
+function indicePedidosEntregados(pedidos){
+  const idx={};
+  (pedidos||[]).forEach(ped=>{
+    if(ped.estado!=="entregado")return;
+    (ped.lineas||[]).forEach(l=>{
+      const k=`${ped.clienteId}|${ped.fechaEntrega}|${l.productoId}|${Number(l.cantidad)||0}`;
+      (idx[k]=idx[k]||[]).push({ped,l});
+    });
+  });
+  return idx;
+}
+// Desglose que se guarda en la venta al marcar un pedido como entregado
+function desgloseAlEntregar(prod,l,ped){
+  const cant=Number(l.cantidad)||0;
+  const precioLista=prod?(Number(prod.precio)||0):0;
+  const montoLinea=Number(l.monto)||0;
+  const baseEscala=prod?montoTotal(prod,cant):montoLinea;   // a precio de lista, con la escala por volumen del catálogo
+  const dp=Number(ped.descuentoPct)||0;
+  if(l.esBono)return{dv:1,neto:0,volumen:0,linea:0,pedido:0,bono:Math.round(precioLista*cant),iva:0,descuentoPct:0,descPedidoPct:0};
+  const neto=montoLinea*(1-dp/100);
+  return{
+    dv:1,neto:Math.round(neto),
+    volumen:Math.max(0,Math.round(precioLista*cant-baseEscala)),
+    linea:Math.max(0,Math.round(baseEscala-montoLinea)),
+    pedido:Math.round(montoLinea*dp/100),
+    bono:0,iva:ped.incluyeIVA?Math.round(neto*0.21):0,
+    descuentoPct:Number(l.descuentoPct)||0,descPedidoPct:dp,
+  };
+}
+// Desglose de cualquier venta (nueva o vieja). ctx = ctxDescuentos(prods,pedidos)
+function desgloseVenta(v,clienteId,ctx){
+  const monto=Number(v.monto)||0,cant=Number(v.cantidad)||0;
+  const prod=ctx.prodMap[v.producto];
+  const precioLista=prod?(Number(prod.precio)||0):0;
+  const o={neto:0,volumen:0,linea:0,pedido:0,bono:0,iva:0,estimado:false};
+  if(v.dv===1){
+    o.neto=Number(v.neto)||0;o.volumen=Number(v.volumen)||0;o.linea=Number(v.linea)||0;
+    o.pedido=Number(v.pedido)||0;o.bono=Number(v.bono)||0;o.iva=Number(v.iva)||0;
+  }else{
+    const cands=ctx.idx[`${clienteId}|${v.fecha}|${v.producto}|${cant}`]||[];
+    const m=cands.find(x=>Math.round((Number(x.l.monto)||0)*(Number(x.ped.factorAjuste)||1))===Math.round(monto));
+    if(v.esBono||(m&&m.l.esBono)){
+      o.bono=precioLista*cant;o.estimado=true;
+    }else if(m){
+      const dl=Number(m.l.descuentoPct)||0,dp=Number(m.ped.descuentoPct)||0,montoLinea=Number(m.l.monto)||0;
+      const base=dl>0&&dl<100?montoLinea/(1-dl/100):montoLinea;
+      o.linea=Math.max(0,base-montoLinea);
+      o.pedido=montoLinea*dp/100;
+      o.neto=montoLinea-o.pedido;
+      o.iva=m.ped.incluyeIVA?o.neto*0.21:0;
+    }else{
+      const dp=Number(v.descuentoPct)||0;
+      o.neto=monto;
+      if(dp>0&&dp<100)o.linea=monto*dp/(100-dp);
+    }
+  }
+  o.bruto=o.neto+o.linea+o.pedido+o.bono;          // lo que valdría a precio de lista, sin descuentos ni bonificaciones
+  o.beneficio=o.linea+o.pedido+o.bono;             // todo lo que se le "regaló" al cliente en esta venta
+  o.litros=litrosDeItem(cant,ctx.envaseMap[v.producto]);
+  o.esBono=o.bono>0&&o.neto===0&&o.linea+o.pedido===0;
+  o.litrosBono=o.esBono?o.litros:0;
+  return o;
+}
+// items = [{v,d}] → totales y promedios
+function resumenDescuentos(items){
+  const r={ventas:0,conBeneficio:0,bruto:0,neto:0,linea:0,pedido:0,bono:0,volumen:0,litros:0,litrosPagos:0,litrosBono:0,estimado:false};
+  (items||[]).forEach(it=>{
+    const d=it&&it.d;if(!d)return;
+    r.ventas++;if(d.beneficio>0)r.conBeneficio++;
+    r.bruto+=d.bruto;r.neto+=d.neto;r.linea+=d.linea;r.pedido+=d.pedido;r.bono+=d.bono;r.volumen+=d.volumen;
+    r.litros+=d.litros;r.litrosBono+=d.litrosBono;if(!d.esBono)r.litrosPagos+=d.litros;
+    if(d.estimado)r.estimado=true;
+  });
+  r.descuento=r.linea+r.pedido;
+  r.beneficio=r.descuento+r.bono;
+  r.brutoFacturable=r.neto+r.descuento;                                        // venta a lista de lo que sí se facturó (sin bonificaciones)
+  r.pct=r.bruto>0?r.beneficio/r.bruto*100:0;                                   // descuentos + bonificaciones sobre venta a lista
+  r.pctDescuento=r.brutoFacturable>0?r.descuento/r.brutoFacturable*100:0;      // solo descuentos, sobre lo facturado a lista
+  r.promPorVentaConBeneficio=r.conBeneficio>0?r.beneficio/r.conBeneficio:0;
+  r.precioLitroLista=r.litrosPagos>0?r.brutoFacturable/r.litrosPagos:0;
+  r.precioLitroReal=r.litrosPagos>0?r.neto/r.litrosPagos:0;
+  return r;
+}
+// Últimos N meses (incluye el actual) con el resumen de cada uno
+function serieMensualDescuentos(items,cant){
+  const hoy=new Date();const meses=[];
+  for(let i=cant-1;i>=0;i--){
+    const d=new Date(hoy.getFullYear(),hoy.getMonth()-i,1);
+    meses.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,lbl:d.toLocaleDateString("es-AR",{month:"short"}).replace(".",""),items:[]});
+  }
+  const map={};meses.forEach(m=>{map[m.key]=m;});
+  (items||[]).forEach(it=>{const m=map[((it.v&&it.v.fecha)||"").slice(0,7)];if(m)m.items.push(it);});
+  return meses.map(m=>({key:m.key,lbl:m.lbl,...resumenDescuentos(m.items)}));
+}
+// Etiqueta chica para una venta: "🏷️ −10% · −$3.000" o "🎁 Bonificado · valor $x"
+function ChipBeneficio({d}){
+  if(!d||d.beneficio<=0)return null;
+  const base={display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,marginTop:3};
+  if(d.esBono)return<span style={{...base,background:"#FBE7D6",color:"#B7691F"}}>🎁 Bonificado · valor {fmtARS(Math.round(d.bono))}{d.estimado?"*":""}</span>;
+  const pct=(d.linea+d.pedido)/((d.neto+d.linea+d.pedido)||1)*100;
+  return<span style={{...base,background:RE+"12",color:"#C24545"}}>🏷️ −{fmtPct(pct)} · −{fmtARS(Math.round(d.linea+d.pedido))}</span>;
+}
+// Panel de resumen para un cliente (cuenta corriente / ficha). items = [{v,d}] de ese cliente
+function PanelDescuentosCliente({items}){
+  const[abierto,setAbierto]=useState(false);
+  const r=resumenDescuentos(items);
+  if(r.ventas===0)return null;
+  const meses=serieMensualDescuentos(items,6).filter(m=>m.ventas>0);
+  const kpi=(lbl,val,sub,color)=>(
+    <div style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:10,padding:"8px 10px"}}>
+      <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.05em"}}>{lbl}</div>
+      <div style={{fontSize:16,fontWeight:700,color:color||CR}}>{val}</div>
+      {sub&&<div style={{fontSize:12,color:MU}}>{sub}</div>}
+    </div>
+  );
+  const colsMes="0.8fr 1.2fr 1fr 1fr 0.8fr";
+  return(
+    <div style={{background:AM+"10",border:`1px solid ${AM}33`,borderRadius:10,padding:12,marginTop:12}}>
+      <button onClick={()=>setAbierto(a=>!a)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
+        <span style={{fontSize:15,fontWeight:700,color:CR}}>🏷️ Descuentos y bonificaciones</span>
+        <span style={{fontSize:15,fontWeight:700,color:r.beneficio>0?"#B7691F":MU}}>{r.beneficio>0?`−${fmtARS(Math.round(r.beneficio))} · ${fmtPct(r.pct)}`:"Sin descuentos"}</span>
+      </button>
+      <div style={{fontSize:12,color:MU,marginTop:2}}>{abierto?"▲":"▼"} {r.conBeneficio} de {r.ventas} venta{r.ventas!==1?"s":""} con descuento o bonificación</div>
+      {abierto&&(
+        <div style={{marginTop:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
+            {kpi("Venta a lista",fmtARS(Math.round(r.bruto)),"sin descuentos ni bonificaciones")}
+            {kpi("Facturado neto",fmtARS(Math.round(r.neto)),"lo que realmente se cobra")}
+            {kpi("Descuentos",r.descuento>0?`−${fmtARS(Math.round(r.descuento))}`:"—",r.descuento>0?`${fmtPct(r.pctDescuento)} de lo facturado a lista`:"ninguno",r.descuento>0?"#C24545":CR)}
+            {kpi("Bonificaciones",r.bono>0?fmtARS(Math.round(r.bono)):"—",r.bono>0?`${Math.round(r.litrosBono*10)/10} L regalados${r.estimado?"*":""}`:"ninguna",r.bono>0?"#B7691F":CR)}
+            {kpi("Beneficio total",fmtPct(r.pct),"descuentos + bonif. sobre venta a lista")}
+            {kpi("Promedio por venta",r.conBeneficio>0?fmtARS(Math.round(r.promPorVentaConBeneficio)):"—",`${r.conBeneficio} de ${r.ventas} (${fmtPct(r.conBeneficio/r.ventas*100)}) con beneficio`)}
+          </div>
+          {r.litrosPagos>0&&(
+            <div style={{fontSize:13,color:MU,marginBottom:10,lineHeight:1.45}}>
+              💲 Precio por litro: lista <b style={{color:CR}}>{fmtARS(Math.round(r.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS(Math.round(r.precioLitroReal))}</b>
+              {r.precioLitroLista>r.precioLitroReal?<> (−{fmtARS(Math.round(r.precioLitroLista-r.precioLitroReal))}/L)</>:null}
+            </div>
+          )}
+          {r.volumen>0&&<div style={{fontSize:13,color:MU,marginBottom:10}}>📦 Escala por volumen del catálogo: −{fmtARS(Math.round(r.volumen))} (ya incluida en el precio, no suma al beneficio).</div>}
+          {meses.length>0&&(
+            <div style={{border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden",background:"#fff"}}>
+              <div style={{display:"grid",gridTemplateColumns:colsMes,gap:6,padding:"6px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase"}}>
+                <span>Mes</span><span style={{textAlign:"right"}}>A lista</span><span style={{textAlign:"right"}}>Desc.</span><span style={{textAlign:"right"}}>Bonif.</span><span style={{textAlign:"right"}}>%</span>
+              </div>
+              {meses.map(m=>(
+                <div key={m.key} style={{display:"grid",gridTemplateColumns:colsMes,gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:12,color:CR}}>
+                  <span style={{textTransform:"capitalize"}}>{m.lbl}</span>
+                  <span style={{textAlign:"right"}}>{fmtARS(Math.round(m.bruto))}</span>
+                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS(Math.round(m.descuento))}`:"—"}</span>
+                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS(Math.round(m.bono)):"—"}</span>
+                  <span style={{textAlign:"right",fontWeight:700}}>{fmtPct(m.pct)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {r.estimado&&<div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.4}}>* Las bonificaciones anteriores al registro detallado se valúan al precio de lista actual.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function totalAdeudado(clientes){ return clientes.reduce((s,c)=>s+saldoCliente(c),0); }
 const MEDIOS_PAGO=[{id:"Efectivo",ic:"💵"},{id:"Transferencia",ic:"🏦"},{id:"Otro",ic:"✏️"}];
 // Cada cuántos días sugerimos liquidar comisiones con la fábrica si hay saldo pendiente.
@@ -1546,6 +1766,33 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
   return{...cliente,ventas:ventasFinales};
 }
  
+// ── Proveedores: cuenta corriente invertida (lo que yo les debo por compras) ──
+function saldoProveedor(p){ return (p.compras||[]).filter(c=>!c.pagado).reduce((s,c)=>s+c.monto,0); }
+
+function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota="",fecha=null}={}){
+  const monto=Number(montoPago);
+  if(!monto||monto<=0)return proveedor;
+  const pendientesOrdenadas=(proveedor.compras||[]).filter(c=>!c.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(c=>c.id);
+  let restante=monto;
+  const fechaPago=fecha||hoyISO();
+  const nuevasCompras=[...proveedor.compras].map(c=>{
+    if(c.pagado||!pendientesOrdenadas.includes(c.id)||restante<=0)return c;
+    if(restante>=c.monto){restante-=c.monto;return{...c,pagado:true,fechaPago,medioPago,nota:nota||c.nota||""};}
+    const montoPagado=restante,montoRestante=c.monto-restante;
+    const cantPagada=Math.round((c.cantidad*(montoPagado/c.monto))*10)/10;
+    restante=0;
+    return{...c,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:c.cantidad-cantPagada};
+  });
+  const comprasFinales=[];
+  nuevasCompras.forEach(c=>{
+    if(c._split){
+      comprasFinales.push({id:c.id,fecha:c.fecha,producto:c.producto,cantidad:c._cantPagada,monto:c._montoPagado,pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
+      comprasFinales.push({id:uid(),fecha:c.fecha,producto:c.producto,cantidad:c._cantRestante,monto:c._montoRestante,pagado:false});
+    }else{comprasFinales.push(c);}
+  });
+  return{...proveedor,compras:comprasFinales};
+}
+
 // ── Meta semanal helpers ──────────────────────────────────────────
 function rangoSemanaActual(){
   const hoy=new Date(),dia=hoy.getDay(),offsetLunes=dia===0?-6:1-dia;
@@ -1914,8 +2161,8 @@ function FormCliente({initial,onSave,onCancel}){
   );
 }
  
-function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
-  const[f,setF]=useState({fecha:hoyISO(),producto:"rubia",cantidad:"",monto:"",descuentoPct:"",pagado:true});
+function FormVenta({prods,onSave,onCancel,comisionPctDefault,initial,labelGuardar}){
+  const[f,setF]=useState(initial?{fecha:initial.fecha,producto:initial.producto,cantidad:String(initial.cantidad??""),monto:String(initial.monto??""),descuentoPct:String(initial.descuentoPct||""),pagado:!!initial.pagado}:{fecha:hoyISO(),producto:"rubia",cantidad:"",monto:"",descuentoPct:"",pagado:true});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const prod=prods.find(p=>p.id===f.producto);
   const sug=f.cantidad&&prod?montoTotal(prod,Number(f.cantidad)):null;
@@ -1949,11 +2196,67 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault}){
           <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),descuentoPct:descPct||0,pagado:f.pagado})} disabled={!f.cantidad||!f.monto}>Registrar</Btn></div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),descuentoPct:descPct||0,pagado:f.pagado})} disabled={!f.cantidad||!f.monto}>{labelGuardar||"Registrar"}</Btn></div>
     </div>
   );
 }
  
+function FormProveedor({initial,onSave,onCancel,marcasDisponibles}){
+  const[f,setF]=useState(initial||{nombre:"",telefono:"",direccion:"",notas:"",marca:""});
+  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div><Lbl t="Nombre"/><input value={f.nombre} onChange={s("nombre")} placeholder="Ej: Grunge (fábrica)"/></div>
+      <div>
+        <Lbl t="Marca que provee"/>
+        <input value={f.marca||""} onChange={s("marca")} placeholder="Ej: Grunge" list="marcas-proveedor-dl"/>
+        <datalist id="marcas-proveedor-dl">{(marcasDisponibles||[]).map(m=><option key={m} value={m}/>)}</datalist>
+        <div style={{fontSize:13,color:MU,marginTop:4}}>Al registrar una compra, el desplegable de productos se filtra solo a esta marca.</div>
+      </div>
+      <div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número"/></div>
+      <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="numeric"/></div>
+      <div><Lbl t="Notas"/><textarea rows={3} value={f.notas} onChange={s("notas")} placeholder="Condiciones de pago, contacto, cuenta bancaria..."/></div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn onClick={()=>f.nombre.trim()&&onSave(f)} disabled={!f.nombre.trim()}>Guardar</Btn></div>
+    </div>
+  );
+}
+
+function FormCompra({prods,onSave,onCancel,marcaProveedor,initial,labelGuardar}){
+  // El desplegable se filtra a la marca del proveedor (si tiene una configurada). Si no hay ningún
+  // producto de esa marca, o se está editando una compra de un producto que ya no matchea, se cae a mostrar todos.
+  const prodsFiltrados=useMemo(()=>{
+    if(!marcaProveedor)return prods;
+    const filtrados=prods.filter(p=>p.marca===marcaProveedor||(initial&&p.id===initial.producto));
+    return filtrados.length?filtrados:prods;
+  },[prods,marcaProveedor,initial]);
+  const[f,setF]=useState(initial?{fecha:initial.fecha,producto:initial.producto,cantidad:String(initial.cantidad??""),monto:String(initial.monto??""),pagado:!!initial.pagado}:{fecha:hoyISO(),producto:(prodsFiltrados[0]&&prodsFiltrados[0].id)||"",cantidad:"",monto:"",pagado:false});
+  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const prod=prods.find(p=>p.id===f.producto);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {marcaProveedor&&prodsFiltrados.length<prods.length&&<div style={{fontSize:13,color:MU}}>Mostrando solo productos de la marca <strong style={{color:CR}}>{marcaProveedor}</strong>.</div>}
+      <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
+      <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{[...prodsFiltrados].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+        <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"24":"100"}/></div>
+        <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0"/></div>
+      </div>
+      {f.producto&&f.cantidad&&(
+        <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"8px 12px",fontSize:14,color:G}}>
+          📦 Al registrar, se suman {f.cantidad}{prod&&prod.envase==="Lata"?"u":"L"} al stock de {prod?nombreProdEnvase(prod):"este producto"}.
+        </div>
+      )}
+      <div><Lbl t="¿Ya se pagó?"/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
+          <button onClick={()=>setF(p=>({...p,pagado:true}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado?GR:BO}`,background:f.pagado?GR+"22":"transparent",color:f.pagado?GR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
+          <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&f.producto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),pagado:f.pagado})} disabled={!f.cantidad||!f.monto||!f.producto}>{labelGuardar||"Registrar compra"}</Btn></div>
+    </div>
+  );
+}
+
 function FormProspecto({initial,onSave,onCancel}){
   const[f,setF]=useState(initial||{nombre:"",rubro:RUBROS[0],zona:ZONAS[0],direccion:"",telefono:"",notas:"",estado:"Por contactar"});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
@@ -2051,9 +2354,60 @@ function PanelCobro({cliente,onUpdate,onDone}){
   );
 }
 
+// ── PanelPagoProveedor (equivalente a PanelCobro, pero para pagarle a un proveedor) ──
+function PanelPagoProveedor({proveedor,onUpdate,onDone}){
+  const saldo=saldoProveedor(proveedor);
+  const[monto,setMonto]=useState(saldo>0?String(saldo):"");
+  const[medioPago,setMedioPago]=useState("Efectivo");
+  const[fecha,setFecha]=useState(hoyISO());
+  const[nota,setNota]=useState("");
+  const montoNum=Number(monto)||0;
+  const esParcial=montoNum>0&&montoNum<saldo;
+  const confirmar=()=>{
+    if(!montoNum||montoNum<=0)return;
+    onUpdate(aplicarPagoAProveedor(proveedor,montoNum,{medioPago,nota,fecha}));
+    onDone&&onDone();
+  };
+  return(
+    <div style={{background:"#fff",border:`1px solid ${G}33`,borderRadius:10,padding:14}}>
+      <div style={{marginBottom:8}}>
+        <Lbl t="Monto pagado"/>
+        <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
+        <div style={{display:"flex",gap:6,marginTop:6}}>
+          <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo/2)):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo/2))})</button>
+        </div>
+      </div>
+      <div style={{marginBottom:8}}>
+        <Lbl t="Fecha de pago"/>
+        <input type="date" value={fecha} max={hoyISO()} onChange={e=>setFecha(e.target.value||hoyISO())}/>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        {MEDIOS_PAGO.map(m=>(
+          <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
+        ))}
+      </div>
+      <div style={{marginBottom:10}}><Lbl t="Nota (opcional)"/><input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ej: transferencia, pagué en el depósito..."/></div>
+      {montoNum>0&&(
+        <div style={{fontSize:14,color:MU,marginBottom:10}}>
+          {esParcial?"Pago parcial":"Salda toda la deuda"} de <strong style={{color:G}}>{fmtARS(montoNum)}</strong> · Deuda restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-montoNum))}</strong>
+        </div>
+      )}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onDone} style={{flex:1,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+        <button onClick={confirmar} disabled={!montoNum||montoNum<=0} style={{flex:2,padding:"10px 0",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",opacity:!montoNum||montoNum<=0?0.4:1}}>
+          ✓ Confirmar {montoNum?fmtARS(montoNum):"..."}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── CuentaCorriente ───────────────────────────────────────────────
-function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
+function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
   const[showHistorial,setShowHistorial]=useState(false);
+  const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
+  const descPorId=useMemo(()=>{const m={};itemsDesc.forEach(({v,d})=>{m[v.id]=d;});return m;},[itemsDesc]);
   const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
  
@@ -2076,7 +2430,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
         </span>
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
-      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{});}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!(cliente.ventas||[]).length} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
+      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!(cliente.ventas||[]).length} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
  
       {saldo>0&&(
         <>
@@ -2093,6 +2447,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
                 <div>
                   <div style={{fontSize:16,color:CR,fontWeight:500}}>{fmtDate(v.fecha)}</div>
                   <div style={{fontSize:14,color:MU}}>{v.cantidad}L · {v.nota||""}</div>
+                  <ChipBeneficio d={descPorId[v.id]}/>
                   {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -2114,6 +2469,9 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
         </>
       )}
  
+      {/* Descuentos y bonificaciones del cliente */}
+      <PanelDescuentosCliente items={itemsDesc}/>
+
       {/* Historial de pagos */}
       {pagadas.length>0&&(
         <div style={{marginTop:saldo>0?12:0}}>
@@ -2127,6 +2485,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
                   <div>
                     <div style={{fontSize:15,color:CR}}>{fmtDate(v.fechaCobro||v.fecha)}</div>
                     <div style={{fontSize:13,color:GR}}>✓ {v.medioPago||"Cobrado"}{v.nota?` · ${v.nota}`:""}</div>
+                    <ChipBeneficio d={descPorId[v.id]}/>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
@@ -2146,6 +2505,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods}){
 // ── DetalleCliente ────────────────────────────────────────────────
 function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,promo51,pedidos}){
   const[vForm,setVForm]=useState(false);
+  const[editandoVentaId,setEditandoVentaId]=useState(null);
   const[edit,setEdit]=useState(false);
   const[spOpen,setSpOpen]=useState(false);
   const[confirmBorrar,setConfirmBorrar]=useState(false);
@@ -2155,6 +2515,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
   const total=cliente.ventas.reduce((s,v)=>s+v.monto,0);
   const sorted=[...cliente.ventas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const frecuencia=useMemo(()=>frecuenciaCompraCliente(cliente),[cliente]);
+  const descPorId=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);const m={};(cliente.ventas||[]).forEach(v=>{m[v.id]=desgloseVenta(v,cliente.id,ctx);});return m;},[cliente,prods,pedidos]);
   if(edit)return<FormCliente initial={cliente} onCancel={()=>setEdit(false)} onSave={f=>{onUpdate({...cliente,...f});setEdit(false);}}/>;
   return(
     <div>
@@ -2185,7 +2546,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
       )}
       <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods,promo51);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
-      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora} prods={prods}/>
+      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora} prods={prods} pedidos={pedidos}/>
       {(()=>{
         const promoProg=promo51&&promo51.activo?progresoPromo51(cliente,promo51,prods,pedidos):null;
         if(!promoProg)return null;
@@ -2212,15 +2573,25 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
         ?<div style={{marginBottom:14}}><FormVenta prods={prods} comisionPctDefault={cliente.comisionPctDefault} onCancel={()=>setVForm(false)} onSave={v=>{onUpdate({...cliente,ventas:[...cliente.ventas,{id:uid(),...v}]});setVForm(false);}}/></div>
         :<button onClick={()=>setVForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Nueva venta</button>
       }
-      {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin ventas aún.</p>:sorted.map(v=>{const p=prods.find(x=>x.id===v.producto);return(
+      {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin ventas aún.</p>:sorted.map(v=>{
+        if(editandoVentaId===v.id)return(
+          <div key={v.id} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
+            <FormVenta prods={prods} comisionPctDefault={cliente.comisionPctDefault} initial={v} labelGuardar="Guardar cambios" onCancel={()=>setEditandoVentaId(null)} onSave={datos=>{onUpdate({...cliente,ventas:cliente.ventas.map(x=>x.id===v.id?{...x,...datos}:x)});setEditandoVentaId(null);}}/>
+          </div>
+        );
+        const p=prods.find(x=>x.id===v.producto);return(
         <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${v.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
           <div>
             <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):v.producto}</div>
             <div style={{fontSize:13,color:MU}}>{fmtDate(v.fecha)}</div>
+            <ChipBeneficio d={descPorId[v.id]}/>
           </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
-            <div style={{fontSize:13,color:v.pagado?GR:"#E08070"}}>{v.cantidad} L · {v.pagado?"Pagado":"Pendiente"}</div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
+              <div style={{fontSize:13,color:v.pagado?GR:"#E08070"}}>{v.cantidad} L · {v.pagado?"Pagado":"Pendiente"}</div>
+            </div>
+            <button onClick={()=>setEditandoVentaId(v.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
           </div>
         </div>
       );})}
@@ -2474,6 +2845,210 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
   );
 }
  
+// ── CuentaCorrienteProveedor ────────────────────────────────────────
+function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
+  const[showHistorial,setShowHistorial]=useState(false);
+  const[showPago,setShowPago]=useState(false);
+  const pendientes=(proveedor.compras||[]).filter(c=>!c.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const pagadas=(proveedor.compras||[]).filter(c=>c.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const saldo=saldoProveedor(proveedor);
+
+  // Pago rápido de una compra puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
+  const marcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:hoyISO(),medioPago:"Efectivo"}:c)});
+  const desmarcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:false,fechaPago:null}:c)});
+  const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):id;};
+
+  return(
+    <div style={{background:saldo>0?RE+"11":GR+"11",border:`1px solid ${saldo>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:saldo>0?8:0}}>
+        <span style={{fontSize:16,fontWeight:700,color:saldo>0?"#C62828":GR}}>
+          {saldo>0?"💰 Cuenta corriente (le debo)":"✓ Sin deuda pendiente"}
+        </span>
+        <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
+      </div>
+
+      {saldo>0&&(
+        <>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12,marginBottom:12}}>
+            {pendientes.map(c=>(
+              <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:500,color:CR}}>{nombreProd(c.producto)}</div>
+                  <div style={{fontSize:14,color:MU}}>{fmtDate(c.fecha)} · {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(c.monto)}</span>
+                  <button onClick={()=>marcarPagada(c.id)} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Registrar pago — mismo panel unificado que con clientes */}
+          {!showPago?(
+            <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              {I.check} Registrar pago
+            </button>
+          ):(
+            <PanelPagoProveedor proveedor={proveedor} onUpdate={onUpdate} onDone={()=>setShowPago(false)}/>
+          )}
+        </>
+      )}
+
+      {pagadas.length>0&&(
+        <div style={{marginTop:saldo>0?12:0}}>
+          <button onClick={()=>setShowHistorial(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
+            {showHistorial?"▲":"▼"} Historial de pagos ({pagadas.length})
+          </button>
+          {showHistorial&&(
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+              {pagadas.slice(0,8).map(c=>(
+                <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
+                  <div>
+                    <div style={{fontSize:15,color:CR}}>{fmtDate(c.fechaPago||c.fecha)}</div>
+                    <div style={{fontSize:13,color:GR}}>✓ {c.medioPago||"Pagado"}{c.nota?` · ${c.nota}`:""}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</span>
+                    <button onClick={()=>desmarcarPagada(c.id)} style={{fontSize:13,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── DetalleProveedor ──────────────────────────────────────────────
+function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
+  const[cForm,setCForm]=useState(false);
+  const[edit,setEdit]=useState(false);
+  const[editandoCompraId,setEditandoCompraId]=useState(null);
+  const[confirmBorrar,setConfirmBorrar]=useState(false);
+  const total=(proveedor.compras||[]).reduce((s,c)=>s+c.monto,0);
+  const sorted=[...(proveedor.compras||[])].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
+  if(edit)return<FormProveedor initial={proveedor} marcasDisponibles={marcasDisponibles} onCancel={()=>setEdit(false)} onSave={f=>{onUpdate({...proveedor,...f});setEdit(false);}}/>;
+
+  // Registrar compra: agrega el movimiento a la cuenta corriente del proveedor Y suma la cantidad al stock del producto.
+  const registrarCompra=c=>{
+    onUpdate({...proveedor,compras:[...(proveedor.compras||[]),{id:uid(),...c}]});
+    setProds(prev=>prev.map(p=>p.id===c.producto?{...p,stock:(Number(p.stock)||0)+Number(c.cantidad)}:p));
+    setCForm(false);
+  };
+
+  // Editar compra: corrige el movimiento y ajusta el stock por la diferencia (incluso si cambió de producto),
+  // para poder corregir cargas de saldos/compras viejas sin descuadrar el stock.
+  const guardarEdicionCompra=(compraVieja,datos)=>{
+    onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===compraVieja.id?{...c,...datos}:c)});
+    setProds(prev=>prev.map(p=>{
+      if(p.id===compraVieja.producto&&p.id===datos.producto)return{...p,stock:(Number(p.stock)||0)-Number(compraVieja.cantidad)+Number(datos.cantidad)};
+      if(p.id===compraVieja.producto)return{...p,stock:(Number(p.stock)||0)-Number(compraVieja.cantidad)};
+      if(p.id===datos.producto)return{...p,stock:(Number(p.stock)||0)+Number(datos.cantidad)};
+      return p;
+    }));
+    setEditandoCompraId(null);
+  };
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",marginBottom:16}}>
+        <div style={{display:"flex",gap:4}}>
+          <button onClick={()=>setEdit(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
+          <button onClick={()=>setConfirmBorrar(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
+        </div>
+      </div>
+      <ModalConfirmar open={confirmBorrar} onClose={()=>setConfirmBorrar(false)} onConfirmar={()=>onDelete(proveedor.id)} titulo="¿Eliminar proveedor?" mensaje={`Vas a eliminar a ${proveedor.nombre} y todo su historial de compras. Esta acción no se puede deshacer (el stock ya sumado por compras anteriores no se revierte).`} labelConfirmar="Sí, eliminar"/>
+      {proveedor.direccion&&<div style={{color:CR,display:"flex",alignItems:"center",gap:6,fontSize:16,marginBottom:14}}><span style={{color:MU}}>{I.map}</span>{proveedor.direccion}</div>}
+      {proveedor.marca&&<div style={{color:CR,fontSize:16,marginBottom:14}}><span style={{color:MU}}>Marca · </span>{proveedor.marca}</div>}
+      {proveedor.telefono&&(
+        <a href={`https://wa.me/${proveedor.telefono}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginBottom:14}}>{I.wa}WhatsApp</a>
+      )}
+      {proveedor.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{proveedor.notas}</div></div>}
+      <CuentaCorrienteProveedor proveedor={proveedor} onUpdate={onUpdate} prods={prods}/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <span style={{fontSize:16,fontWeight:600,color:CR}}>Historial de compras</span>
+        <span style={{fontSize:14,color:MU}}>Total: {fmtARS(total)}</span>
+      </div>
+      {cForm
+        ?<div style={{marginBottom:14}}><FormCompra prods={prods} marcaProveedor={proveedor.marca} onCancel={()=>setCForm(false)} onSave={registrarCompra}/></div>
+        :<button onClick={()=>setCForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Nueva compra</button>
+      }
+      {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin compras aún.</p>:sorted.map(c=>{
+        if(editandoCompraId===c.id)return(
+          <div key={c.id} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
+            <FormCompra prods={prods} marcaProveedor={proveedor.marca} initial={c} labelGuardar="Guardar cambios" onCancel={()=>setEditandoCompraId(null)} onSave={datos=>guardarEdicionCompra(c,datos)}/>
+          </div>
+        );
+        const p=(prods||[]).find(x=>x.id===c.producto);return(
+        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${c.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):c.producto}</div>
+            <div style={{fontSize:13,color:MU}}>{fmtDate(c.fecha)}</div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</div>
+              <div style={{fontSize:13,color:c.pagado?GR:"#E08070"}}>{c.cantidad}{p&&p.envase==="Lata"?"u":"L"} · {c.pagado?"Pagado":"Pendiente"}</div>
+            </div>
+            <button onClick={()=>setEditandoCompraId(c.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
+          </div>
+        </div>
+      );})}
+    </div>
+  );
+}
+
+// ── PROVEEDORES ───────────────────────────────────────────────────
+function Proveedores({proveedores,setProveedores,prods,setProds}){
+  const[q,setQ]=useState("");
+  const[orden,setOrden]=useState("az");
+  const[showNew,setShowNew]=useState(false);
+  const[sel,setSel]=useState(null);
+  const filtered=useMemo(()=>(proveedores||[]).filter(p=>{const t=q.toLowerCase();return!t||(p.nombre||"").toLowerCase().includes(t);}).sort((a,b)=>{
+    if(orden==="deuda")return saldoProveedor(b)-saldoProveedor(a);
+    return(a.nombre||"").localeCompare(b.nombre||"");
+  }),[proveedores,q,orden]);
+  const selObj=(proveedores||[]).find(p=>p.id===sel);
+  const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <span className="bebas" style={{fontSize:30,color:CR}}>Proveedores</span>
+        <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
+      </div>
+      <div style={{position:"relative",marginBottom:12}}>
+        <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:MU,pointerEvents:"none"}}>{I.search}</span>
+        <input style={{paddingLeft:38}} placeholder="Buscar proveedor..." value={q} onChange={e=>setQ(e.target.value)}/>
+      </div>
+      <div style={{marginBottom:16}}>
+        <select value={orden} onChange={e=>setOrden(e.target.value)}>
+          <option value="az">Ordenar: A → Z</option>
+          <option value="deuda">Ordenar: mayor deuda</option>
+        </select>
+      </div>
+      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Sin proveedores para mostrar.</p>:filtered.map(p=>{const deuda=saldoProveedor(p);return(
+        <button key={p.id} onClick={()=>setSel(p.id)} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",marginBottom:8}}>
+          <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(p.nombre)}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:600,color:CR}}>{p.nombre}</span><span style={{color:MU}}>{I.chev}</span></div>
+            {deuda>0&&<div style={{fontSize:13,fontWeight:700,color:"#E08070",marginTop:4}}>💰 Le debo {fmtARS(deuda)}</div>}
+          </div>
+        </button>
+      );})}
+      <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo proveedor">
+        <FormProveedor marcasDisponibles={marcasDisponibles} onCancel={()=>setShowNew(false)} onSave={f=>{setProveedores(prev=>[...(prev||[]),{id:uid(),...f,compras:[]}]);setShowNew(false);}}/>
+      </Modal>
+      <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
+        {selObj&&<DetalleProveedor proveedor={selObj} prods={prods} setProds={setProds} onUpdate={u=>setProveedores(prev=>prev.map(x=>x.id===u.id?u:x))} onDelete={id=>{setProveedores(prev=>prev.filter(x=>x.id!==id));setSel(null);}}/>}
+      </Modal>
+    </div>
+  );
+}
+
 // ── ENVÍO MASIVO ──────────────────────────────────────────────────
 const ENVIO_MASIVO_LS_KEY="farol_envio_masivo_progreso";
 function EnvioMasivo({clientes,speeches}){
@@ -3226,6 +3801,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
           id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
           cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado,
           promoAcumulable:!!(ped.promoAplica&&prodCuentaParaPromo(prod,promo51)),esBono:!!l.esBono,
+          ...desgloseAlEntregar(prod,l,ped),
         };
       });
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
@@ -3593,7 +4169,7 @@ function Productos({prods,setProds,promo51,envasesExtra}){
     setProds(prev=>[...prev,{
       id:nuevoId,nombre,precio,
       marca:(np.marca||"").trim(),envase:np.envase||"PET",descripcion:(np.descripcion||"").trim(),
-      promos:[],historialPrecios:[],
+      promos:[],historialPrecios:[],stock:0,
     }]);
     setNp({nombre:"",precio:"",marca:"",envase:"PET",descripcion:""});
     setShowNewProd(false);
@@ -4018,7 +4594,8 @@ function Speeches({speeches,setSpeeches}){
 }
  
 // ── VENTAS ────────────────────────────────────────────────────────
-function CuentasCorrientes({clientes,setClientes,diasMora}){
+function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
+  const ctxDesc=useMemo(()=>ctxDescuentos(prods,pedidos),[prods,pedidos]);
   const[expandido,setExpandido]=useState(null);
   const[filtro,setFiltro]=useState("todos"); // todos | vencidos
   const[pagoAbierto,setPagoAbierto]=useState(null); // id del cliente con el panel de pago abierto
@@ -4085,10 +4662,12 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
                         <button onClick={()=>marcarPagada(cliente.id,v.id)} style={{padding:"5px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>Cobrado</button>
                       </div>
                     </div>
+                    <ChipBeneficio d={desgloseVenta(v,cliente.id,ctxDesc)}/>
                     {!!cliente.comisionPctDefault&&<div style={{fontSize:13,color:G,marginTop:4}}>% comisión ({cliente.comisionPctDefault}%) = {fmtARS(Math.round(v.monto*Number(cliente.comisionPctDefault)/100))}</div>}
                   </div>
                 );})}
 
+                <PanelDescuentosCliente items={(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctxDesc)}))}/>
                 {vencidas.length>0&&cliente.telefono&&(
                   <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
                 )}
@@ -4109,7 +4688,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora}){
   );
 }
 
-function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
+function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
@@ -4241,7 +4820,14 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones}){
   const exportarCierreMensual=async()=>{
     setExportandoCierre(true);
     try{
+      const ctxD=ctxDescuentos(prods,pedidos);
+      const itemsMes=delMes.map(v=>({v,d:desgloseVenta(v,v.clienteId,ctxD)}));
+      const resMes=resumenDescuentos(itemsMes);
+      const porClienteMes={};
+      itemsMes.forEach(it=>{(porClienteMes[it.v.clienteNombre]=porClienteMes[it.v.clienteNombre]||[]).push(it);});
+      const topDescMes=Object.entries(porClienteMes).map(([nombre,its])=>({nombre,...resumenDescuentos(its)})).filter(c=>c.beneficio>0).sort((a,b)=>b.beneficio-a.beneficio).slice(0,5).map(c=>({nombre:c.nombre,beneficio:c.beneficio,pct:c.pct}));
       await compartirCierreMensualPDF({
+        desc:{ventas:resMes.ventas,conBeneficio:resMes.conBeneficio,bruto:resMes.bruto,descuento:resMes.descuento,bono:resMes.bono,beneficio:resMes.beneficio,pct:resMes.pct,litrosBono:resMes.litrosBono,estimado:resMes.estimado,top:topDescMes},
         mesLbl:new Date().toLocaleDateString("es-AR",{month:"long",year:"numeric"}),
         facturado:facturadoMes,ganancia:gananciaMes,litros:litrosMes,
         facturadoAnterior:facturadoMesAnterior,mesAnteriorLbl:lblMesAnterior,
@@ -4729,10 +5315,424 @@ function Ventas({clientes,prods}){
   );
 }
  
-// ── MÉTRICAS ──────────────────────────────────────────────────────
-function Metricas({clientes,prods}){
+// ── COMPRAS (estadísticas de lo comprado a proveedores) ────────────
+function Compras({proveedores,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+  const todasSinFiltro=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[]).map(c=>({...c,proveedorId:p.id,proveedorNombre:p.nombre}))),[proveedores]);
+
+  // ── Filtros ──
+  const[fDesde,setFDesde]=useState("");
+  const[fHasta,setFHasta]=useState("");
+  const[fProveedor,setFProveedor]=useState("");
+  const[fProducto,setFProducto]=useState("");
+  const[fEnvase,setFEnvase]=useState("");
+  const[fMarca,setFMarca]=useState("");
+  const[fEstado,setFEstado]=useState("todos"); // todos | pagado | pendiente
+  const[fOrden,setFOrden]=useState("fecha-desc");
+
+  const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
+  const marcasDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.marca).filter(Boolean))).sort(),[prods]);
+  const proveedoresConCompras=useMemo(()=>[...(proveedores||[])].filter(p=>(p.compras||[]).length>0).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")),[proveedores]);
+  const hayFiltros=fDesde||fHasta||fProveedor||fProducto||fEnvase||fMarca||fEstado!=="todos"||fOrden!=="fecha-desc";
+
+  const filtradas=useMemo(()=>{
+    let lista=todasSinFiltro.filter(c=>{
+      if(fDesde&&c.fecha<fDesde)return false;
+      if(fHasta&&c.fecha>fHasta)return false;
+      if(fProveedor&&c.proveedorId!==fProveedor)return false;
+      if(fProducto&&c.producto!==fProducto)return false;
+      if(fEnvase&&envaseMap[c.producto]!==fEnvase)return false;
+      if(fMarca&&(prods.find(p=>p.id===c.producto)?.marca||"")!==fMarca)return false;
+      if(fEstado==="pagado"&&!c.pagado)return false;
+      if(fEstado==="pendiente"&&c.pagado)return false;
+      return true;
+    });
+    lista=[...lista].sort((a,b)=>{
+      switch(fOrden){
+        case"fecha-asc":return new Date(a.fecha)-new Date(b.fecha);
+        case"monto-desc":return(b.monto||0)-(a.monto||0);
+        case"monto-asc":return(a.monto||0)-(b.monto||0);
+        case"proveedor":return a.proveedorNombre.localeCompare(b.proveedorNombre);
+        default:return new Date(b.fecha)-new Date(a.fecha);
+      }
+    });
+    return lista;
+  },[todasSinFiltro,fDesde,fHasta,fProveedor,fProducto,fEnvase,fMarca,fEstado,fOrden,envaseMap,prods]);
+
+  const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFProveedor("");setFProducto("");setFEnvase("");setFMarca("");setFEstado("todos");setFOrden("fecha-desc");};
+
+  const totalARS=filtradas.reduce((s,c)=>s+(c.monto||0),0);
+  const litros=filtradas.reduce((s,c)=>s+litrosDeItem(c.cantidad,envaseMap[c.producto]),0);
+  const pendiente=filtradas.filter(c=>!c.pagado).reduce((s,c)=>s+(c.monto||0),0);
+
+  const exportCSV=()=>{const h="Proveedor,Fecha,Producto,Cantidad,Monto ARS,Pagado\n",r=filtradas.map(c=>`"${c.proveedorNombre}",${c.fecha},${c.producto},${c.cantidad},${c.monto},${c.pagado?"Sí":"No"}`).join("\n"),b=new Blob([h+r],{type:"text/csv;charset=utf-8;"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`compras_${hoyISO()}.csv`;a.click();};
+
+  // Evolución mensual (últimos 6 meses, sin filtrar — panorama fijo)
+  const evolucionMensual=useMemo(()=>{
+    const hoy=new Date();
+    const meses=[];
+    for(let i=5;i>=0;i--){const d=new Date(hoy.getFullYear(),hoy.getMonth()-i,1);meses.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,lbl:d.toLocaleDateString("es-AR",{month:"short"})});}
+    const map={};meses.forEach(m=>map[m.key]={litros:0,monto:0});
+    todasSinFiltro.forEach(c=>{const key=(c.fecha||"").slice(0,7);if(map[key]){map[key].litros+=litrosDeItem(c.cantidad,envaseMap[c.producto]);map[key].monto+=c.monto||0;}});
+    return meses.map(m=>({...m,...map[m.key]}));
+  },[todasSinFiltro,envaseMap]);
+  const maxMesMonto=Math.max(1,...evolucionMensual.map(m=>m.monto));
+
+  // Ranking por envase
+  const ENVASE_COLOR={PET:G,Barril:AM,Lata:"#4472BE"};
+  const rankingEnvase=useMemo(()=>{
+    const map={};
+    filtradas.forEach(c=>{
+      const envase=prods.find(p=>p.id===c.producto)?.envase||"Otro";
+      if(!map[envase])map[envase]={litros:0,monto:0};
+      map[envase].litros+=litrosDeItem(c.cantidad,envase);
+      map[envase].monto+=c.monto||0;
+    });
+    return Object.entries(map).map(([envase,d])=>({envase,...d})).sort((a,b)=>b.litros-a.litros);
+  },[filtradas,prods]);
+  const maxEnvase=Math.max(1,...rankingEnvase.map(e=>e.litros));
+
+  // Ranking por marca
+  const rankingMarca=useMemo(()=>{
+    const map={};
+    filtradas.forEach(c=>{
+      const marca=prods.find(p=>p.id===c.producto)?.marca||"Sin marca";
+      if(!map[marca])map[marca]={litros:0,monto:0,compras:0};
+      map[marca].litros+=litrosDeItem(c.cantidad,envaseMap[c.producto]);
+      map[marca].monto+=c.monto||0;
+      map[marca].compras+=1;
+    });
+    return Object.entries(map).map(([marca,d])=>({marca,...d})).sort((a,b)=>b.litros-a.litros);
+  },[filtradas,prods,envaseMap]);
+  const maxMarca=Math.max(1,...rankingMarca.map(m=>m.litros));
+
+  // Ranking por estilo (cada producto es, en los hechos, un estilo propio)
+  const rankingEstilo=useMemo(()=>{
+    const map={};
+    filtradas.forEach(c=>{
+      const nombre=prods.find(p=>p.id===c.producto)?.nombre||c.producto;
+      if(!map[nombre])map[nombre]={litros:0,monto:0,compras:0};
+      map[nombre].litros+=litrosDeItem(c.cantidad,envaseMap[c.producto]);
+      map[nombre].monto+=c.monto||0;
+      map[nombre].compras+=1;
+    });
+    return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b.litros-a.litros);
+  },[filtradas,prods,envaseMap]);
+  const maxEstilo=Math.max(1,...rankingEstilo.map(e=>e.litros));
+
+  // Top proveedores
+  const[topCriterio,setTopCriterio]=useState("monto"); // "monto" | "litros"
+  const topProveedores=useMemo(()=>{
+    const map={};
+    filtradas.forEach(c=>{
+      if(!map[c.proveedorNombre])map[c.proveedorNombre]={litros:0,monto:0,compras:0};
+      map[c.proveedorNombre].litros+=litrosDeItem(c.cantidad,envaseMap[c.producto]);
+      map[c.proveedorNombre].monto+=c.monto||0;
+      map[c.proveedorNombre].compras+=1;
+    });
+    return Object.entries(map).map(([nombre,d])=>({nombre,...d})).sort((a,b)=>b[topCriterio]-a[topCriterio]).slice(0,8);
+  },[filtradas,envaseMap,topCriterio]);
+  const maxTopProveedor=Math.max(1,...topProveedores.map(p=>p[topCriterio]));
+
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <span className="bebas" style={{fontSize:30,color:CR}}>Compras</span>
+        <button onClick={exportCSV} style={{fontSize:14,padding:"6px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${BO}`,background:"none",color:MU}}>Exportar CSV</button>
+      </div>
+
+      {/* ── Filtros ── */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🔍 Filtrar compras</div>
+        <BotonesPeriodo actual={{desde:fDesde,hasta:fHasta}} onSelect={r=>{setFDesde(r.desde);setFHasta(r.hasta);}}/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
+          <div><Lbl t="Desde"/><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} max={fHasta||undefined}/></div>
+          <div><Lbl t="Hasta"/><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} min={fDesde||undefined}/></div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <Lbl t="Proveedor"/>
+          <select value={fProveedor} onChange={e=>setFProveedor(e.target.value)}>
+            <option value="">Todos los proveedores</option>
+            {proveedoresConCompras.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
+          <div><Lbl t="Producto"/>
+            <select value={fProducto} onChange={e=>setFProducto(e.target.value)}>
+              <option value="">Todos</option>
+              {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
+            </select>
+          </div>
+          <div><Lbl t="Envase"/>
+            <select value={fEnvase} onChange={e=>setFEnvase(e.target.value)}>
+              <option value="">Todos</option>
+              {envasesDisponibles.map(e=><option key={e} value={e}>{e}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
+          <div><Lbl t="Marca"/>
+            <select value={fMarca} onChange={e=>setFMarca(e.target.value)}>
+              <option value="">Todas</option>
+              {marcasDisponibles.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div><Lbl t="Estado"/>
+            <select value={fEstado} onChange={e=>setFEstado(e.target.value)}>
+              <option value="todos">Todos</option>
+              <option value="pagado">Pagado</option>
+              <option value="pendiente">Pendiente</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <Lbl t="Ordenar por"/>
+          <select value={fOrden} onChange={e=>setFOrden(e.target.value)}>
+            <option value="fecha-desc">Fecha (más reciente primero)</option>
+            <option value="fecha-asc">Fecha (más antigua primero)</option>
+            <option value="monto-desc">Monto (mayor a menor)</option>
+            <option value="monto-asc">Monto (menor a mayor)</option>
+            <option value="proveedor">Proveedor (A-Z)</option>
+          </select>
+        </div>
+        {hayFiltros&&(
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
+            <span style={{fontSize:13,color:MU}}>{filtradas.length} de {todasSinFiltro.length} compra{todasSinFiltro.length!==1?"s":""}</span>
+            <button onClick={limpiarFiltros} style={{fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar</button>
+          </div>
+        )}
+      </div>
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10,marginBottom:20}}>
+        {[{l:hayFiltros?"Facturado (filtro)":"Facturado total",v:fmtARS(totalARS)},{l:"Litros",v:`${litros} L`},{l:"Pendiente",v:fmtARS(pendiente)}].map(s=>(
+          <div key={s.l} style={{background:CA,border:`1px solid ${BO}`,borderRadius:16,padding:"12px 10px"}}>
+            <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>{s.l}</div>
+            <div className="bebas" style={{fontSize:19,color:CR}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Evolución mensual */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:12}}>📅 Compras por mes (gastado en $)</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:100}}>
+          {evolucionMensual.map(m=>(
+            <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+              <div style={{width:"100%",height:Math.max(3,(m.monto/maxMesMonto)*76),background:G,borderRadius:4}}/>
+              <span style={{fontSize:11,color:MU,textTransform:"capitalize"}}>{m.lbl}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Ranking por envase */}
+      {rankingEnvase.length>0&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+          <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:12}}>📦 Por envase</div>
+          {rankingEnvase.map(e=>(
+            <div key={e.envase} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
+                <span style={{color:CR,fontWeight:600}}>{e.envase}</span>
+                <span style={{color:MU}}>{Math.round(e.litros*10)/10}L · {fmtARS(e.monto)}</span>
+              </div>
+              <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${(e.litros/maxEnvase)*100}%`,height:"100%",background:ENVASE_COLOR[e.envase]||MU,borderRadius:4}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Ranking por marca */}
+      {rankingMarca.length>0&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+          <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:12}}>🏷 Por marca</div>
+          {rankingMarca.map(m=>(
+            <div key={m.marca} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
+                <span style={{color:CR,fontWeight:600}}>{m.marca}</span>
+                <span style={{color:MU}}>{Math.round(m.litros*10)/10}L · {fmtARS(m.monto)}</span>
+              </div>
+              <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${(m.litros/maxMarca)*100}%`,height:"100%",background:G,borderRadius:4}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Ranking por estilo */}
+      {rankingEstilo.length>0&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+          <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:12}}>🍺 Por estilo</div>
+          {rankingEstilo.map(e=>(
+            <div key={e.nombre} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
+                <span style={{color:CR,fontWeight:600}}>{e.nombre}</span>
+                <span style={{color:MU}}>{Math.round(e.litros*10)/10}L · {fmtARS(e.monto)}</span>
+              </div>
+              <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${(e.litros/maxEstilo)*100}%`,height:"100%",background:AM,borderRadius:4}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Top proveedores */}
+      {topProveedores.length>0&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <span style={{fontSize:16,fontWeight:700,color:CR}}>🏆 Proveedores</span>
+            <div style={{display:"flex",gap:4}}>
+              {[{k:"monto",l:"$"},{k:"litros",l:"L"}].map(o=>(
+                <button key={o.k} onClick={()=>setTopCriterio(o.k)} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,cursor:"pointer",border:`1px solid ${topCriterio===o.k?G:BO}`,background:topCriterio===o.k?G:"none",color:topCriterio===o.k?"#fff":MU}}>{o.l}</button>
+              ))}
+            </div>
+          </div>
+          {topProveedores.map(p=>(
+            <div key={p.nombre} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
+                <span style={{color:CR,fontWeight:600}}>{p.nombre}</span>
+                <span style={{color:MU}}>{topCriterio==="monto"?fmtARS(p.monto):`${Math.round(p.litros*10)/10}L`}</span>
+              </div>
+              <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${(p[topCriterio]/maxTopProveedor)*100}%`,height:"100%",background:G,borderRadius:4}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Listado */}
+      <div style={{fontSize:16,fontWeight:600,color:CR,marginBottom:10}}>Listado</div>
+      {filtradas.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{hayFiltros?"Ningún resultado con estos filtros.":"Sin compras registradas."}</p>:filtradas.map((c,i)=>{const p=prods.find(x=>x.id===c.producto);return(
+        <div key={c.id+i} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${c.pagado?BO:RE+"33"}`,borderRadius:18,padding:"12px 16px",marginBottom:8}}>
+          <div style={{width:36,height:36,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>{iniciales(c.proveedorNombre)}</div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.proveedorNombre}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{p?nombreProdEnvase(p):c.producto} · {fmtDate(c.fecha)}</div></div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</div>
+            <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:3,padding:"2px 8px",borderRadius:20,background:c.pagado?GLT:RE+"15"}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:c.pagado?G:RE}}/>
+              <span style={{fontSize:12,fontWeight:700,color:c.pagado?G:RE}}>{c.cantidad}{p&&p.envase==="Lata"?"u":"L"} · {c.pagado?"Pagado":"Pendiente"}</span>
+            </div>
+          </div>
+        </div>
+      );})}
+    </div>
+  );
+}
+
+// ── RENTABILIDAD (compra vs. venta, por producto) ───────────────────
+// Compara el costo promedio pagado a proveedores por litro/unidad contra el precio promedio
+// cobrado a clientes, para estimar el margen. Es un promedio histórico acumulado (no rastrea
+// lotes específicos de stock), así que es una estimación — se aclara en la propia pantalla.
+function Rentabilidad({clientes,proveedores,prods}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const ventasTodas=useMemo(()=>(clientes||[]).flatMap(c=>(c.ventas||[])),[clientes]);
+  const comprasTodas=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[])),[proveedores]);
+
+  const porProducto=useMemo(()=>{
+    const map={};
+    prods.forEach(p=>{map[p.id]={id:p.id,nombre:p.nombre,envase:p.envase||"PET",marca:p.marca,litrosVendidos:0,montoVendido:0,litrosComprados:0,montoComprado:0};});
+    ventasTodas.forEach(v=>{if(!map[v.producto])return;map[v.producto].litrosVendidos+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[v.producto].montoVendido+=v.monto||0;});
+    comprasTodas.forEach(c=>{if(!map[c.producto])return;map[c.producto].litrosComprados+=litrosDeItem(c.cantidad,envaseMap[c.producto]);map[c.producto].montoComprado+=c.monto||0;});
+    return Object.values(map).map(p=>{
+      const costoPorL=p.litrosComprados>0?p.montoComprado/p.litrosComprados:null;
+      const ventaPorL=p.litrosVendidos>0?p.montoVendido/p.litrosVendidos:null;
+      const margenPct=(costoPorL!=null&&ventaPorL!=null&&ventaPorL>0)?Math.round(((ventaPorL-costoPorL)/ventaPorL)*1000)/10:null;
+      const gananciaPorL=(costoPorL!=null&&ventaPorL!=null)?ventaPorL-costoPorL:null;
+      const gananciaEstimada=gananciaPorL!=null?Math.round(gananciaPorL*p.litrosVendidos):null;
+      return{...p,costoPorL,ventaPorL,margenPct,gananciaPorL,gananciaEstimada};
+    }).filter(p=>p.litrosVendidos>0||p.litrosComprados>0).sort((a,b)=>(b.margenPct??-999)-(a.margenPct??-999));
+  },[ventasTodas,comprasTodas,prods,envaseMap]);
+
+  const totales=useMemo(()=>{
+    const montoVendido=ventasTodas.reduce((s,v)=>s+(v.monto||0),0);
+    const montoComprado=comprasTodas.reduce((s,c)=>s+(c.monto||0),0);
+    const gananciaBruta=montoVendido-montoComprado;
+    const margenGlobal=montoVendido>0?Math.round((gananciaBruta/montoVendido)*1000)/10:null;
+    return{montoVendido,montoComprado,gananciaBruta,margenGlobal};
+  },[ventasTodas,comprasTodas]);
+
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{marginBottom:16}}>
+        <span className="bebas" style={{fontSize:30,color:CR,display:"block"}}>Rentabilidad</span>
+        <p style={{fontSize:14,color:MU}}>Lo que pagás a proveedores vs. lo que cobrás a clientes, por producto</p>
+      </div>
+
+      <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:16,fontSize:13,color:MU,lineHeight:1.4}}>
+        ℹ️ Es un promedio histórico acumulado (todo lo comprado vs. todo lo vendido de cada producto), no un seguimiento de lotes puntuales de stock. Sirve como estimación, no como contabilidad exacta.
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
+        {[
+          {l:"Total vendido",v:fmtARS(totales.montoVendido)},
+          {l:"Total comprado",v:fmtARS(totales.montoComprado)},
+          {l:"Ganancia bruta",v:fmtARS(totales.gananciaBruta)},
+          {l:"Margen global",v:totales.margenGlobal!=null?`${totales.margenGlobal}%`:"—"},
+        ].map(s=>(
+          <div key={s.l} style={{background:CA,border:`1px solid ${BO}`,borderRadius:16,padding:"12px 10px"}}>
+            <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>{s.l}</div>
+            <div className="bebas" style={{fontSize:19,color:CR}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{fontSize:16,fontWeight:600,color:CR,marginBottom:10}}>Por producto</div>
+      {porProducto.length===0?(
+        <p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Todavía no hay compras y ventas registradas para comparar.</p>
+      ):porProducto.map(p=>{
+        const u=p.envase==="Lata"?"u":"L";
+        const sinDatos=p.costoPorL==null||p.ventaPorL==null;
+        return(
+          <div key={p.id} style={{background:CA,border:`1px solid ${p.margenPct!=null&&p.margenPct<0?RE+"55":BO}`,borderRadius:14,padding:14,marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:700,color:CR}}>{p.nombre}</div>
+                <div style={{fontSize:12,color:MU}}>{p.marca?`${p.marca} · `:""}{p.envase}</div>
+              </div>
+              {p.margenPct!=null?(
+                <span style={{fontSize:15,fontWeight:700,color:p.margenPct<0?RE:G,whiteSpace:"nowrap"}}>{p.margenPct>0?"+":""}{p.margenPct}%</span>
+              ):(
+                <span style={{fontSize:13,fontWeight:700,color:MU,whiteSpace:"nowrap"}}>Sin datos</span>
+              )}
+            </div>
+            {sinDatos?(
+              <div style={{fontSize:13,color:MU}}>
+                {p.litrosComprados===0&&p.litrosVendidos===0?"Sin compras ni ventas registradas.":p.litrosComprados===0?"Falta registrar compras de este producto para calcular el costo.":"Falta registrar ventas de este producto para calcular el margen."}
+              </div>
+            ):(
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Costo prom./{u}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.costoPorL))}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Venta prom./{u}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.ventaPorL))}</div>
+                  </div>
+                </div>
+                <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden",marginBottom:8}}>
+                  <div style={{width:`${Math.min(100,Math.max(0,Math.round((p.costoPorL/p.ventaPorL)*100)))}%`,height:"100%",background:p.margenPct<0?RE:G,borderRadius:4}}/>
+                </div>
+                <div style={{fontSize:13,color:MU}}>Ganancia por {u}: <strong style={{color:p.gananciaPorL<0?RE:G}}>{fmtARS(Math.round(p.gananciaPorL))}</strong> · Ganancia estimada sobre lo vendido: <strong style={{color:p.gananciaEstimada<0?RE:G}}>{fmtARS(p.gananciaEstimada)}</strong></div>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── MÉTRICAS ──────────────────────────────────────────────────────
+function Metricas({clientes,prods,pedidos}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
 
   // ── Filtro de período (afecta los rankings de más abajo, no la evolución mensual fija) ──
   const[pDesde,setPDesde]=useState("");
@@ -4804,6 +5804,24 @@ function Metricas({clientes,prods}){
     return arr.slice(0,8);
   },[todas,envaseMap,topCriterio,topOrden]);
   const maxFacturacion=Math.max(1,...topClientesFacturacion.map(c=>c[topCriterio]));
+
+  // Descuentos y bonificaciones (el rango de fechas y el envase filtran el resumen y el ranking; la evolución mensual es fija, como las demás)
+  const ctxDesc=useMemo(()=>ctxDescuentos(prods,pedidos),[prods,pedidos]);
+  const itemsDescTodos=useMemo(()=>todasSinFiltro.map(v=>({v,d:desgloseVenta(v,v.clienteId,ctxDesc)})),[todasSinFiltro,ctxDesc]);
+  const itemsDesc=useMemo(()=>!hayFiltroPeriodo?itemsDescTodos:itemsDescTodos.filter(({v})=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)),[itemsDescTodos,pDesde,pHasta,pEnvase,envaseMap,hayFiltroPeriodo]);
+  const resDesc=useMemo(()=>resumenDescuentos(itemsDesc),[itemsDesc]);
+  const descMensual=useMemo(()=>serieMensualDescuentos(itemsDescTodos,6),[itemsDescTodos]);
+  const maxPctMes=Math.max(1,...descMensual.map(m=>m.pct));
+  const[descCriterio,setDescCriterio]=useState("monto"); // "monto" | "pct"
+  const rankingDesc=useMemo(()=>{
+    const map={};
+    itemsDesc.forEach(it=>{const k=it.v.clienteNombre;(map[k]=map[k]||[]).push(it);});
+    const arr=Object.entries(map).map(([nombre,its])=>({nombre,...resumenDescuentos(its)})).filter(c=>c.beneficio>0);
+    arr.sort((a,b)=>descCriterio==="pct"?b.pct-a.pct:b.beneficio-a.beneficio);
+    return arr.slice(0,8);
+  },[itemsDesc,descCriterio]);
+  const maxRankMonto=Math.max(1,...rankingDesc.map(c=>c.beneficio));
+  const maxRankPct=Math.max(1,...rankingDesc.map(c=>c.pct));
 
   // Litros por estilo — para un cliente puntual (respeta el filtro de período)
   const clientesConVentasNombres=useMemo(()=>[...new Set(todasSinFiltro.map(v=>v.clienteNombre))].sort((a,b)=>a.localeCompare(b)),[todasSinFiltro]);
@@ -5010,6 +6028,93 @@ function Metricas({clientes,prods}){
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Descuentos y bonificaciones — resumen, evolución mensual y ranking por cliente */}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>🏷️ Descuentos y bonificaciones{hayFiltroPeriodo?" (período)":""}</div>
+        <div style={{fontSize:13,color:MU,marginBottom:12,lineHeight:1.4}}>Se mide contra la venta a lista: lo que se habría facturado sin descuentos ni bonificaciones.</div>
+        {resDesc.ventas===0?(
+          <p style={{fontSize:15,color:MU,textAlign:"center",padding:"8px 0"}}>Sin ventas en el período.</p>
+        ):(
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:12}}>
+              <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:12}}>
+                <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Venta a lista</div>
+                <div className="bebas" style={{fontSize:20,color:CR}}>{fmtARS(Math.round(resDesc.bruto))}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>Neto facturado {fmtARS(Math.round(resDesc.neto))}</div>
+              </div>
+              <div style={{background:BG,border:`1px solid ${RE}22`,borderRadius:14,padding:12}}>
+                <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Descontado</div>
+                <div className="bebas" style={{fontSize:20,color:resDesc.descuento>0?"#C24545":CR}}>{resDesc.descuento>0?`−${fmtARS(Math.round(resDesc.descuento))}`:"—"}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>{fmtPct(resDesc.pctDescuento)} de lo facturado a lista</div>
+              </div>
+              <div style={{background:BG,border:`1px solid ${AM}33`,borderRadius:14,padding:12}}>
+                <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Bonificado</div>
+                <div className="bebas" style={{fontSize:20,color:resDesc.bono>0?"#B7691F":CR}}>{resDesc.bono>0?fmtARS(Math.round(resDesc.bono)):"—"}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>{Math.round(resDesc.litrosBono*10)/10} L regalados{resDesc.estimado?"*":""}</div>
+              </div>
+              <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:12}}>
+                <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Beneficio total</div>
+                <div className="bebas" style={{fontSize:20,color:CR}}>{fmtPct(resDesc.pct)}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>{resDesc.conBeneficio} de {resDesc.ventas} venta{resDesc.ventas!==1?"s":""} · prom. {resDesc.conBeneficio>0?fmtARS(Math.round(resDesc.promPorVentaConBeneficio)):"—"}</div>
+              </div>
+            </div>
+            {resDesc.litrosPagos>0&&(
+              <div style={{fontSize:13,color:MU,marginBottom:16,lineHeight:1.45}}>
+                💲 Precio promedio por litro: lista <b style={{color:CR}}>{fmtARS(Math.round(resDesc.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS(Math.round(resDesc.precioLitroReal))}</b>
+                {resDesc.precioLitroLista>resDesc.precioLitroReal?<> (−{fmtARS(Math.round(resDesc.precioLitroLista-resDesc.precioLitroReal))}/L)</>:null}
+              </div>
+            )}
+
+            <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Evolución mensual · % sobre venta a lista</div>
+            <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90,marginBottom:10}}>
+              {descMensual.map((m,i)=>(
+                <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
+                  <div title={`${m.lbl}: ${fmtPct(m.pct)} · ${fmtARS(Math.round(m.beneficio))}`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.pct/maxPctMes)*68))}px`,borderRadius:6,background:i===descMensual.length-1?AM:AM+"44",transition:"height 0.3s"}}/>
+                  <span style={{fontSize:11,fontWeight:i===descMensual.length-1?700:500,color:i===descMensual.length-1?AM:MU,textTransform:"capitalize"}}>{m.lbl}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+              <div style={{display:"grid",gridTemplateColumns:"0.8fr 1.2fr 1fr 1fr 0.8fr",gap:6,padding:"6px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase"}}>
+                <span>Mes</span><span style={{textAlign:"right"}}>A lista</span><span style={{textAlign:"right"}}>Desc.</span><span style={{textAlign:"right"}}>Bonif.</span><span style={{textAlign:"right"}}>%</span>
+              </div>
+              {descMensual.map(m=>(
+                <div key={m.key} style={{display:"grid",gridTemplateColumns:"0.8fr 1.2fr 1fr 1fr 0.8fr",gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:12,color:CR}}>
+                  <span style={{textTransform:"capitalize"}}>{m.lbl}</span>
+                  <span style={{textAlign:"right"}}>{m.ventas?fmtARS(Math.round(m.bruto)):"—"}</span>
+                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS(Math.round(m.descuento))}`:"—"}</span>
+                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS(Math.round(m.bono)):"—"}</span>
+                  <span style={{textAlign:"right",fontWeight:700}}>{m.ventas?fmtPct(m.pct):"—"}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:6}}>
+              <span style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Clientes con más beneficios</span>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setDescCriterio("monto")} style={{fontSize:12,fontWeight:700,color:descCriterio==="monto"?G:MU,background:descCriterio==="monto"?GLT:BG,border:descCriterio==="monto"?"none":`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>Por $</button>
+                <button onClick={()=>setDescCriterio("pct")} style={{fontSize:12,fontWeight:700,color:descCriterio==="pct"?G:MU,background:descCriterio==="pct"?GLT:BG,border:descCriterio==="pct"?"none":`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>Por %</button>
+              </div>
+            </div>
+            {rankingDesc.length===0?(
+              <p style={{fontSize:14,color:MU,textAlign:"center",padding:"10px 0"}}>Sin descuentos ni bonificaciones en el período.</p>
+            ):rankingDesc.map(c=>(
+              <div key={c.nombre} style={{padding:"9px 0",borderTop:`1px solid ${BO}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline"}}>
+                  <span style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:"#B7691F",flexShrink:0}}>−{fmtARS(Math.round(c.beneficio))} · {fmtPct(c.pct)}</span>
+                </div>
+                <div style={{height:5,borderRadius:3,background:BG,margin:"5px 0 3px",overflow:"hidden"}}>
+                  <div style={{width:`${Math.min(100,Math.round((descCriterio==="pct"?c.pct/maxRankPct:c.beneficio/maxRankMonto)*100))}%`,height:"100%",background:AM,borderRadius:3}}/>
+                </div>
+                <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Desc. {fmtARS(Math.round(c.descuento))} · Bonif. {fmtARS(Math.round(c.bono))}{c.litrosBono>0?` (${Math.round(c.litrosBono*10)/10} L)`:""} · {c.conBeneficio} de {c.ventas} venta{c.ventas!==1?"s":""} · lista {fmtARS(Math.round(c.bruto))}</div>
+              </div>
+            ))}
+            {resDesc.estimado&&<div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.4}}>* Las bonificaciones anteriores al registro detallado se valúan al precio de lista actual.</div>}
+          </>
+        )}
       </div>
 
       {/* Top clientes — ordenable por facturación o litros, mayor→menor o menor→mayor */}
@@ -5378,7 +6483,7 @@ function Notas({notas,setNotas,cal}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -5460,7 +6565,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   const exportarTodo=async()=>{
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
-      clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,
+      clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,
       config:{metaSemanal,diasMora,promo51,envasesExtra}
     },null,2);
     const fileName=`backup_nomades_${hoyISO()}.json`;
@@ -5505,6 +6610,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           data.notas?`${data.notas.length} notas`:null,
           data.gastos?`${data.gastos.length} gastos`:null,
           data.comisiones?`${data.comisiones.length} liquidaciones de comisión`:null,
+          data.proveedores?`${data.proveedores.length} proveedores`:null,
         ].filter(Boolean).join(", ");
         if(!confirm(`Este backup tiene: ${resumen||"(sin datos reconocibles)"}.\n\nEsto va a REEMPLAZAR todos los datos actuales de la app en este dispositivo (y se sincroniza a la nube). Esta acción no se puede deshacer.\n\n¿Continuar?`))return;
         if(Array.isArray(data.clientes))setClientes(data.clientes);
@@ -5515,6 +6621,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         if(setNotas&&Array.isArray(data.notas))setNotas(data.notas);
         if(setGastos&&Array.isArray(data.gastos))setGastos(data.gastos);
         if(setComisiones&&Array.isArray(data.comisiones))setComisiones(data.comisiones);
+        if(setProveedores&&Array.isArray(data.proveedores))setProveedores(data.proveedores);
         if(data.config){
           if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
           if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
@@ -5821,19 +6928,20 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
-  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","config"];
+  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,config:{metaSemanal,diasMora,promo51,envasesExtra}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
     notas:d=>{if(Array.isArray(d))setNotas(d);},
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
+    proveedores:d=>{if(Array.isArray(d))setProveedores(d);},
     config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);},
   });
   const lastSyncRef=React.useRef({});
@@ -5962,6 +7070,168 @@ function SyncBadge({status,errorMsg}){
 }
  
 // ── APP ───────────────────────────────────────────────────────────
+// ── Stock ──────────────────────────────────────────────────────────
+// Cantidad disponible por producto, comparada contra lo que ya está comprometido
+// en pedidos pendientes (aún no entregados): te dice qué te falta reponer o cuánto te sobra.
+function Stock({prods,setProds,pedidos}){
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const unidadDe=id=>envaseMap[id]==="Lata"?"u":"L";
+  const[busqueda,setBusqueda]=useState("");
+  const[soloFaltantes,setSoloFaltantes]=useState(false);
+  const[filtroEnvase,setFiltroEnvase]=useState("");
+  const[filtroEstilo,setFiltroEstilo]=useState("");
+
+  const envasesDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.envase||"PET"))].sort(),[prods]);
+  // Cada producto es, en los hechos, un estilo propio (p.ej. "Grunge Honey", "Grunge Light Lager")
+  const estilosDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[prods]);
+
+  // Suma de cantidades pedidas por producto en pedidos todavía no entregados
+  const pedidoPendientePorProd=useMemo(()=>{
+    const m={};
+    (pedidos||[]).filter(p=>p.estado==="pendiente").forEach(p=>{
+      (p.lineas||[]).forEach(l=>{
+        if(!l.productoId)return;
+        m[l.productoId]=(m[l.productoId]||0)+(Number(l.cantidad)||0);
+      });
+    });
+    return m;
+  },[pedidos]);
+
+  // Orden por defecto: de mayor a menor stock. El input de cada fila confirma el valor recién al
+  // perder el foco (ver FilaStock más abajo), así que escribir no reordena la lista en cada tecla.
+  const filas=useMemo(()=>prods.map(p=>{
+    const stock=Number(p.stock)||0;
+    const pedido=pedidoPendientePorProd[p.id]||0;
+    return{prod:p,stock,pedido,resultado:stock-pedido};
+  }).sort((a,b)=>b.stock-a.stock||(a.prod.nombre||"").localeCompare(b.prod.nombre||"")),[prods,pedidoPendientePorProd]);
+
+  const filasFiltradas=useMemo(()=>{
+    const q=busqueda.trim().toLowerCase();
+    return filas.filter(f=>{
+      if(soloFaltantes&&f.resultado>=0)return false;
+      if(filtroEnvase&&(f.prod.envase||"PET")!==filtroEnvase)return false;
+      if(filtroEstilo&&f.prod.nombre!==filtroEstilo)return false;
+      if(q&&!`${f.prod.nombre||""} ${f.prod.marca||""}`.toLowerCase().includes(q))return false;
+      return true;
+    });
+  },[filas,busqueda,soloFaltantes,filtroEnvase,filtroEstilo]);
+
+  const hayFiltrosActivos=!!busqueda||soloFaltantes||!!filtroEnvase||!!filtroEstilo;
+  const limpiarFiltros=()=>{setBusqueda("");setSoloFaltantes(false);setFiltroEnvase("");setFiltroEstilo("");};
+
+  const faltantes=filas.filter(f=>f.resultado<0);
+
+  const actualizarStock=(id,valor)=>{
+    const limpio=valor===""?"":Math.max(0,Number(valor)||0);
+    setProds(prev=>prev.map(p=>p.id===id?{...p,stock:limpio}:p));
+  };
+  const ajustarStock=(id,delta)=>{
+    setProds(prev=>prev.map(p=>p.id===id?{...p,stock:Math.max(0,(Number(p.stock)||0)+delta)}:p));
+  };
+
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{marginBottom:16}}>
+        <span className="bebas" style={{fontSize:30,color:CR,display:"block"}}>Stock</span>
+        <p style={{fontSize:14,color:MU}}>Lo que tenés a mano vs. lo que ya está comprometido en pedidos pendientes</p>
+      </div>
+
+      {faltantes.length>0?(
+        <div style={{background:"#FDEDED",border:`1px solid ${RE}44`,borderRadius:14,padding:14,marginBottom:16}}>
+          <div style={{fontSize:15,fontWeight:700,color:RE,marginBottom:2}}>⚠️ {faltantes.length} producto{faltantes.length>1?"s":""} con faltante</div>
+          <div style={{fontSize:13,color:MU}}>Te falta reponer para cubrir los pedidos pendientes. Mirá el detalle abajo.</div>
+        </div>
+      ):(
+        <div style={{background:GLT,border:`1px solid ${G}33`,borderRadius:14,padding:14,marginBottom:16}}>
+          <div style={{fontSize:15,fontWeight:700,color:GDK}}>✓ Stock cubre todos los pedidos pendientes</div>
+        </div>
+      )}
+
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+        <input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="🔎 Buscar producto o marca..." style={{marginBottom:10}}/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
+          <div>
+            <Lbl t="Envase"/>
+            <select value={filtroEnvase} onChange={e=>setFiltroEnvase(e.target.value)}>
+              <option value="">Todos</option>
+              {envasesDisponibles.map(env=><option key={env} value={env}>{env}</option>)}
+            </select>
+          </div>
+          <div>
+            <Lbl t="Estilo"/>
+            <select value={filtroEstilo} onChange={e=>setFiltroEstilo(e.target.value)}>
+              <option value="">Todos</option>
+              {estilosDisponibles.map(es=><option key={es} value={es}>{es}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,color:MU,cursor:"pointer"}}>
+            <input type="checkbox" checked={soloFaltantes} onChange={e=>setSoloFaltantes(e.target.checked)} style={{width:16,height:16}}/>
+            Solo lo que falta reponer
+          </label>
+          {hayFiltrosActivos&&<button onClick={limpiarFiltros} style={{fontSize:13,fontWeight:700,color:MU,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Limpiar filtros</button>}
+        </div>
+      </div>
+
+      {filasFiltradas.length===0&&(
+        <div style={{textAlign:"center",padding:"40px 0",color:MU,fontSize:14}}>
+          {prods.length===0?"Todavía no cargaste productos.":"No hay productos que coincidan con la búsqueda."}
+        </div>
+      )}
+
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {filasFiltradas.map(({prod,stock,pedido,resultado})=>(
+          <FilaStock key={prod.id} prod={prod} pedido={pedido} resultado={resultado} unidad={unidadDe(prod.id)} onCommit={actualizarStock} onAjustar={ajustarStock}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Fila de Stock con estado local propio: el valor tipeado solo se confirma (y por lo tanto solo
+// reordena la lista por mayor-a-menor-stock) al perder el foco, no en cada tecla.
+function FilaStock({prod,pedido,resultado,unidad,onCommit,onAjustar}){
+  const[valor,setValor]=useState(String(prod.stock??""));
+  const[enFoco,setEnFoco]=useState(false);
+  useEffect(()=>{if(!enFoco)setValor(String(prod.stock??""));},[prod.stock,enFoco]);
+  return(
+    <div style={{background:CA,border:`1px solid ${resultado<0?RE+"55":BO}`,borderRadius:14,padding:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:15,fontWeight:700,color:CR}}>{prod.nombre}</div>
+          <div style={{fontSize:12,color:MU}}>{prod.marca?`${prod.marca} · `:""}{prod.envase||"PET"}</div>
+        </div>
+        {resultado<0?(
+          <span style={{fontSize:13,fontWeight:700,color:RE,whiteSpace:"nowrap"}}>Faltan {Math.abs(resultado)}{unidad}</span>
+        ):resultado>0?(
+          <span style={{fontSize:13,fontWeight:700,color:G,whiteSpace:"nowrap"}}>Sobran {resultado}{unidad}</span>
+        ):(
+          <span style={{fontSize:13,fontWeight:700,color:MU,whiteSpace:"nowrap"}}>Justo</span>
+        )}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:12,alignItems:"center"}}>
+        <div>
+          <Lbl t={`Stock actual (${unidad})`}/>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button onClick={()=>onAjustar(prod.id,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer"}}>−</button>
+            <input type="number" inputMode="numeric" value={valor}
+              onFocus={()=>setEnFoco(true)}
+              onChange={e=>setValor(e.target.value)}
+              onBlur={()=>{setEnFoco(false);onCommit(prod.id,valor);}}
+              placeholder="0" style={{textAlign:"center"}}/>
+            <button onClick={()=>onAjustar(prod.id,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer"}}>+</button>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <Lbl t="Pedidos pend."/>
+          <div style={{fontSize:16,fontWeight:700,color:CR}}>{pedido}{unidad}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TABS=[
   {key:"inicio",label:"Inicio",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>},
   {key:"clientes",label:"Clientes",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>},
@@ -5978,6 +7248,10 @@ const TABS=[
   {key:"metricas",label:"Métricas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
   {key:"gastos",label:"Gastos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M14.5 9.5a2.5 2.5 0 00-2.5-1.5h-.5a2 2 0 000 4h1a2 2 0 010 4h-.5a2.5 2.5 0 01-2.5-1.5"/><line x1="12" y1="6" x2="12" y2="18"/></svg>},
   {key:"productos",label:"Productos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>},
+  {key:"stock",label:"Stock",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 3h18v4H3z"/><path d="M5 7v13a1 1 0 001 1h12a1 1 0 001-1V7"/><line x1="10" y1="12" x2="14" y2="12"/></svg>},
+  {key:"proveedores",label:"Proveedores",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>},
+  {key:"compras",label:"Compras",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>},
+  {key:"rentabilidad",label:"Rentabilidad",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="8" y1="16" x2="16" y2="8"/><circle cx="8.5" cy="8.5" r="0.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="0.5" fill="currentColor"/></svg>},
   {key:"config",label:"Config",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>},
 ];
 const MAIN_TAB_KEYS=["inicio","pedidos","clientes","caja"];
@@ -6107,6 +7381,7 @@ function App(){
   const[gastos,setGastos]=useState([]);
   const[comisiones,setComisiones]=useState([]);
   const[envasesExtra,setEnvasesExtra]=useState([]);
+  const[proveedores,setProveedores]=useState([]);
   const mostrarBadgeCaja=useMemo(()=>{
     const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:Number(c.comisionPctDefault)||0})));
     const gananciaCobrada=todasV.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
@@ -6158,7 +7433,8 @@ function App(){
     metaSemanal,setMetaSemanal,
     diasMora,setDiasMora,
     promo51,setPromo51,
-    envasesExtra,setEnvasesExtra
+    envasesExtra,setEnvasesExtra,
+    proveedores,setProveedores
   );
  
   const convertir=p=>{
@@ -6204,18 +7480,22 @@ function App(){
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
-          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora}/>}
+          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora} prods={prods} pedidos={pedidos}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="notas"&&<Notas notas={notas} setNotas={setNotas} cal={cal}/>}
           {tab==="difusion"&&<EnvioMasivo clientes={clientes} speeches={speeches}/>}
           {tab==="asistente"&&<AsistenteIA clientes={clientes} pedidos={pedidos} prods={prods}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
-          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones}/>}
-          {tab==="metricas"&&<Metricas clientes={clientes} prods={prods}/>}
+          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos}/>}
+          {tab==="metricas"&&<Metricas clientes={clientes} prods={prods} pedidos={pedidos}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra}/>}
+          {tab==="stock"&&<Stock prods={prods} setProds={setProds} pedidos={pedidos}/>}
+          {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds}/>}
+          {tab==="compras"&&<Compras proveedores={proveedores} prods={prods}/>}
+          {tab==="rentabilidad"&&<Rentabilidad clientes={clientes} proveedores={proveedores} prods={prods}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores}/>}
         </main>
       </div>
     </div>
