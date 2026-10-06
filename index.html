@@ -2927,6 +2927,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
   const[cForm,setCForm]=useState(false);
   const[edit,setEdit]=useState(false);
   const[editandoCompraId,setEditandoCompraId]=useState(null);
+  const[borrandoCompraId,setBorrandoCompraId]=useState(null);
   const[confirmBorrar,setConfirmBorrar]=useState(false);
   const total=(proveedor.compras||[]).reduce((s,c)=>s+c.monto,0);
   const sorted=[...(proveedor.compras||[])].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
@@ -2951,6 +2952,13 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
       return p;
     }));
     setEditandoCompraId(null);
+  };
+
+  // Eliminar compra: saca el movimiento de la cuenta corriente Y revierte la cantidad que había sumado al stock.
+  const eliminarCompra=compra=>{
+    onUpdate({...proveedor,compras:proveedor.compras.filter(c=>c.id!==compra.id)});
+    setProds(prev=>prev.map(p=>p.id===compra.producto?{...p,stock:Math.max(0,(Number(p.stock)||0)-Number(compra.cantidad))}:p));
+    setBorrandoCompraId(null);
   };
 
   return(
@@ -2989,15 +2997,17 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
             <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):c.producto}</div>
             <div style={{fontSize:13,color:MU}}>{fmtDate(c.fecha)}</div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:2}}>
             <div style={{textAlign:"right"}}>
               <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</div>
               <div style={{fontSize:13,color:c.pagado?GR:"#E08070"}}>{c.cantidad}{p&&p.envase==="Lata"?"u":"L"} · {c.pagado?"Pagado":"Pendiente"}</div>
             </div>
             <button onClick={()=>setEditandoCompraId(c.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
+            <button onClick={()=>setBorrandoCompraId(c.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
           </div>
         </div>
       );})}
+      <ModalConfirmar open={!!borrandoCompraId} onClose={()=>setBorrandoCompraId(null)} onConfirmar={()=>eliminarCompra(proveedor.compras.find(c=>c.id===borrandoCompraId))} titulo="¿Eliminar esta compra?" mensaje="Se quita de la cuenta corriente y se revierte la cantidad que había sumado al stock. Esta acción no se puede deshacer." labelConfirmar="Sí, eliminar"/>
     </div>
   );
 }
