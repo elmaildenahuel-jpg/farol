@@ -101,6 +101,11 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
+// Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
+const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
+const SIN_CATEGORIA="Sin categoría";
+const categoriaDe=p=>((p&&p.categoria)||"").trim()||SIN_CATEGORIA;
+const categoriaMapDe=prods=>{const m={};(prods||[]).forEach(p=>{m[p.id]=categoriaDe(p);});return m;};
 const PEST={"Por contactar":MU,"Contactado":AM,"En negociación":GR,"Descartado":RE};
 const PEDIDO_ESTADOS={pendiente:{label:"Pendiente",color:AM},entregado:{label:"Entregado",color:GR},cancelado:{label:"Cancelado",color:RE}};
 const NOTE_COLORS=[
@@ -661,8 +666,9 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
   [cliente.direccion,[cliente.rubro,cliente.zona].filter(Boolean).join(" · "),cliente.telefono?`Tel: ${cliente.telefono}`:""].filter(Boolean).forEach(t=>{doc.text(t,marginX,y);y+=5;});
 
   const ventas=[...(cliente.ventas||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||String(a.id).localeCompare(String(b.id)));
-  const totalFacturado=ventas.reduce((s,v)=>s+(v.monto||0),0);
-  const totalCobrado=ventas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0);
+  const saldosAnt=[...(cliente.saldosAnteriores||[])].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const totalFacturado=ventas.reduce((s,v)=>s+(v.monto||0),0)+saldosAnt.reduce((s,x)=>s+(Number(x.monto)||0),0);
+  const totalCobrado=ventas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0)+saldosAnt.filter(x=>x.pagado).reduce((s,x)=>s+(Number(x.monto)||0),0);
   const saldoActual=totalFacturado-totalCobrado;
 
   // Resumen (3 recuadros)
@@ -697,6 +703,10 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
       movs.push({id:v.id+"-p",orden:1,fecha:v.fechaCobro||v.fecha,tipo:"pago",medioPago:v.medioPago,monto:v.monto||0});
     }
   });
+  saldosAnt.forEach(x=>{
+    movs.push({id:x.id+"-v",orden:0,fecha:x.fecha,tipo:"venta",saldoAnterior:true,descripcion:x.descripcion||"",monto:Number(x.monto)||0});
+    if(x.pagado)movs.push({id:x.id+"-p",orden:1,fecha:x.fechaCobro||x.fecha,tipo:"pago",medioPago:x.medioPago,monto:Number(x.monto)||0});
+  });
   movs.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
 
   asegurarEspacio(12);
@@ -730,10 +740,12 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
     saldoAcum+=m.tipo==="venta"?m.monto:-m.monto;
     doc.setFontSize(8.3);
     if(m.tipo==="venta"){
-      const cantTxt=`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
+      const cantTxt=m.saldoAnterior?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
       doc.setTextColor(60,60,60);
       doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
-      doc.text(nombreDeProd(m.producto),colX.prod+1,y,{maxWidth:54});
+      let prodTxt=m.saldoAnterior?`Saldo anterior${m.descripcion?" · "+m.descripcion:""}`:nombreDeProd(m.producto);
+      if(m.saldoAnterior){const ls=doc.splitTextToSize(prodTxt,54);prodTxt=ls.length>1?ls[0].replace(/\s+$/,"").slice(0,-1)+"…":ls[0];}
+      doc.text(prodTxt,colX.prod+1,y,{maxWidth:54});
       doc.text(cantTxt,colX.monto-4,y,{align:"right"});
       doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }else{
@@ -756,6 +768,33 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
     doc.setTextColor(120,120,120);
     doc.text("Sin movimientos registrados.",marginX,y);
     y+=6;
+  }
+
+  // Detalle completo de los saldos anteriores (en el libro de movimientos la descripción va recortada)
+  if(saldosAnt.some(x=>x.descripcion)){
+    y+=6;
+    asegurarEspacio(14);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(26,26,26);
+    doc.text("Detalle de saldos anteriores",marginX,y);
+    y+=6;
+    saldosAnt.filter(x=>x.descripcion).forEach(x=>{
+      doc.setFont("helvetica","normal");
+      doc.setFontSize(8.3);
+      const ls=doc.splitTextToSize(x.descripcion,pageW-marginX*2-4);
+      asegurarEspacio(6+ls.length*4.2);
+      doc.setFont("helvetica","bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(60,60,60);
+      doc.text(`${fmtDateCorta(x.fecha)} · ${fmtARS(Number(x.monto)||0)}${x.pagado?" (cobrado)":""}`,marginX,y);
+      y+=4.4;
+      doc.setFont("helvetica","normal");
+      doc.setFontSize(8.3);
+      doc.setTextColor(100,100,100);
+      ls.forEach(l=>{doc.text(l,marginX+2,y);y+=4.2;});
+      y+=1.5;
+    });
   }
 
   // Promos y descuentos aplicados
@@ -1517,12 +1556,12 @@ function PromoDetalleLista({detalle,onQuitar}){
 const waLink=(tel,txt)=>{const n=(tel||"").replace(/\D/g,"");return n?`https://wa.me/${n}?text=${encodeURIComponent(txt)}`:null;};
 // Arma el mensaje de recordatorio de deuda para un cliente, mencionando la venta más antigua vencida si corresponde.
 function mensajeRecordatorioDeuda(cliente,saldo,diasMora){
-  const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const pendientes=[...(cliente.ventas||[]).filter(v=>!v.pagado),...saldosPendientes(cliente)].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   const masAntigua=pendientes[0];
   const dias=masAntigua?daysSince(masAntigua.fecha):0;
   const vencida=masAntigua&&dias>=diasMora;
   let msg=`Hola ${cliente.nombre}! 👋 Te escribo de Distribuidora Nómades para recordarte que tenés un saldo pendiente de ${fmtARS(saldo)}.`;
-  if(vencida)msg+=` Corresponde a una entrega del ${fmtDate(masAntigua.fecha)} (hace ${dias} días).`;
+  if(vencida)msg+=` Corresponde a ${masAntigua.cantidad===undefined?"un saldo anterior":"una entrega"} del ${fmtDate(masAntigua.fecha)} (hace ${dias} días).`;
   msg+=` Cualquier duda me avisás. ¡Gracias! 🍺`;
   return msg;
 }
@@ -1560,7 +1599,28 @@ const reproducirBeep=()=>{
 };
  
 // ── Cuenta corriente ──────────────────────────────────────────────
-function saldoCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
+// Saldos anteriores: deudas cargadas a mano (por ejemplo, de otro sistema). Se suman a la cuenta corriente pero viven aparte de las
+// ventas/compras, así no se mezclan con métricas, comisiones ni rentabilidad.
+const saldosPendientes=e=>((e&&e.saldosAnteriores)||[]).filter(x=>!x.pagado);
+const totalSaldosPendientes=e=>saldosPendientes(e).reduce((a,x)=>a+(Number(x.monto)||0),0);
+function saldoVentasCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
+function saldoCliente(c){ return saldoVentasCliente(c)+totalSaldosPendientes(c); }
+// Aplica un cobro/pago a los saldos anteriores pendientes (el más viejo primero). Si el monto no alcanza a cubrir uno, lo divide en pagado + resto.
+function aplicarPagoASaldos(saldos,monto,campoFecha,fecha,medioPago,nota){
+  let restante=monto;
+  const lista=saldos||[];
+  const pend=lista.filter(x=>!x.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const procesados=[];
+  pend.forEach(x=>{
+    const m=Number(x.monto)||0;
+    if(restante<=0){procesados.push(x);return;}
+    if(restante>=m){restante-=m;procesados.push({...x,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||""});return;}
+    procesados.push({...x,monto:restante,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||""});
+    procesados.push({id:uid(),fecha:x.fecha,monto:m-restante,descripcion:x.descripcion||"",pagado:false});
+    restante=0;
+  });
+  return{saldos:[...lista.filter(x=>x.pagado),...procesados],restante};
+}
 
 // ── Descuentos y bonificaciones ─────────────────────────────────────────────
 // Cada venta que se genera al entregar un pedido guarda su desglose exacto (dv:1): neto facturado (sin IVA), descuento de línea,
@@ -1746,8 +1806,9 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
   const monto=Number(montoCobro);
   if(!monto||monto<=0)return cliente;
   const pendientesOrdenadas=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(v=>v.id);
-  let restante=monto;
   const fechaCobro=fecha||hoyISO();
+  const resSaldos=aplicarPagoASaldos(cliente.saldosAnteriores,monto,"fechaCobro",fechaCobro,medioPago,nota);
+  let restante=resSaldos.restante;
   const nuevasVentas=[...cliente.ventas].map(v=>{
     if(v.pagado||!pendientesOrdenadas.includes(v.id)||restante<=0)return v;
     if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||""};}
@@ -1763,18 +1824,19 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
       ventasFinales.push({id:uid(),fecha:v.fecha,producto:v.producto,cantidad:v._cantRestante,monto:v._montoRestante,pagado:false});
     }else{ventasFinales.push(v);}
   });
-  return{...cliente,ventas:ventasFinales};
+  return{...cliente,ventas:ventasFinales,saldosAnteriores:resSaldos.saldos};
 }
  
 // ── Proveedores: cuenta corriente invertida (lo que yo les debo por compras) ──
-function saldoProveedor(p){ return (p.compras||[]).filter(c=>!c.pagado).reduce((s,c)=>s+c.monto,0); }
+function saldoProveedor(p){ return (p.compras||[]).filter(c=>!c.pagado).reduce((s,c)=>s+c.monto,0)+totalSaldosPendientes(p); }
 
 function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota="",fecha=null}={}){
   const monto=Number(montoPago);
   if(!monto||monto<=0)return proveedor;
   const pendientesOrdenadas=(proveedor.compras||[]).filter(c=>!c.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(c=>c.id);
-  let restante=monto;
   const fechaPago=fecha||hoyISO();
+  const resSaldos=aplicarPagoASaldos(proveedor.saldosAnteriores,monto,"fechaPago",fechaPago,medioPago,nota);
+  let restante=resSaldos.restante;
   const nuevasCompras=[...proveedor.compras].map(c=>{
     if(c.pagado||!pendientesOrdenadas.includes(c.id)||restante<=0)return c;
     if(restante>=c.monto){restante-=c.monto;return{...c,pagado:true,fechaPago,medioPago,nota:nota||c.nota||""};}
@@ -1790,7 +1852,7 @@ function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota=""
       comprasFinales.push({id:uid(),fecha:c.fecha,producto:c.producto,cantidad:c._cantRestante,monto:c._montoRestante,pagado:false});
     }else{comprasFinales.push(c);}
   });
-  return{...proveedor,compras:comprasFinales};
+  return{...proveedor,compras:comprasFinales,saldosAnteriores:resSaldos.saldos};
 }
 
 // ── Meta semanal helpers ──────────────────────────────────────────
@@ -2341,7 +2403,7 @@ function PanelCobro({cliente,onUpdate,onDone}){
       {montoNum>0&&(
         <div style={{fontSize:14,color:MU,marginBottom:10}}>
           {esParcial?"Pago parcial":"Salda toda la cuenta"} de <strong style={{color:G}}>{fmtARS(montoNum)}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-montoNum))}</strong>
-          {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(montoNum*Number(cliente.comisionPctDefault)/100))}</strong></>}
+          {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(Math.max(0,montoNum-totalSaldosPendientes(cliente))*Number(cliente.comisionPctDefault)/100))}</strong></>}
         </div>
       )}
       <div style={{display:"flex",gap:8}}>
@@ -2403,6 +2465,126 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
   );
 }
 
+// ── Saldos anteriores (deudas cargadas a mano, p. ej. de otro sistema) ─────────────────────
+function FormSaldoAnterior({initial,onSave,onCancel}){
+  const[f,setF]=useState(initial?{fecha:initial.fecha,monto:String(initial.monto??""),descripcion:initial.descripcion||""}:{fecha:hoyISO(),monto:"",descripcion:""});
+  const montoNum=Number(f.monto);
+  const valido=montoNum>0&&!!f.fecha;
+  return(
+    <div style={{background:"#fff",border:`1px solid ${AM}66`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{fontSize:15,fontWeight:700,color:CR}}>{initial?"Editar saldo anterior":"Cargar saldo anterior"}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+        <div><Lbl t="Fecha de la deuda"/><input type="date" value={f.fecha} max={hoyISO()} onChange={e=>setF(x=>({...x,fecha:e.target.value}))}/></div>
+        <div><Lbl t="Monto ($)"/><input type="number" inputMode="numeric" value={f.monto} onChange={e=>setF(x=>({...x,monto:e.target.value}))} placeholder="0"/></div>
+      </div>
+      <div><Lbl t="Descripción"/><textarea rows={3} value={f.descripcion} onChange={e=>setF(x=>({...x,descripcion:e.target.value}))} maxLength={300} placeholder="Ej: Saldo del sistema anterior · facturas A-0001-123 y 130"/></div>
+      <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Poné la fecha original de la deuda si querés que cuente los días de mora. Este saldo suma a la cuenta corriente, pero no entra en ventas, métricas ni comisiones.</div>
+      <div style={{display:"flex",gap:8}}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="green" onClick={()=>valido&&onSave({fecha:f.fecha,monto:montoNum,descripcion:f.descripcion.trim()})}>{initial?"Guardar cambios":"Cargar saldo"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+// Lista editable de saldos anteriores + botón para cargar uno nuevo. Sirve para clientes (se cobran) y proveedores (se pagan).
+function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
+  const campoFecha=esProveedor?"fechaPago":"fechaCobro";
+  const verbo=esProveedor?"Pagado":"Cobrado";
+  const[mostrarForm,setMostrarForm]=useState(false);
+  const[editId,setEditId]=useState(null);
+  const[showHist,setShowHist]=useState(false);
+  const saldos=entidad.saldosAnteriores||[];
+  const pend=saldos.filter(x=>!x.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const pagados=saldos.filter(x=>x.pagado).sort((a,b)=>new Date(b[campoFecha]||b.fecha)-new Date(a[campoFecha]||a.fecha));
+  const actualizar=nuevos=>onUpdate({...entidad,saldosAnteriores:nuevos});
+  const agregar=d=>{actualizar([...saldos,{id:uid(),fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}]);setMostrarForm(false);};
+  const guardar=(id,d)=>{actualizar(saldos.map(x=>x.id===id?{...x,fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}:x));setEditId(null);};
+  const eliminar=x=>{if(!confirm(`¿Eliminar este saldo anterior de ${fmtARS(x.monto)}?`))return;actualizar(saldos.filter(y=>y.id!==x.id));};
+  const marcar=x=>actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:hoyISO(),medioPago:"Efectivo"}:y));
+  const deshacer=x=>actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:false,[campoFecha]:null}:y));
+  return(
+    <div style={{marginTop:6,marginBottom:12}}>
+      {pend.length>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+          {pend.map(x=>{
+            if(editId===x.id)return<FormSaldoAnterior key={x.id} initial={x} onCancel={()=>setEditId(null)} onSave={d=>guardar(x.id,d)}/>;
+            const dias=daysSince(x.fecha),vencida=!!diasMora&&dias>=diasMora;
+            return(
+              <div key={x.id} style={{background:"#fff",border:`1px solid ${vencida?"#C6282866":AM+"66"}`,borderRadius:8,padding:"10px 12px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#B7691F",textTransform:"uppercase",letterSpacing:"0.06em"}}>Saldo anterior</div>
+                    <div style={{fontSize:15,color:CR,fontWeight:500}}>{fmtDate(x.fecha)}</div>
+                    {x.descripcion&&<div style={{fontSize:14,color:MU,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{x.descripcion}</div>}
+                    {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+                    <span style={{fontSize:17,fontWeight:700,color:"#C62828",marginRight:4}}>{fmtARS(x.monto)}</span>
+                    <button onClick={()=>setEditId(x.id)} aria-label="Editar saldo anterior" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
+                    <button onClick={()=>eliminar(x)} aria-label="Eliminar saldo anterior" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
+                  </div>
+                </div>
+                <button onClick={()=>marcar(x)} style={{marginTop:8,fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ {verbo}</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {mostrarForm?(
+        <FormSaldoAnterior onCancel={()=>setMostrarForm(false)} onSave={agregar}/>
+      ):(
+        <button onClick={()=>setMostrarForm(true)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"#fff",color:"#B7691F",border:`1px dashed ${AM}`,fontSize:14,fontWeight:700,cursor:"pointer"}}>＋ Cargar saldo anterior (otro sistema)</button>
+      )}
+      {pagados.length>0&&(
+        <div style={{marginTop:8}}>
+          <button onClick={()=>setShowHist(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:MU,padding:0}}>{showHist?"▲":"▼"} Saldos anteriores {esProveedor?"pagados":"cobrados"} ({pagados.length})</button>
+          {showHist&&(
+            <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:6}}>
+              {pagados.map(x=>(
+                <div key={x.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:14,color:CR}}>{fmtDate(x[campoFecha]||x.fecha)} · <span style={{color:MU}}>deuda del {fmtDate(x.fecha)}</span></div>
+                    <div style={{fontSize:13,color:GR}}>✓ {x.medioPago||verbo}{x.descripcion?` · ${x.descripcion}`:""}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(x.monto)}</span>
+                    <button onClick={()=>deshacer(x)} style={{fontSize:12,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Para cargar saldos viejos en lote desde "Cuentas corrientes": elegís el cliente y cargás el saldo.
+function CargarSaldoClienteRapido({clientes,setClientes}){
+  const[abierto,setAbierto]=useState(false);
+  const[clienteId,setClienteId]=useState("");
+  const lista=useMemo(()=>[...(clientes||[])].sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")),[clientes]);
+  if(!abierto)return(
+    <button onClick={()=>setAbierto(true)} style={{width:"100%",padding:"10px 0",borderRadius:10,background:"none",color:"#B7691F",border:`1px dashed ${AM}`,fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:16}}>＋ Cargar saldo anterior de un cliente</button>
+  );
+  return(
+    <div style={{background:CA,border:`1px solid ${AM}66`,borderRadius:14,padding:12,marginBottom:16}}>
+      <Lbl t="Cliente"/>
+      <select value={clienteId} onChange={e=>setClienteId(e.target.value)} style={{marginBottom:10}}>
+        <option value="">Elegí un cliente…</option>
+        {lista.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+      </select>
+      {clienteId?(
+        <FormSaldoAnterior onCancel={()=>{setAbierto(false);setClienteId("");}} onSave={d=>{setClientes(prev=>prev.map(c=>c.id===clienteId?{...c,saldosAnteriores:[...(c.saldosAnteriores||[]),{id:uid(),...d}]}:c));setAbierto(false);setClienteId("");}}/>
+      ):(
+        <Btn variant="ghost" onClick={()=>setAbierto(false)}>Cancelar</Btn>
+      )}
+    </div>
+  );
+}
+
 // ── CuentaCorriente ───────────────────────────────────────────────
 function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
   const[showHistorial,setShowHistorial]=useState(false);
@@ -2414,7 +2596,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const saldo=saldoCliente(cliente);
-  const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora);
+  const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora)||saldosPendientes(cliente).some(x=>daysSince(x.fecha)>=diasMora);
  
   // Cobro rápido de una venta puntual (queda para el caso de "cobré justo esto, hoy, en efectivo").
   // Para fecha/medio de pago distintos, o pagos parciales, se usa el panel unificado "Registrar pago".
@@ -2430,8 +2612,10 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
         </span>
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
-      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!(cliente.ventas||[]).length} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
+      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!((cliente.ventas||[]).length||(cliente.saldosAnteriores||[]).length)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
  
+      <BloqueSaldosAnteriores entidad={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
+
       {saldo>0&&(
         <>
           {hayVencidas&&(
@@ -2867,6 +3051,8 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
 
+      <BloqueSaldosAnteriores entidad={proveedor} onUpdate={onUpdate} esProveedor/>
+
       {saldo>0&&(
         <>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12,marginBottom:12}}>
@@ -3231,7 +3417,7 @@ function contextoNegocio(clientes,pedidos,prods){
   const resumenClientes=clientes.slice(0,80).map(c=>{
     const ls=lastSale(c);
     const dias=ls?daysSince(ls.fecha):null;
-    const deuda=(c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0);
+    const deuda=saldoCliente(c);
     return`${c.nombre} (${c.zona}, ${c.rubro}) — estado:${estadoC(c)}${dias!=null?`, últ. compra hace ${dias}d`:", sin compras"}${deuda>0?`, debe ${fmtARS(deuda)}`:""}`;
   }).join("\n");
   const pedidosPend=(pedidos||[]).filter(p=>p.estado!=="entregado").length;
@@ -4118,7 +4304,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 }
  
 // ── PRODUCTOS ─────────────────────────────────────────────────────
-function Productos({prods,setProds,promo51,envasesExtra}){
+function Productos({prods,setProds,promo51,envasesExtra,categorias}){
   const envasesTodos=useMemo(()=>[...ENVASES,...(envasesExtra||[])],[envasesExtra]);
   const[editId,setEditId]=useState(null);
   const[ef,setEf]=useState(null);
@@ -4127,7 +4313,7 @@ function Productos({prods,setProds,promo51,envasesExtra}){
  
   const[showHist,setShowHist]=useState(null);
   const[showNewProd,setShowNewProd]=useState(false);
-  const[np,setNp]=useState({nombre:"",precio:"",marca:"",envase:"PET",descripcion:""});
+  const[np,setNp]=useState({nombre:"",precio:"",marca:"",envase:"PET",descripcion:"",categoria:(categorias&&categorias[0])||""});
   const[exportando,setExportando]=useState(false);
   const[vistaLista,setVistaLista]=useState(false);
 
@@ -4135,19 +4321,22 @@ function Productos({prods,setProds,promo51,envasesExtra}){
   const[busqueda,setBusqueda]=useState("");
   const[filtroMarca,setFiltroMarca]=useState("");
   const[filtroEnvase,setFiltroEnvase]=useState("");
+  const[filtroCategoria,setFiltroCategoria]=useState("");
   const[orden,setOrden]=useState("nombre-asc");
 
   const marcasDisponibles=useMemo(()=>[...new Set(prods.map(p=>(p.marca||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[prods]);
   const envasesDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.envase||"PET").filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[prods]);
-  const hayFiltrosProd=busqueda||filtroMarca||filtroEnvase||orden!=="nombre-asc";
+  const categoriasUsadas=useMemo(()=>[...new Set(prods.map(categoriaDe))].sort((a,b)=>a.localeCompare(b)),[prods]);
+  const hayFiltrosProd=busqueda||filtroMarca||filtroEnvase||filtroCategoria||orden!=="nombre-asc";
 
   const prodsFiltrados=useMemo(()=>{
     const q=busqueda.trim().toLowerCase();
     let lista=prods.filter(p=>{
       if(filtroMarca&&(p.marca||"")!==filtroMarca)return false;
       if(filtroEnvase&&(p.envase||"PET")!==filtroEnvase)return false;
+      if(filtroCategoria&&categoriaDe(p)!==filtroCategoria)return false;
       if(q){
-        const texto=`${p.nombre||""} ${p.marca||""} ${p.envase||""} ${p.descripcion||""}`.toLowerCase();
+        const texto=`${p.nombre||""} ${p.marca||""} ${p.envase||""} ${p.categoria||""} ${p.descripcion||""}`.toLowerCase();
         if(!texto.includes(q))return false;
       }
       return true;
@@ -4162,9 +4351,9 @@ function Productos({prods,setProds,promo51,envasesExtra}){
       }
     });
     return lista;
-  },[prods,busqueda,filtroMarca,filtroEnvase,orden]);
+  },[prods,busqueda,filtroMarca,filtroEnvase,filtroCategoria,orden]);
 
-  const limpiarFiltrosProd=()=>{setBusqueda("");setFiltroMarca("");setFiltroEnvase("");setOrden("nombre-asc");};
+  const limpiarFiltrosProd=()=>{setBusqueda("");setFiltroMarca("");setFiltroEnvase("");setFiltroCategoria("");setOrden("nombre-asc");};
 
   const compartirCatalogo=async()=>{
     setExportando(true);
@@ -4178,10 +4367,10 @@ function Productos({prods,setProds,promo51,envasesExtra}){
     const nuevoId=uid();
     setProds(prev=>[...prev,{
       id:nuevoId,nombre,precio,
-      marca:(np.marca||"").trim(),envase:np.envase||"PET",descripcion:(np.descripcion||"").trim(),
+      marca:(np.marca||"").trim(),envase:np.envase||"PET",descripcion:(np.descripcion||"").trim(),categoria:(np.categoria||"").trim(),
       promos:[],historialPrecios:[],stock:0,
     }]);
-    setNp({nombre:"",precio:"",marca:"",envase:"PET",descripcion:""});
+    setNp({nombre:"",precio:"",marca:"",envase:"PET",descripcion:"",categoria:(categorias&&categorias[0])||""});
     setShowNewProd(false);
   };
 
@@ -4246,6 +4435,13 @@ function Productos({prods,setProds,promo51,envasesExtra}){
             </select>
           </div>
         </div>
+        <div style={{marginBottom:10}}>
+          <Lbl t="Categoría"/>
+          <select value={filtroCategoria} onChange={e=>setFiltroCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categoriasUsadas.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
         <div>
           <Lbl t="Ordenar por"/>
           <select value={orden} onChange={e=>setOrden(e.target.value)}>
@@ -4292,6 +4488,7 @@ function Productos({prods,setProds,promo51,envasesExtra}){
                 <div><Lbl t="Marca"/><input value={ef.marca||""} onChange={e=>setEf(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
                 <div><Lbl t="Envase"/><select value={ef.envase||"PET"} onChange={e=>setEf(x=>({...x,envase:e.target.value}))}>{envasesTodos.map(v=><option key={v}>{v}</option>)}</select></div>
               </div>
+              <div><Lbl t="Categoría"/><select value={ef.categoria||""} onChange={e=>setEf(x=>({...x,categoria:e.target.value}))}><option value="">Sin categoría</option>{(()=>{const act=(ef.categoria||"").trim();const ops=[...(categorias||[]),...(act&&!(categorias||[]).includes(act)?[act]:[])];return ops.map(c=><option key={c} value={c}>{c}</option>);})()}</select></div>
               <div><Lbl t="Precio base (ARS/L)"/><input type="number" value={ef.precio} onChange={e=>setEf(x=>({...x,precio:e.target.value}))}/></div>
               <div><Lbl t="Descripción corta (estilo, sabor)"/><input value={ef.descripcion||""} onChange={e=>setEf(x=>({...x,descripcion:e.target.value}))} placeholder="Ej: Rubia liviana, notas cítricas, 5% ABV" maxLength={90}/></div>
               <div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setEditId(null)}>Cancelar</Btn><Btn onClick={saveEdit}>Guardar</Btn></div>
@@ -4301,7 +4498,7 @@ function Productos({prods,setProds,promo51,envasesExtra}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div>
                   <div style={{fontSize:17,fontWeight:700,color:CR}}>{p.nombre}</div>
-                  <div style={{fontSize:14,color:MU,marginTop:2}}>{p.marca||"Farol"} · {p.envase||"PET"}</div>
+                  <div style={{fontSize:14,color:MU,marginTop:2}}>{p.marca||"Farol"} · {p.envase||"PET"}{p.categoria?` · ${p.categoria}`:""}</div>
                   {p.descripcion&&<div style={{fontSize:14,color:MU,marginTop:3,fontStyle:"italic"}}>{p.descripcion}</div>}
                 </div>
                 <div style={{display:"flex",gap:4,flexShrink:0}}>
@@ -4380,6 +4577,7 @@ function Productos({prods,setProds,promo51,envasesExtra}){
             <div><Lbl t="Marca"/><input value={np.marca} onChange={e=>setNp(x=>({...x,marca:e.target.value}))} placeholder="Ej: Farol"/></div>
             <div><Lbl t="Envase"/><select value={np.envase} onChange={e=>setNp(x=>({...x,envase:e.target.value}))}>{envasesTodos.map(v=><option key={v}>{v}</option>)}</select></div>
           </div>
+          <div><Lbl t="Categoría"/><select value={np.categoria||""} onChange={e=>setNp(x=>({...x,categoria:e.target.value}))}><option value="">Sin categoría</option>{(()=>{const act=(np.categoria||"").trim();const ops=[...(categorias||[]),...(act&&!(categorias||[]).includes(act)?[act]:[])];return ops.map(c=><option key={c} value={c}>{c}</option>);})()}</select></div>
           <div><Lbl t="Precio base (ARS/L)"/><input type="number" inputMode="numeric" value={np.precio} onChange={e=>setNp(x=>({...x,precio:e.target.value}))} placeholder="1500"/></div>
           <div><Lbl t="Descripción corta (estilo, sabor)"/><input value={np.descripcion} onChange={e=>setNp(x=>({...x,descripcion:e.target.value}))} placeholder="Ej: Rubia liviana, notas cítricas, 5% ABV" maxLength={90}/></div>
           <div style={{display:"flex",gap:8,paddingTop:4}}>
@@ -4611,9 +4809,9 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
   const[pagoAbierto,setPagoAbierto]=useState(null); // id del cliente con el panel de pago abierto
 
   const todasConDeuda=useMemo(()=>clientes
-    .map(c=>({cliente:c,deuda:saldoCliente(c),pendientes:(c.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))}))
+    .map(c=>({cliente:c,deuda:saldoCliente(c),saldosN:saldosPendientes(c).length,pendientes:(c.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))}))
     .filter(x=>x.deuda>0)
-    .map(x=>({...x,vencidas:x.pendientes.filter(v=>daysSince(v.fecha)>=diasMora)}))
+    .map(x=>({...x,vencidas:[...x.pendientes,...saldosPendientes(x.cliente)].filter(v=>daysSince(v.fecha)>=diasMora)}))
     .sort((a,b)=>b.deuda-a.deuda),[clientes,diasMora]);
   const deudaTotal=todasConDeuda.reduce((s,x)=>s+x.deuda,0);
   const clientesVencidos=todasConDeuda.filter(x=>x.vencidas.length>0);
@@ -4640,6 +4838,8 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
         </div>
       </div>
 
+      <CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>
+
       <div style={{display:"flex",gap:8,marginBottom:18}}>
         <button onClick={()=>setFiltro("todos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="todos"?G:BO}`,background:filtro==="todos"?G+"18":"none",color:filtro==="todos"?G:MU}}>Todos ({todasConDeuda.length})</button>
         <button onClick={()=>setFiltro("vencidos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="vencidos"?"#C62828":BO}`,background:filtro==="vencidos"?"#C6282818":"none",color:filtro==="vencidos"?"#C62828":MU}}>⚠ Vencidos ({clientesVencidos.length})</button>
@@ -4647,7 +4847,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
 
       {conDeuda.length===0?(
         <p style={{color:MU,textAlign:"center",padding:"40px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":"🎉 No hay cuentas pendientes. Todo cobrado."}</p>
-      ):conDeuda.map(({cliente,deuda,pendientes,vencidas})=>{
+      ):conDeuda.map(({cliente,deuda,pendientes,vencidas,saldosN})=>{
         const abierto=expandido===cliente.id;
         const tieneVencidas=vencidas.length>0;
         return(
@@ -4656,13 +4856,14 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
               <div style={{width:36,height:36,borderRadius:"50%",background:RE+"15",color:"#C24545",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>{iniciales(cliente.nombre)}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente.nombre}</div>
-                <div style={{fontSize:13,color:tieneVencidas?"#C62828":MU,marginTop:2,fontWeight:tieneVencidas?700:400}}>{tieneVencidas?`⚠ ${vencidas.length} vencida${vencidas.length!==1?"s":""} · `:""}{pendientes.length} venta{pendientes.length!==1?"s":""} pendiente{pendientes.length!==1?"s":""}</div>
+                <div style={{fontSize:13,color:tieneVencidas?"#C62828":MU,marginTop:2,fontWeight:tieneVencidas?700:400}}>{tieneVencidas?`⚠ ${vencidas.length} vencida${vencidas.length!==1?"s":""} · `:""}{pendientes.length} venta{pendientes.length!==1?"s":""} pendiente{pendientes.length!==1?"s":""}{saldosN>0?` · ${saldosN} saldo${saldosN!==1?"s":""} anterior${saldosN!==1?"es":""}`:""}</div>
               </div>
               <div style={{fontSize:16,fontWeight:700,color:"#C24545",flexShrink:0}}>{fmtARS(deuda)}</div>
               <span style={{color:MU,display:"flex",flexShrink:0,transform:abierto?"rotate(90deg)":"none",transition:"transform 0.2s"}}>{I.chev}</span>
             </button>
             {abierto&&(
               <div style={{borderTop:`1px solid ${BO}`,padding:"8px 14px 14px"}}>
+                <BloqueSaldosAnteriores entidad={cliente} onUpdate={actualizarCliente} diasMora={diasMora}/>
                 {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
                   <div key={v.id} style={{padding:"8px 0",borderBottom:`1px solid ${BO}`}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
@@ -5193,6 +5394,8 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos}){
 
 function Ventas({clientes,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const catMap=useMemo(()=>categoriaMapDe(prods),[prods]);
+  const categoriasDisponibles=useMemo(()=>[...new Set(Object.values(catMap))].sort((a,b)=>a.localeCompare(b)),[catMap]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,cn:c.nombre,clienteId:c.id}))).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[clientes]);
 
   // ── Filtros ──
@@ -5201,12 +5404,13 @@ function Ventas({clientes,prods}){
   const[fCliente,setFCliente]=useState("");
   const[fProducto,setFProducto]=useState("");
   const[fEnvase,setFEnvase]=useState("");
+  const[fCategoria,setFCategoria]=useState("");
   const[fEstado,setFEstado]=useState("todos"); // todos | pagado | pendiente
   const[fOrden,setFOrden]=useState("fecha-desc");
 
   const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
   const clientesConVentas=useMemo(()=>[...clientes].filter(c=>(c.ventas||[]).length>0).sort((a,b)=>a.nombre.localeCompare(b.nombre)),[clientes]);
-  const hayFiltrosVenta=fDesde||fHasta||fCliente||fProducto||fEnvase||fEstado!=="todos"||fOrden!=="fecha-desc";
+  const hayFiltrosVenta=fDesde||fHasta||fCliente||fProducto||fEnvase||fCategoria||fEstado!=="todos"||fOrden!=="fecha-desc";
 
   const filtradas=useMemo(()=>{
     let lista=todas.filter(v=>{
@@ -5215,6 +5419,7 @@ function Ventas({clientes,prods}){
       if(fCliente&&v.clienteId!==fCliente)return false;
       if(fProducto&&v.producto!==fProducto)return false;
       if(fEnvase&&envaseMap[v.producto]!==fEnvase)return false;
+      if(fCategoria&&catMap[v.producto]!==fCategoria)return false;
       if(fEstado==="pagado"&&!v.pagado)return false;
       if(fEstado==="pendiente"&&v.pagado)return false;
       return true;
@@ -5229,9 +5434,10 @@ function Ventas({clientes,prods}){
       }
     });
     return lista;
-  },[todas,fDesde,fHasta,fCliente,fProducto,fEnvase,fEstado,fOrden]);
+  },[todas,fDesde,fHasta,fCliente,fProducto,fEnvase,fCategoria,fEstado,fOrden,envaseMap,catMap]);
 
-  const limpiarFiltrosVenta=()=>{setFDesde("");setFHasta("");setFCliente("");setFProducto("");setFEnvase("");setFEstado("todos");setFOrden("fecha-desc");};
+  const resumenCategorias=useMemo(()=>agruparPorCategoria(filtradas,catMap,envaseMap),[filtradas,catMap,envaseMap]);
+  const limpiarFiltrosVenta=()=>{setFDesde("");setFHasta("");setFCliente("");setFProducto("");setFEnvase("");setFCategoria("");setFEstado("todos");setFOrden("fecha-desc");};
 
   const totalARS=filtradas.reduce((s,v)=>s+v.monto,0);
   const litros=filtradas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0);
@@ -5273,6 +5479,13 @@ function Ventas({clientes,prods}){
           </div>
         </div>
         <div style={{marginBottom:10}}>
+          <Lbl t="Categoría"/>
+          <select value={fCategoria} onChange={e=>setFCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:10}}>
           <Lbl t="Estado"/>
             <select value={fEstado} onChange={e=>setFEstado(e.target.value)}>
               <option value="todos">Todos</option>
@@ -5308,10 +5521,11 @@ function Ventas({clientes,prods}){
           </div>
         ))}
       </div>
+      {resumenCategorias.length>1&&<ResumenPorCategoria filas={resumenCategorias} titulo={hayFiltrosVenta?"🗂️ Por categoría (filtrado)":"🗂️ Por categoría"}/>}
       {filtradas.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{hayFiltrosVenta?"Ningún resultado con estos filtros.":"Sin ventas registradas."}</p>:filtradas.map((v,i)=>{const p=prods.find(x=>x.id===v.producto);return(
         <div key={v.id+i} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${v.pagado?BO:RE+"33"}`,borderRadius:18,padding:"12px 16px",marginBottom:8}}>
           <div style={{width:36,height:36,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>{iniciales(v.cn)}</div>
-          <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.cn}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{p?nombreProdEnvase(p):v.producto} · {fmtDate(v.fecha)}</div></div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.cn}</div><div style={{fontSize:14,color:MU,marginTop:2}}>{p?nombreProdEnvase(p):v.producto}{p&&p.categoria?` · ${p.categoria}`:""} · {fmtDate(v.fecha)}</div></div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
             <div style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:3,padding:"2px 8px",borderRadius:20,background:v.pagado?GLT:RE+"15"}}>
@@ -5328,6 +5542,8 @@ function Ventas({clientes,prods}){
 // ── COMPRAS (estadísticas de lo comprado a proveedores) ────────────
 function Compras({proveedores,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const catMap=useMemo(()=>categoriaMapDe(prods),[prods]);
+  const categoriasDisponibles=useMemo(()=>[...new Set(Object.values(catMap))].sort((a,b)=>a.localeCompare(b)),[catMap]);
   const todasSinFiltro=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[]).map(c=>({...c,proveedorId:p.id,proveedorNombre:p.nombre}))),[proveedores]);
 
   // ── Filtros ──
@@ -5337,13 +5553,14 @@ function Compras({proveedores,prods}){
   const[fProducto,setFProducto]=useState("");
   const[fEnvase,setFEnvase]=useState("");
   const[fMarca,setFMarca]=useState("");
+  const[fCategoria,setFCategoria]=useState("");
   const[fEstado,setFEstado]=useState("todos"); // todos | pagado | pendiente
   const[fOrden,setFOrden]=useState("fecha-desc");
 
   const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
   const marcasDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.marca).filter(Boolean))).sort(),[prods]);
   const proveedoresConCompras=useMemo(()=>[...(proveedores||[])].filter(p=>(p.compras||[]).length>0).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")),[proveedores]);
-  const hayFiltros=fDesde||fHasta||fProveedor||fProducto||fEnvase||fMarca||fEstado!=="todos"||fOrden!=="fecha-desc";
+  const hayFiltros=fDesde||fHasta||fProveedor||fProducto||fEnvase||fMarca||fCategoria||fEstado!=="todos"||fOrden!=="fecha-desc";
 
   const filtradas=useMemo(()=>{
     let lista=todasSinFiltro.filter(c=>{
@@ -5353,6 +5570,7 @@ function Compras({proveedores,prods}){
       if(fProducto&&c.producto!==fProducto)return false;
       if(fEnvase&&envaseMap[c.producto]!==fEnvase)return false;
       if(fMarca&&(prods.find(p=>p.id===c.producto)?.marca||"")!==fMarca)return false;
+      if(fCategoria&&catMap[c.producto]!==fCategoria)return false;
       if(fEstado==="pagado"&&!c.pagado)return false;
       if(fEstado==="pendiente"&&c.pagado)return false;
       return true;
@@ -5367,9 +5585,10 @@ function Compras({proveedores,prods}){
       }
     });
     return lista;
-  },[todasSinFiltro,fDesde,fHasta,fProveedor,fProducto,fEnvase,fMarca,fEstado,fOrden,envaseMap,prods]);
+  },[todasSinFiltro,fDesde,fHasta,fProveedor,fProducto,fEnvase,fMarca,fCategoria,fEstado,fOrden,envaseMap,prods,catMap]);
+  const resumenCategorias=useMemo(()=>agruparPorCategoria(filtradas,catMap,envaseMap),[filtradas,catMap,envaseMap]);
 
-  const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFProveedor("");setFProducto("");setFEnvase("");setFMarca("");setFEstado("todos");setFOrden("fecha-desc");};
+  const limpiarFiltros=()=>{setFDesde("");setFHasta("");setFProveedor("");setFProducto("");setFEnvase("");setFMarca("");setFCategoria("");setFEstado("todos");setFOrden("fecha-desc");};
 
   const totalARS=filtradas.reduce((s,c)=>s+(c.monto||0),0);
   const litros=filtradas.reduce((s,c)=>s+litrosDeItem(c.cantidad,envaseMap[c.producto]),0);
@@ -5480,6 +5699,13 @@ function Compras({proveedores,prods}){
             </select>
           </div>
         </div>
+        <div style={{marginBottom:10}}>
+          <Lbl t="Categoría"/>
+          <select value={fCategoria} onChange={e=>setFCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Marca"/>
             <select value={fMarca} onChange={e=>setFMarca(e.target.value)}>
@@ -5553,6 +5779,9 @@ function Compras({proveedores,prods}){
           ))}
         </div>
       )}
+
+      {/* Ranking por categoría */}
+      {resumenCategorias.length>1&&<ResumenPorCategoria filas={resumenCategorias} titulo="🗂️ Por categoría"/>}
 
       {/* Ranking por marca */}
       {rankingMarca.length>0&&(
@@ -5645,7 +5874,7 @@ function Rentabilidad({clientes,proveedores,prods}){
 
   const porProducto=useMemo(()=>{
     const map={};
-    prods.forEach(p=>{map[p.id]={id:p.id,nombre:p.nombre,envase:p.envase||"PET",marca:p.marca,litrosVendidos:0,montoVendido:0,litrosComprados:0,montoComprado:0};});
+    prods.forEach(p=>{map[p.id]={id:p.id,nombre:p.nombre,envase:p.envase||"PET",marca:p.marca,categoria:categoriaDe(p),litrosVendidos:0,montoVendido:0,litrosComprados:0,montoComprado:0};});
     ventasTodas.forEach(v=>{if(!map[v.producto])return;map[v.producto].litrosVendidos+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[v.producto].montoVendido+=v.monto||0;});
     comprasTodas.forEach(c=>{if(!map[c.producto])return;map[c.producto].litrosComprados+=litrosDeItem(c.cantidad,envaseMap[c.producto]);map[c.producto].montoComprado+=c.monto||0;});
     return Object.values(map).map(p=>{
@@ -5665,6 +5894,18 @@ function Rentabilidad({clientes,proveedores,prods}){
     const margenGlobal=montoVendido>0?Math.round((gananciaBruta/montoVendido)*1000)/10:null;
     return{montoVendido,montoComprado,gananciaBruta,margenGlobal};
   },[ventasTodas,comprasTodas]);
+
+  // Margen por categoría: ganancia estimada / venta a precio promedio, solo con los productos que tienen compras y ventas
+  const porCategoria=useMemo(()=>{
+    const m={};
+    porProducto.forEach(p=>{
+      const c=p.categoria||SIN_CATEGORIA;
+      const o=m[c]=m[c]||{categoria:c,vendido:0,comprado:0,ventaBase:0,ganancia:0};
+      o.vendido+=p.montoVendido;o.comprado+=p.montoComprado;
+      if(p.margenPct!=null&&p.gananciaEstimada!=null){o.ventaBase+=p.ventaPorL*p.litrosVendidos;o.ganancia+=p.gananciaEstimada;}
+    });
+    return Object.values(m).map(o=>({...o,margenPct:o.ventaBase>0?Math.round(o.ganancia/o.ventaBase*1000)/10:null})).sort((a,b)=>(b.margenPct??-999)-(a.margenPct??-999));
+  },[porProducto]);
 
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
@@ -5691,6 +5932,21 @@ function Rentabilidad({clientes,proveedores,prods}){
         ))}
       </div>
 
+      {porCategoria.length>1&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:16,padding:14,marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:600,color:CR,marginBottom:10}}>🗂️ Margen por categoría</div>
+          {porCategoria.map(c=>(
+            <div key={c.categoria} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,padding:"7px 0",borderTop:`1px solid ${BO}`}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:600,color:CR}}>{c.categoria}</div>
+                <div style={{fontSize:12,color:MU}}>Vendido {fmtARS(Math.round(c.vendido))} · Comprado {fmtARS(Math.round(c.comprado))}</div>
+              </div>
+              {c.margenPct!=null?<span style={{fontSize:15,fontWeight:700,color:c.margenPct<0?RE:G,whiteSpace:"nowrap"}}>{c.margenPct>0?"+":""}{c.margenPct}%</span>:<span style={{fontSize:13,fontWeight:700,color:MU}}>Sin datos</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{fontSize:16,fontWeight:600,color:CR,marginBottom:10}}>Por producto</div>
       {porProducto.length===0?(
         <p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Todavía no hay compras y ventas registradas para comparar.</p>
@@ -5702,7 +5958,7 @@ function Rentabilidad({clientes,proveedores,prods}){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
               <div style={{minWidth:0}}>
                 <div style={{fontSize:15,fontWeight:700,color:CR}}>{p.nombre}</div>
-                <div style={{fontSize:12,color:MU}}>{p.marca?`${p.marca} · `:""}{p.envase}</div>
+                <div style={{fontSize:12,color:MU}}>{p.marca?`${p.marca} · `:""}{p.envase}{p.categoria&&p.categoria!==SIN_CATEGORIA?` · ${p.categoria}`:""}</div>
               </div>
               {p.margenPct!=null?(
                 <span style={{fontSize:15,fontWeight:700,color:p.margenPct<0?RE:G,whiteSpace:"nowrap"}}>{p.margenPct>0?"+":""}{p.margenPct}%</span>
@@ -5748,14 +6004,17 @@ function Metricas({clientes,prods,pedidos}){
   const[pDesde,setPDesde]=useState("");
   const[pHasta,setPHasta]=useState("");
   const[pEnvase,setPEnvase]=useState("");
+  const[pCategoria,setPCategoria]=useState("");
+  const catMap=useMemo(()=>categoriaMapDe(prods),[prods]);
+  const categoriasDisponibles=useMemo(()=>[...new Set(Object.values(catMap))].sort((a,b)=>a.localeCompare(b)),[catMap]);
   const envasesDisponibles=useMemo(()=>Array.from(new Set(prods.map(p=>p.envase||"PET"))).sort(),[prods]);
-  const hayFiltroPeriodo=!!(pDesde||pHasta||pEnvase);
-  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)),[todasSinFiltro,pDesde,pHasta,pEnvase,envaseMap,hayFiltroPeriodo]);
+  const hayFiltroPeriodo=!!(pDesde||pHasta||pEnvase||pCategoria);
+  const todas=useMemo(()=>!hayFiltroPeriodo?todasSinFiltro:todasSinFiltro.filter(v=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)&&(!pCategoria||catMap[v.producto]===pCategoria)),[todasSinFiltro,pDesde,pHasta,pEnvase,pCategoria,catMap,envaseMap,hayFiltroPeriodo]);
 
   // KPIs: ticket promedio, frecuencia de compra, cobrado vs pendiente
   const montoTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+(v.monto||0),0),[todas]);
   const ticketPromedio=todas.length?Math.round(montoTotalVentas/todas.length):0;
-  const deudaTotal=totalAdeudado(clientes);
+  const deudaTotal=clientes.reduce((s,c)=>s+saldoVentasCliente(c),0);   // solo ventas: los saldos anteriores no forman parte de lo vendido
   const montoPagado=montoTotalVentas-deudaTotal;
   const pctCobrado=montoTotalVentas>0?Math.round((montoPagado/montoTotalVentas)*100):100;
   const litrosTotalVentas=useMemo(()=>todas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),[todas,envaseMap]);
@@ -5794,8 +6053,14 @@ function Metricas({clientes,prods,pedidos}){
       const key=(v.fechaCobro||v.fecha||"").slice(0,7);
       if(key in map)map[key]+=v.monto||0;
     });
+    // También cuenta lo cobrado de saldos anteriores: es plata que entró aunque la venta sea de otro sistema
+    clientes.forEach(c=>(c.saldosAnteriores||[]).forEach(x=>{
+      if(!x.pagado)return;
+      const key=(x.fechaCobro||x.fecha||"").slice(0,7);
+      if(key in map)map[key]+=Number(x.monto)||0;
+    }));
     return meses.map(m=>({...m,monto:map[m.key]}));
-  },[todasSinFiltro]);
+  },[todasSinFiltro,clientes]);
   const maxCobroMes=Math.max(1,...cobrosMensuales.map(m=>m.monto));
 
   // Top clientes — ordenable por facturación o litros, de mayor a menor o de menor a mayor
@@ -5818,7 +6083,7 @@ function Metricas({clientes,prods,pedidos}){
   // Descuentos y bonificaciones (el rango de fechas y el envase filtran el resumen y el ranking; la evolución mensual es fija, como las demás)
   const ctxDesc=useMemo(()=>ctxDescuentos(prods,pedidos),[prods,pedidos]);
   const itemsDescTodos=useMemo(()=>todasSinFiltro.map(v=>({v,d:desgloseVenta(v,v.clienteId,ctxDesc)})),[todasSinFiltro,ctxDesc]);
-  const itemsDesc=useMemo(()=>!hayFiltroPeriodo?itemsDescTodos:itemsDescTodos.filter(({v})=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)),[itemsDescTodos,pDesde,pHasta,pEnvase,envaseMap,hayFiltroPeriodo]);
+  const itemsDesc=useMemo(()=>!hayFiltroPeriodo?itemsDescTodos:itemsDescTodos.filter(({v})=>(!pDesde||v.fecha>=pDesde)&&(!pHasta||v.fecha<=pHasta)&&(!pEnvase||envaseMap[v.producto]===pEnvase)&&(!pCategoria||catMap[v.producto]===pCategoria)),[itemsDescTodos,pDesde,pHasta,pEnvase,pCategoria,catMap,envaseMap,hayFiltroPeriodo]);
   const resDesc=useMemo(()=>resumenDescuentos(itemsDesc),[itemsDesc]);
   const descMensual=useMemo(()=>serieMensualDescuentos(itemsDescTodos,6),[itemsDescTodos]);
   const maxPctMes=Math.max(1,...descMensual.map(m=>m.pct));
@@ -5971,13 +6236,20 @@ function Metricas({clientes,prods,pedidos}){
           <div><Lbl t="Hasta"/><input type="date" value={pHasta} onChange={e=>setPHasta(e.target.value)} min={pDesde||undefined}/></div>
         </div>
         <div style={{marginTop:10}}>
+          <Lbl t="Categoría"/>
+          <select value={pCategoria} onChange={e=>setPCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={{marginTop:10}}>
           <Lbl t="Envase"/>
           <select value={pEnvase} onChange={e=>setPEnvase(e.target.value)}>
             <option value="">Todos</option>
             {envasesDisponibles.map(e=><option key={e} value={e}>{e}</option>)}
           </select>
         </div>
-        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");setPEnvase("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
+        {hayFiltroPeriodo&&<button onClick={()=>{setPDesde("");setPHasta("");setPEnvase("");setPCategoria("");}} style={{marginTop:10,fontSize:13,fontWeight:700,color:RE,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>✕ Limpiar período</button>}
       </div>
 
       {/* KPIs generales */}
@@ -6237,6 +6509,9 @@ function Metricas({clientes,prods,pedidos}){
         </>
       )}
 
+      {/* Por categoría (respeta el período, el envase y la categoría elegidos arriba) */}
+      <ResumenPorCategoria filas={agruparPorCategoria(todas,catMap,envaseMap)} titulo={hayFiltroPeriodo?"🗂️ Por categoría (período)":"🗂️ Por categoría"}/>
+
       {/* Resumen general por producto */}
       <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>🍺 Litros por estilo</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
@@ -6493,7 +6768,84 @@ function Notas({notas,setNotas,cal}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores}){
+// ── Gestor de categorías de producto (Configuración) ────────────────────────────────
+function GestorCategorias({categorias,setCategorias,prods,setProds}){
+  const[nueva,setNueva]=useState("");
+  const[edit,setEdit]=useState(null);       // {c: nombre original, v: nombre nuevo}
+  const[asignarA,setAsignarA]=useState("");
+  const lista=categorias||[];
+  const uso=useMemo(()=>{const m={};(prods||[]).forEach(p=>{const c=(p.categoria||"").trim();if(c)m[c]=(m[c]||0)+1;});return m;},[prods]);
+  const sinCategoria=(prods||[]).filter(p=>!(p.categoria||"").trim());
+  const existe=(v,excepto)=>lista.some(x=>x.toLowerCase()===v.toLowerCase()&&x!==excepto)||v.toLowerCase()===SIN_CATEGORIA.toLowerCase();
+  const agregar=()=>{
+    const v=nueva.trim();
+    if(!v)return;
+    if(existe(v)){alert(`La categoría "${v}" ya existe.`);return;}
+    setCategorias(prev=>[...(prev||[]),v]);
+    setNueva("");
+  };
+  const guardarNombre=()=>{
+    if(!edit)return;
+    const v=edit.v.trim();
+    if(!v||v===edit.c){setEdit(null);return;}
+    if(existe(v,edit.c)){alert(`La categoría "${v}" ya existe.`);return;}
+    setCategorias(prev=>(prev||[]).map(x=>x===edit.c?v:x));
+    setProds(prev=>prev.map(p=>(p.categoria||"").trim()===edit.c?{...p,categoria:v}:p));   // los productos acompañan el cambio de nombre
+    setEdit(null);
+  };
+  const quitar=c=>{
+    const n=uso[c]||0;
+    if(n>0&&!confirm(`Hay ${n} producto${n!==1?"s":""} en "${c}". Si la quitás, esos productos quedan "${SIN_CATEGORIA}". ¿Continuar?`))return;
+    setCategorias(prev=>(prev||[]).filter(x=>x!==c));
+    if(n>0)setProds(prev=>prev.map(p=>(p.categoria||"").trim()===c?{...p,categoria:""}:p));
+  };
+  const asignarTodos=()=>{
+    if(!asignarA)return;
+    setProds(prev=>prev.map(p=>(p.categoria||"").trim()?p:{...p,categoria:asignarA}));
+    setAsignarA("");
+  };
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:4}}>🗂️ Categorías de productos</div>
+      <p style={{fontSize:13,color:MU,marginBottom:14,lineHeight:1.45}}>Agrupá tus productos (Cerveza, Fernet, etc.). Se elige en cada producto y después se puede filtrar y ver en Ventas, Compras, Métricas y Rentabilidad.</p>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+        {lista.length===0&&<span style={{fontSize:13,color:MU}}>Todavía no hay categorías. Agregá la primera acá abajo.</span>}
+        {lista.map(c=>edit&&edit.c===c?(
+          <span key={c} style={{display:"flex",alignItems:"center",gap:6}}>
+            <input value={edit.v} autoFocus onChange={e=>setEdit({c,v:e.target.value})} onKeyDown={e=>{if(e.key==="Enter")guardarNombre();if(e.key==="Escape")setEdit(null);}} style={{width:140,padding:"6px 10px"}}/>
+            <button onClick={guardarNombre} style={{padding:"6px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer"}}>✓</button>
+            <button onClick={()=>setEdit(null)} style={{padding:"6px 10px",borderRadius:8,background:"none",color:MU,border:`1px solid ${BO}`,fontSize:13,cursor:"pointer"}}>✕</button>
+          </span>
+        ):(
+          <span key={c} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,color:G,background:GLT,border:`1px solid ${G}33`,borderRadius:20,padding:"6px 8px 6px 12px"}}>
+            {c}<span style={{fontWeight:400,color:MU}}>({uso[c]||0})</span>
+            <button onClick={()=>setEdit({c,v:c})} aria-label={`Renombrar ${c}`} style={{background:"none",border:"none",color:G,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>✎</button>
+            <button onClick={()=>quitar(c)} aria-label={`Quitar ${c}`} style={{background:"none",border:"none",color:G,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>✕</button>
+          </span>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <input type="text" value={nueva} onChange={e=>setNueva(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")agregar();}} placeholder="Ej: Fernet, Gin, Vino…" style={{flex:1}}/>
+        <button onClick={agregar} style={{padding:"10px 16px",borderRadius:10,fontSize:14,fontWeight:700,background:G,color:"#fff",border:"none",cursor:"pointer",whiteSpace:"nowrap"}}>+ Agregar</button>
+      </div>
+      {sinCategoria.length>0&&lista.length>0&&(
+        <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${BO}`}}>
+          <div style={{fontSize:14,color:CR,fontWeight:600,marginBottom:6}}>{sinCategoria.length} producto{sinCategoria.length!==1?"s":""} sin categoría</div>
+          <div style={{display:"flex",gap:8}}>
+            <select value={asignarA} onChange={e=>setAsignarA(e.target.value)} style={{flex:1}}>
+              <option value="">Asignar a todos como…</option>
+              {lista.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <button onClick={asignarTodos} disabled={!asignarA} style={{padding:"10px 14px",borderRadius:10,fontSize:14,fontWeight:700,background:asignarA?G:BO,color:asignarA?"#fff":MU,border:"none",cursor:asignarA?"pointer":"not-allowed",whiteSpace:"nowrap"}}>Asignar</button>
+          </div>
+          <div style={{fontSize:12,color:MU,marginTop:6,lineHeight:1.4}}>Es un atajo para no editarlos uno por uno: solo toca los que todavía no tienen categoría.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -6576,7 +6928,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
       clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,
-      config:{metaSemanal,diasMora,promo51,envasesExtra}
+      config:{metaSemanal,diasMora,promo51,envasesExtra,categorias}
     },null,2);
     const fileName=`backup_nomades_${hoyISO()}.json`;
     const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
@@ -6637,6 +6989,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
           if(data.config.promo51&&typeof data.config.promo51==="object")setPromo51(prev=>({...prev,...data.config.promo51}));
           if(setEnvasesExtra&&Array.isArray(data.config.envasesExtra))setEnvasesExtra(data.config.envasesExtra);
+          if(setCategorias&&Array.isArray(data.config.categorias))setCategorias(data.config.categorias);
         }
         alert("✓ Backup restaurado correctamente.");
       }catch(err){
@@ -6910,6 +7263,8 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         </div>
       </div>
 
+      <GestorCategorias categorias={categorias} setCategorias={setCategorias} prods={prods} setProds={setProds}/>
+
       {/* ── Zona de peligro ── */}
       <div style={{background:RE+"08",border:`1px solid ${RE}33`,borderRadius:18,padding:20,marginBottom:16}}>
         <div style={{fontSize:16,fontWeight:700,color:RE,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>{I.alert}Zona de peligro</div>
@@ -6938,13 +7293,13 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
   const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
@@ -6952,7 +7307,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
     proveedores:d=>{if(Array.isArray(d))setProveedores(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);},
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);},
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
@@ -7063,7 +7418,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra,categorias]);
 
   return{status,errorMsg};
 }
@@ -7083,6 +7438,42 @@ function SyncBadge({status,errorMsg}){
 // ── Stock ──────────────────────────────────────────────────────────
 // Cantidad disponible por producto, comparada contra lo que ya está comprometido
 // en pedidos pendientes (aún no entregados): te dice qué te falta reponer o cuánto te sobra.
+// ── Resumen por categoría (se usa en Ventas, Compras y Métricas) ─────────────────────────
+function agruparPorCategoria(items,catMap,envaseMap){
+  const m={};
+  (items||[]).forEach(v=>{
+    const c=catMap[v.producto]||SIN_CATEGORIA;
+    const o=m[c]=m[c]||{categoria:c,litros:0,monto:0,n:0};
+    o.litros+=litrosDeItem(v.cantidad,envaseMap[v.producto]);
+    o.monto+=Number(v.monto)||0;
+    o.n+=1;
+  });
+  return Object.values(m).sort((a,b)=>b.litros-a.litros||b.monto-a.monto);
+}
+function ResumenPorCategoria({filas,titulo}){
+  if(!filas||filas.length===0)return null;
+  const totM=filas.reduce((a,f)=>a+f.monto,0);
+  const maxL=Math.max(1,...filas.map(f=>f.litros));
+  const fl=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:12}}>{titulo||"🗂️ Por categoría"}</div>
+      {filas.map(f=>(
+        <div key={f.categoria} style={{marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14,marginBottom:4}}>
+            <span style={{color:CR,fontWeight:600}}>{f.categoria}</span>
+            <span style={{color:MU,textAlign:"right"}}>{fl(f.litros)} L · {fmtARS(f.monto)}{totM>0?` · ${Math.round(f.monto/totM*100)}%`:""}</span>
+          </div>
+          <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden"}}>
+            <div style={{width:`${(f.litros/maxL)*100}%`,height:"100%",background:f.categoria===SIN_CATEGORIA?MU:G,borderRadius:4}}/>
+          </div>
+          <div style={{fontSize:12,color:MU,marginTop:2}}>{f.n} registro{f.n!==1?"s":""}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Cuadro de litros en stock: marca › estilo (filas) × envase (columnas) ──────────────────
 // Todo se expresa en litros: las latas se cargan en unidades y se convierten (1 lata = 0,5 L). Cada producto es un estilo.
 function CuadroStockLitros({prods}){
@@ -7486,6 +7877,7 @@ function App(){
   const[gastos,setGastos]=useState([]);
   const[comisiones,setComisiones]=useState([]);
   const[envasesExtra,setEnvasesExtra]=useState([]);
+  const[categorias,setCategorias]=useState(CATEGORIAS_INIT);
   const[proveedores,setProveedores]=useState([]);
   const mostrarBadgeCaja=useMemo(()=>{
     const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:Number(c.comisionPctDefault)||0})));
@@ -7539,7 +7931,8 @@ function App(){
     diasMora,setDiasMora,
     promo51,setPromo51,
     envasesExtra,setEnvasesExtra,
-    proveedores,setProveedores
+    proveedores,setProveedores,
+    categorias,setCategorias
   );
  
   const convertir=p=>{
@@ -7595,12 +7988,12 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods} pedidos={pedidos}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
-          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra}/>}
+          {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra} categorias={categorias}/>}
           {tab==="stock"&&<Stock prods={prods} setProds={setProds} pedidos={pedidos}/>}
           {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds}/>}
           {tab==="compras"&&<Compras proveedores={proveedores} prods={prods}/>}
           {tab==="rentabilidad"&&<Rentabilidad clientes={clientes} proveedores={proveedores} prods={prods}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias}/>}
         </main>
       </div>
     </div>
