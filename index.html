@@ -2291,9 +2291,24 @@ function FormCompra({prods,onSave,onCancel,marcaProveedor,initial,labelGuardar})
     const filtrados=prods.filter(p=>p.marca===marcaProveedor||(initial&&p.id===initial.producto));
     return filtrados.length?filtrados:prods;
   },[prods,marcaProveedor,initial]);
-  const[f,setF]=useState(initial?{fecha:initial.fecha,producto:initial.producto,cantidad:String(initial.cantidad??""),monto:String(initial.monto??""),pagado:!!initial.pagado}:{fecha:hoyISO(),producto:(prodsFiltrados[0]&&prodsFiltrados[0].id)||"",cantidad:"",monto:"",pagado:false});
+  const[f,setF]=useState(initial?{
+    fecha:initial.fecha,
+    producto:initial.producto,
+    cantidad:String(initial.cantidad??""),
+    monto:String(initial.montoNeto??initial.monto??""),
+    numeroComprobante:initial.numeroComprobante||"",
+    tipoComprobante:initial.tipoComprobante||"remito",
+    ivaPct:String(initial.ivaPct??21),
+    otrosImpuestos:String(initial.otrosImpuestos??""),
+    pagado:!!initial.pagado,
+  }:{fecha:hoyISO(),producto:(prodsFiltrados[0]&&prodsFiltrados[0].id)||"",cantidad:"",monto:"",numeroComprobante:"",tipoComprobante:"remito",ivaPct:"21",otrosImpuestos:"",pagado:false});
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const prod=prods.find(p=>p.id===f.producto);
+  const esFactura=f.tipoComprobante==="factura";
+  const montoNeto=Number(f.monto)||0;
+  const ivaMonto=esFactura?Math.round(montoNeto*(Number(f.ivaPct)||0))/100:0;
+  const otrosImp=Number(f.otrosImpuestos)||0;
+  const montoTotal=montoNeto+ivaMonto+otrosImp;
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {marcaProveedor&&prodsFiltrados.length<prods.length&&<div style={{fontSize:13,color:MU}}>Mostrando solo productos de la marca <strong style={{color:CR}}>{marcaProveedor}</strong>.</div>}
@@ -2301,8 +2316,33 @@ function FormCompra({prods,onSave,onCancel,marcaProveedor,initial,labelGuardar})
       <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{[...prodsFiltrados].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"24":"100"}/></div>
-        <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0"/></div>
+        <div><Lbl t={esFactura?"Monto neto ARS":"Monto ARS"}/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0"/></div>
       </div>
+
+      <div><Lbl t="Comprobante"/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:8}}>
+          <button onClick={()=>setF(p=>({...p,tipoComprobante:"remito"}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!esFactura?CR:BO}`,background:!esFactura?CR+"18":"transparent",color:!esFactura?CR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Remito</button>
+          <button onClick={()=>setF(p=>({...p,tipoComprobante:"factura"}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${esFactura?CR:BO}`,background:esFactura?CR+"18":"transparent",color:esFactura?CR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Factura</button>
+        </div>
+        <input value={f.numeroComprobante} onChange={s("numeroComprobante")} placeholder={esFactura?"N° de factura (ej: 0001-00001234)":"N° de remito (ej: 0001-00001234)"}/>
+      </div>
+
+      {esFactura&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+          <div><Lbl t="IVA %"/><input type="number" inputMode="numeric" value={f.ivaPct} onChange={s("ivaPct")} placeholder="21"/></div>
+          <div><Lbl t="Otros impuestos ARS"/><input type="number" inputMode="numeric" value={f.otrosImpuestos} onChange={s("otrosImpuestos")} placeholder="0"/></div>
+        </div>
+      )}
+
+      {(esFactura&&montoNeto>0)&&(
+        <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",fontSize:14,color:MU,display:"flex",flexDirection:"column",gap:2}}>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(montoNeto)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA ({f.ivaPct||0}%)</span><span>{fmtARS(ivaMonto)}</span></div>
+          {otrosImp>0&&<div style={{display:"flex",justifyContent:"space-between"}}><span>Otros impuestos</span><span>{fmtARS(otrosImp)}</span></div>}
+          <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,color:CR,fontSize:15,paddingTop:4,borderTop:`1px solid ${BO}`,marginTop:2}}><span>Total</span><span>{fmtARS(montoTotal)}</span></div>
+        </div>
+      )}
+
       {f.producto&&f.cantidad&&(
         <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"8px 12px",fontSize:14,color:G}}>
           📦 Al registrar, se suman {f.cantidad}{prod&&prod.envase==="Lata"?"u":"L"} al stock de {prod?nombreProdEnvase(prod):"este producto"}.
@@ -2314,7 +2354,21 @@ function FormCompra({prods,onSave,onCancel,marcaProveedor,initial,labelGuardar})
           <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn variant="green" onClick={()=>f.cantidad&&f.monto&&f.producto&&onSave({fecha:f.fecha,producto:f.producto,cantidad:Number(f.cantidad),monto:Number(f.monto),pagado:f.pagado})} disabled={!f.cantidad||!f.monto||!f.producto}>{labelGuardar||"Registrar compra"}</Btn></div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="green" onClick={()=>f.cantidad&&f.monto&&f.producto&&onSave({
+          fecha:f.fecha,
+          producto:f.producto,
+          cantidad:Number(f.cantidad),
+          monto:Math.round(montoTotal*100)/100,
+          montoNeto,
+          numeroComprobante:f.numeroComprobante.trim(),
+          tipoComprobante:f.tipoComprobante,
+          ivaPct:esFactura?(Number(f.ivaPct)||0):null,
+          otrosImpuestos:otrosImp,
+          pagado:f.pagado,
+        })} disabled={!f.cantidad||!f.monto||!f.producto}>{labelGuardar||"Registrar compra"}</Btn>
+      </div>
     </div>
   );
 }
@@ -3060,7 +3114,7 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
               <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
                 <div>
                   <div style={{fontSize:15,fontWeight:500,color:CR}}>{nombreProd(c.producto)}</div>
-                  <div style={{fontSize:14,color:MU}}>{fmtDate(c.fecha)} · {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}</div>
+                  <div style={{fontSize:14,color:MU}}>{fmtDate(c.fecha)} · {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}{c.numeroComprobante?` · ${c.tipoComprobante==="factura"?"Fact.":"Rem."} ${c.numeroComprobante}`:""}</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(c.monto)}</span>
@@ -3181,7 +3235,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
         <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${c.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
           <div>
             <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):c.producto}</div>
-            <div style={{fontSize:13,color:MU}}>{fmtDate(c.fecha)}</div>
+            <div style={{fontSize:13,color:MU}}>{fmtDate(c.fecha)}{c.numeroComprobante?` · ${c.tipoComprobante==="factura"?"Fact.":"Rem."} ${c.numeroComprobante}`:c.tipoComprobante==="factura"?" · Factura":""}</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:2}}>
             <div style={{textAlign:"right"}}>
