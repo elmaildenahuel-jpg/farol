@@ -1606,7 +1606,9 @@ const totalSaldosPendientes=e=>saldosPendientes(e).reduce((a,x)=>a+(Number(x.mon
 function saldoVentasCliente(c){ return (c.ventas||[]).filter(v=>!v.pagado).reduce((s,v)=>s+v.monto,0); }
 function saldoCliente(c){ return saldoVentasCliente(c)+totalSaldosPendientes(c); }
 // Aplica un cobro/pago a los saldos anteriores pendientes (el más viejo primero). Si el monto no alcanza a cubrir uno, lo divide en pagado + resto.
-function aplicarPagoASaldos(saldos,monto,campoFecha,fecha,medioPago,nota){
+// cobroId (opcional) etiqueta cada saldo que este pago efectivamente cubre, para poder reconstruir/deshacer el pago como
+// UN solo movimiento (ver aplicarCobroACliente / deshacerCobroCliente) en vez de que quede desmembrado por fila.
+function aplicarPagoASaldos(saldos,monto,campoFecha,fecha,medioPago,nota,cobroId){
   let restante=monto;
   const lista=saldos||[];
   const pend=lista.filter(x=>!x.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
@@ -1614,9 +1616,9 @@ function aplicarPagoASaldos(saldos,monto,campoFecha,fecha,medioPago,nota){
   pend.forEach(x=>{
     const m=Number(x.monto)||0;
     if(restante<=0){procesados.push(x);return;}
-    if(restante>=m){restante-=m;procesados.push({...x,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||""});return;}
-    procesados.push({...x,monto:restante,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||""});
-    procesados.push({id:uid(),fecha:x.fecha,monto:m-restante,descripcion:x.descripcion||"",pagado:false});
+    if(restante>=m){restante-=m;procesados.push({...x,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||"",cobroId:cobroId||null});return;}
+    procesados.push({...x,monto:restante,pagado:true,[campoFecha]:fecha,medioPago,nota:nota||x.nota||"",cobroId:cobroId||null});
+    procesados.push({id:uid(),fecha:x.fecha,monto:m-restante,descripcion:x.descripcion||"",pagado:false,_origenId:x.id});
     restante=0;
   });
   return{saldos:[...lista.filter(x=>x.pagado),...procesados],restante};
@@ -1848,8 +1850,12 @@ function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota=""
   const comprasFinales=[];
   nuevasCompras.forEach(c=>{
     if(c._split){
-      comprasFinales.push({id:c.id,fecha:c.fecha,producto:c.producto,cantidad:c._cantPagada,monto:c._montoPagado,pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
-      comprasFinales.push({id:uid(),fecha:c.fecha,producto:c.producto,cantidad:c._cantRestante,monto:c._montoRestante,pagado:false});
+      // Al partir una compra se conservan los datos del comprobante (tipo, número, grupo) y se reparten neto/IVA/otros en proporción
+      const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=c;
+      const escalar=(campo,ratio)=>base[campo]!=null?redondear2((Number(base[campo])||0)*ratio):base[campo];
+      const rP=c.monto>0?_montoPagado/c.monto:0,rR=c.monto>0?_montoRestante/c.monto:0;
+      comprasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,montoNeto:escalar("montoNeto",rP),ivaMonto:escalar("ivaMonto",rP),otrosImpuestos:escalar("otrosImpuestos",rP),pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
+      comprasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,montoNeto:escalar("montoNeto",rR),ivaMonto:escalar("ivaMonto",rR),otrosImpuestos:escalar("otrosImpuestos",rR),pagado:false});
     }else{comprasFinales.push(c);}
   });
   return{...proveedor,compras:comprasFinales,saldosAnteriores:resSaldos.saldos};
@@ -2264,110 +2270,349 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault,initial,labelGuarda
 }
  
 function FormProveedor({initial,onSave,onCancel,marcasDisponibles}){
-  const[f,setF]=useState(initial||{nombre:"",telefono:"",direccion:"",notas:"",marca:""});
+  const[f,setF]=useState(()=>({nombre:(initial&&initial.nombre)||"",telefono:(initial&&initial.telefono)||"",direccion:(initial&&initial.direccion)||"",notas:(initial&&initial.notas)||"",marcas:marcasDeProveedor(initial)}));
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const opciones=[...new Set([...(marcasDisponibles||[]),...f.marcas])].sort((a,b)=>a.localeCompare(b));
+  const toggleMarca=m=>setF(p=>({...p,marcas:p.marcas.includes(m)?p.marcas.filter(x=>x!==m):[...p.marcas,m]}));
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Nombre"/><input value={f.nombre} onChange={s("nombre")} placeholder="Ej: Grunge (fábrica)"/></div>
       <div>
-        <Lbl t="Marca que provee"/>
-        <input value={f.marca||""} onChange={s("marca")} placeholder="Ej: Grunge" list="marcas-proveedor-dl"/>
-        <datalist id="marcas-proveedor-dl">{(marcasDisponibles||[]).map(m=><option key={m} value={m}/>)}</datalist>
-        <div style={{fontSize:13,color:MU,marginTop:4}}>Al registrar una compra, el desplegable de productos se filtra solo a esta marca.</div>
+        <Lbl t="Marcas que provee"/>
+        {opciones.length===0?(
+          <div style={{fontSize:13,color:MU}}>Todavía no hay marcas cargadas en Productos.</div>
+        ):(
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {opciones.map(m=>{const on=f.marcas.includes(m);return(
+              <button key={m} onClick={()=>toggleMarca(m)} style={{padding:"7px 14px",borderRadius:20,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${on?G:BO}`,background:on?G:"transparent",color:on?"#fff":MU}}>{on?"✓ ":""}{m}</button>
+            );})}
+          </div>
+        )}
+        <div style={{fontSize:13,color:MU,marginTop:6}}>Al registrar una compra, el buscador de productos muestra solo los de las marcas tildadas. Sin ninguna marca, muestra todos.</div>
       </div>
       <div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número"/></div>
       <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="numeric"/></div>
       <div><Lbl t="Notas"/><textarea rows={3} value={f.notas} onChange={s("notas")} placeholder="Condiciones de pago, contacto, cuenta bancaria..."/></div>
-      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn onClick={()=>f.nombre.trim()&&onSave(f)} disabled={!f.nombre.trim()}>Guardar</Btn></div>
+      <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn onClick={()=>f.nombre.trim()&&onSave({nombre:f.nombre,telefono:f.telefono,direccion:f.direccion,notas:f.notas,marcas:f.marcas,marca:f.marcas.join(", ")})} disabled={!f.nombre.trim()}>Guardar</Btn></div>
     </div>
   );
 }
 
-function FormCompra({prods,onSave,onCancel,marcaProveedor,initial,labelGuardar}){
-  // El desplegable se filtra a la marca del proveedor (si tiene una configurada). Si no hay ningún
-  // producto de esa marca, o se está editando una compra de un producto que ya no matchea, se cae a mostrar todos.
-  const prodsFiltrados=useMemo(()=>{
-    if(!marcaProveedor)return prods;
-    const filtrados=prods.filter(p=>p.marca===marcaProveedor||(initial&&p.id===initial.producto));
-    return filtrados.length?filtrados:prods;
-  },[prods,marcaProveedor,initial]);
-  const[f,setF]=useState(initial?{
-    fecha:initial.fecha,
-    producto:initial.producto,
-    cantidad:String(initial.cantidad??""),
-    monto:String(initial.montoNeto??initial.monto??""),
-    numeroComprobante:initial.numeroComprobante||"",
-    tipoComprobante:initial.tipoComprobante||"remito",
-    ivaPct:String(initial.ivaPct??21),
-    otrosImpuestos:String(initial.otrosImpuestos??""),
-    pagado:!!initial.pagado,
-  }:{fecha:hoyISO(),producto:(prodsFiltrados[0]&&prodsFiltrados[0].id)||"",cantidad:"",monto:"",numeroComprobante:"",tipoComprobante:"remito",ivaPct:"21",otrosImpuestos:"",pagado:false});
-  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const prod=prods.find(p=>p.id===f.producto);
-  const esFactura=f.tipoComprobante==="factura";
-  const montoNeto=Number(f.monto)||0;
-  const ivaMonto=esFactura?Math.round(montoNeto*(Number(f.ivaPct)||0))/100:0;
-  const otrosImp=Number(f.otrosImpuestos)||0;
-  const montoTotal=montoNeto+ivaMonto+otrosImp;
+// ── Compras: un comprobante (remito/factura) puede traer varios productos ───────────────────────
+// Se guarda UNA FILA por producto en proveedor.compras (así stock, cuenta corriente, Rentabilidad y Compras siguen
+// funcionando igual) y todas comparten comprobanteId + datos del comprobante. El IVA y los otros impuestos se prorratean
+// entre las filas según su neto, de modo que la suma de `monto` de las filas = total del comprobante.
+const redondear2=n=>Math.round((Number(n)||0)*100)/100;
+const normTxt=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+function prorratear(total,pesos){
+  if(!pesos.length)return[];
+  const suma=pesos.reduce((s,p)=>s+p,0);
+  let acum=0;
+  return pesos.map((p,i)=>{
+    if(i===pesos.length-1)return redondear2(total-acum);
+    const parte=redondear2(suma>0?total*p/suma:total/pesos.length);
+    acum=redondear2(acum+parte);
+    return parte;
+  });
+}
+// Marcas que provee un proveedor (soporta varias; los datos viejos guardaban una sola en `marca`)
+function marcasDeProveedor(p){
+  if(!p)return[];
+  if(Array.isArray(p.marcas))return p.marcas.filter(Boolean);
+  return String(p.marca||"").split(",").map(x=>x.trim()).filter(Boolean);
+}
+const nuevaLineaCompra=()=>({id:uid(),rowId:null,producto:"",cantidad:"",monto:""});
+// Agrupa las filas de compras por comprobante (las compras viejas, sin comprobanteId, quedan como un comprobante de una línea)
+function agruparCompras(compras){
+  const m=new Map();
+  (compras||[]).forEach(c=>{const k=c.comprobanteId||c.id;if(!m.has(k))m.set(k,[]);m.get(k).push(c);});
+  return Array.from(m.entries()).map(([key,rows])=>{
+    const first=rows[0];
+    const pagadas=rows.filter(r=>r.pagado).length;
+    return{
+      key,rows,
+      fecha:rows.reduce((mx,r)=>(r.fecha||"")>mx?r.fecha:mx,first.fecha||""),
+      tipo:first.tipoComprobante||null,
+      numero:first.numeroComprobante||"",
+      total:rows.reduce((s,r)=>s+(Number(r.monto)||0),0),
+      neto:rows.reduce((s,r)=>s+(Number(r.montoNeto??r.monto)||0),0),
+      iva:rows.reduce((s,r)=>s+(Number(r.ivaMonto)||0),0),
+      otros:Array.isArray(first.compImpuestos)?first.compImpuestos:(rows.reduce((s,r)=>s+(Number(r.otrosImpuestos)||0),0)>0?[{id:"manual",nombre:"Otros impuestos",pct:null,monto:redondear2(rows.reduce((s,r)=>s+(Number(r.otrosImpuestos)||0),0))}]:[]),
+      ivaPct:first.ivaPct,
+      estado:pagadas===rows.length?"pagado":pagadas===0?"pendiente":"parcial",
+    };
+  }).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+}
+// Convierte el comprobante cargado en el formulario en filas de compra. `previas` = filas existentes (al editar) para conservar ids y estado de pago.
+function filasDeComprobante(comp,comprobanteId,previas){
+  const esF=comp.tipoComprobante==="factura";
+  const netos=comp.lineas.map(l=>Number(l.montoNeto)||0);
+  const totalNeto=netos.reduce((s,n)=>s+n,0);
+  const ivaTot=esF?redondear2(totalNeto*(Number(comp.ivaPct)||0)/100):0;
+  const otrosTot=esF?redondear2((comp.impuestos||[]).reduce((s,x)=>s+(Number(x.monto)||0),0)):0;
+  const ivas=prorratear(ivaTot,netos),otros=prorratear(otrosTot,netos);
+  return comp.lineas.map((l,i)=>{
+    const prev=l.rowId?(previas||[]).find(r=>r.id===l.rowId):null;
+    const fila={
+      id:(prev&&prev.id)||uid(),comprobanteId,fecha:comp.fecha,producto:l.producto,cantidad:Number(l.cantidad),
+      monto:redondear2(netos[i]+ivas[i]+otros[i]),montoNeto:netos[i],
+      tipoComprobante:comp.tipoComprobante,numeroComprobante:comp.numeroComprobante||"",
+      ivaPct:esF?(Number(comp.ivaPct)||0):null,ivaMonto:ivas[i],otrosImpuestos:otros[i],compImpuestos:esF?(comp.impuestos||[]):[],
+    };
+    const pagarYa=comp.pagado===true||(comp.pagado===null&&prev&&prev.pagado);
+    if(pagarYa){
+      fila.pagado=true;
+      fila.fechaPago=(prev&&prev.fechaPago)||comp.fecha;
+      fila.medioPago=(prev&&prev.medioPago)||"Efectivo";
+      if(prev&&prev.nota)fila.nota=prev.nota;
+    }else fila.pagado=false;
+    return fila;
+  });
+}
+// Estado inicial del formulario: vacío, o reconstruido desde las filas de un comprobante existente
+function estadoInicialComprobante(rows,impuestos){
+  if(!rows||!rows.length)return{fecha:hoyISO(),tipo:"remito",numero:"",ivaPct:"21",pagado:false,lineas:[nuevaLineaCompra()],impSel:{},manual:"",huerfanos:[]};
+  const first=rows[0];
+  const impSel={},huerfanos=[];let manual="";
+  if(Array.isArray(first.compImpuestos)){
+    first.compImpuestos.forEach(x=>{
+      if(x.id==="manual"){manual=String(x.monto??"");return;}
+      impSel[x.id]={on:true,pct:String(x.pct??"")};
+      if(!(impuestos||[]).some(i=>i.id===x.id))huerfanos.push({id:x.id,nombre:x.nombre,pct:String(x.pct??"")});   // ya no está en Configuración: se conserva para poder editar
+    });
+  }else{
+    const o=rows.reduce((s,r)=>s+(Number(r.otrosImpuestos)||0),0);
+    if(o>0)manual=String(redondear2(o));
+  }
+  const pag=rows.filter(r=>r.pagado).length;
+  return{
+    fecha:first.fecha,tipo:first.tipoComprobante||"remito",numero:first.numeroComprobante||"",ivaPct:String(first.ivaPct??21),
+    pagado:pag===rows.length?true:pag===0?false:null,
+    lineas:rows.map(r=>({id:uid(),rowId:r.id,producto:r.producto,cantidad:String(r.cantidad??""),monto:String(r.montoNeto??r.monto??"")})),
+    impSel,manual,huerfanos,
+  };
+}
+
+// Buscador de producto con autocompletado: filtra mientras se escribe y prioriza lo que ya le compraste a este proveedor.
+function ProductoPredictivo({value,candidatos,hist,onSelect}){
+  const sel=candidatos.find(p=>p.id===value)||null;
+  const[q,setQ]=useState(sel?nombreProdEnvase(sel):"");
+  const[abierto,setAbierto]=useState(false);
+  const tokens=normTxt(q).split(/\s+/).filter(Boolean);
+  const mostrandoSeleccion=!!sel&&q===nombreProdEnvase(sel);
+  const lista=candidatos
+    .filter(p=>{if(mostrandoSeleccion||!tokens.length)return true;const t=normTxt(nombreProdEnvase(p)+" "+(p.marca||""));return tokens.every(k=>t.includes(k));})
+    .sort((a,b)=>((hist[b.id]?hist[b.id].n:0)-(hist[a.id]?hist[a.id].n:0))||nombreProdEnvase(a).localeCompare(nombreProdEnvase(b)));
+  const elegir=p=>{onSelect(p.id);setQ(nombreProdEnvase(p));setAbierto(false);};
+  return(
+    <div>
+      <input
+        value={q}
+        placeholder="Escribí para buscar el producto…"
+        autoComplete="off"
+        onFocus={e=>{setAbierto(true);e.target.select();}}
+        onBlur={()=>setTimeout(()=>setAbierto(false),160)}
+        onChange={e=>{setQ(e.target.value);setAbierto(true);if(value)onSelect("");}}
+        style={{borderColor:value?G+"88":undefined}}
+      />
+      {abierto&&(
+        <div onMouseDown={e=>e.preventDefault()} style={{marginTop:4,maxHeight:220,overflowY:"auto",background:"#fff",border:`1px solid ${BO}`,borderRadius:8}}>
+          {lista.length===0?(
+            <div style={{padding:"10px 12px",fontSize:14,color:MU}}>{candidatos.length===0?"No hay productos para este proveedor.":"Sin coincidencias entre los productos de este proveedor."}</div>
+          ):lista.map(p=>{
+            const h=hist[p.id];
+            return(
+              <button key={p.id} onClick={()=>elegir(p)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 12px",background:p.id===value?G+"14":"transparent",border:"none",borderBottom:`1px solid ${BO}`,cursor:"pointer"}}>
+                <div style={{fontSize:15,fontWeight:600,color:CR}}>{nombreProdEnvase(p)}</div>
+                <div style={{fontSize:12,color:MU}}>{p.marca||"Sin marca"}{h?` · comprado ${h.n} ${h.n===1?"vez":"veces"}`:""}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCancel,labelGuardar}){
+  const hayMarcas=(marcas||[]).length>0;
+  const editando=!!(initialRows&&initialRows.length);
+  // Solo productos de las marcas del proveedor (más, al editar, los que ya tenía la compra aunque no coincidan)
+  const candidatos=useMemo(()=>{
+    if(!hayMarcas)return prods;
+    const mn=marcas.map(normTxt),propios=new Set((initialRows||[]).map(r=>r.producto));
+    return prods.filter(p=>mn.includes(normTxt(p.marca))||propios.has(p.id));
+  },[prods,marcas,hayMarcas,initialRows]);
+  // Historial por producto de este proveedor: cuántas veces se compró y cuál fue la última compra
+  const hist=useMemo(()=>{
+    const m={};
+    (historial||[]).filter(c=>!(initialRows||[]).some(r=>r.id===c.id)).forEach(c=>{
+      const h=m[c.producto]=m[c.producto]||{n:0,ult:null};
+      h.n++;
+      if(!h.ult||(c.fecha||"")>=(h.ult.fecha||""))h.ult=c;
+    });
+    return m;
+  },[historial,initialRows]);
+  const[f,setF]=useState(()=>estadoInicialComprobante(initialRows,impuestos));
+  const esFactura=f.tipo==="factura";
+  const setLinea=(id,patch)=>setF(p=>({...p,lineas:p.lineas.map(l=>l.id===id?{...l,...patch}:l)}));
+  const agregarLinea=()=>setF(p=>({...p,lineas:[...p.lineas,nuevaLineaCompra()]}));
+  const quitarLinea=id=>setF(p=>({...p,lineas:p.lineas.length>1?p.lineas.filter(l=>l.id!==id):p.lineas}));
+  const toggleImp=x=>setF(p=>{const cur=p.impSel[x.id];return{...p,impSel:{...p.impSel,[x.id]:cur?{...cur,on:!cur.on}:{on:true,pct:String(x.pct)}}};});
+  const setImpPct=(id,v)=>setF(p=>({...p,impSel:{...p.impSel,[id]:{...(p.impSel[id]||{on:true}),pct:v}}}));
+  const listaImp=[...(impuestos||[]),...f.huerfanos];
+  const prodDe=id=>prods.find(p=>p.id===id);
+  const unidad=id=>{const p=prodDe(id);return p&&p.envase==="Lata"?"u":"L";};
+
+  const totalNeto=f.lineas.reduce((s,l)=>s+(Number(l.monto)||0),0);
+  const ivaMonto=esFactura?redondear2(totalNeto*(Number(f.ivaPct)||0)/100):0;
+  const impAplicados=esFactura?[
+    ...listaImp.filter(x=>f.impSel[x.id]&&f.impSel[x.id].on).map(x=>{const n=Number(f.impSel[x.id].pct);const pct=isNaN(n)?0:n;return{id:x.id,nombre:x.nombre,pct,monto:redondear2(totalNeto*pct/100)};}),
+    ...((Number(f.manual)||0)>0?[{id:"manual",nombre:"Otros (monto manual)",pct:null,monto:redondear2(Number(f.manual))}]:[]),
+  ]:[];
+  const otrosTotal=impAplicados.reduce((s,x)=>s+x.monto,0);
+  const total=redondear2(totalNeto+ivaMonto+otrosTotal);
+
+  const tocada=l=>l.producto||l.cantidad||l.monto;
+  const completa=l=>l.producto&&Number(l.cantidad)>0&&Number(l.monto)>0;
+  const lineasOk=f.lineas.filter(completa);
+  const hayIncompletas=f.lineas.some(l=>tocada(l)&&!completa(l));
+  const puedeGuardar=lineasOk.length>0&&!hayIncompletas;
+  const numeroRepetido=useMemo(()=>{const n=f.numero.trim();return!!n&&(historial||[]).some(c=>(c.numeroComprobante||"")===n&&!(initialRows||[]).some(r=>r.id===c.id));},[f.numero,historial,initialRows]);
+
+  const guardar=()=>{
+    if(!puedeGuardar)return;
+    onSave({
+      fecha:f.fecha,tipoComprobante:f.tipo,numeroComprobante:f.numero.trim(),
+      ivaPct:esFactura?(Number(f.ivaPct)||0):null,impuestos:impAplicados,pagado:f.pagado,
+      lineas:lineasOk.map(l=>({rowId:l.rowId,producto:l.producto,cantidad:Number(l.cantidad),montoNeto:redondear2(l.monto)})),
+    });
+  };
+  const btnTipo=(k,t)=>(
+    <button onClick={()=>setF(p=>({...p,tipo:k}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.tipo===k?CR:BO}`,background:f.tipo===k?CR+"18":"transparent",color:f.tipo===k?CR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>{t}</button>
+  );
+
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {marcaProveedor&&prodsFiltrados.length<prods.length&&<div style={{fontSize:13,color:MU}}>Mostrando solo productos de la marca <strong style={{color:CR}}>{marcaProveedor}</strong>.</div>}
-      <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-      <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{[...prodsFiltrados].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
-        <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"24":"100"}/></div>
-        <div><Lbl t={esFactura?"Monto neto ARS":"Monto ARS"}/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0"/></div>
-      </div>
+      {hayMarcas
+        ?<div style={{fontSize:13,color:MU}}>Mostrando solo productos de: <strong style={{color:CR}}>{marcas.join(", ")}</strong>{candidatos.length===0?" — no hay productos cargados con esa marca.":"."}</div>
+        :<div style={{fontSize:13,color:"#B7691F",background:AM+"14",border:`1px solid ${AM}44`,borderRadius:8,padding:"8px 10px"}}>Este proveedor no tiene marca asignada, por eso aparecen todos los productos. Editá el proveedor y elegí qué marcas provee para limitar el listado.</div>}
+
+      <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={e=>setF(p=>({...p,fecha:e.target.value}))}/></div>
 
       <div><Lbl t="Comprobante"/>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:8}}>
-          <button onClick={()=>setF(p=>({...p,tipoComprobante:"remito"}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!esFactura?CR:BO}`,background:!esFactura?CR+"18":"transparent",color:!esFactura?CR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Remito</button>
-          <button onClick={()=>setF(p=>({...p,tipoComprobante:"factura"}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${esFactura?CR:BO}`,background:esFactura?CR+"18":"transparent",color:esFactura?CR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Factura</button>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:8}}>{btnTipo("remito","Remito")}{btnTipo("factura","Factura")}</div>
+        <input value={f.numero} onChange={e=>setF(p=>({...p,numero:e.target.value}))} placeholder={esFactura?"N° de factura (ej: 0001-00001234)":"N° de remito (ej: 0001-00001234)"}/>
+        {numeroRepetido&&<div style={{fontSize:13,color:"#C62828",marginTop:4}}>⚠ Ya cargaste una compra de este proveedor con ese número.</div>}
+      </div>
+
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+          <Lbl t={`Productos (${f.lineas.length})`}/>
         </div>
-        <input value={f.numeroComprobante} onChange={s("numeroComprobante")} placeholder={esFactura?"N° de factura (ej: 0001-00001234)":"N° de remito (ej: 0001-00001234)"}/>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {f.lineas.map((l,i)=>{
+            const h=l.producto?hist[l.producto]:null;
+            const cant=Number(l.cantidad)||0,monto=Number(l.monto)||0;
+            const costoU=cant>0&&monto>0?monto/cant:null;
+            const ult=h&&h.ult?h.ult:null;
+            const ultNeto=ult?(Number(ult.montoNeto??ult.monto)||0):0;
+            const costoUlt=ult&&Number(ult.cantidad)>0?ultNeto/Number(ult.cantidad):null;
+            const varPct=costoU&&costoUlt?Math.round((costoU/costoUlt-1)*1000)/10:null;
+            return(
+              <div key={l.id} style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Producto {i+1}</span>
+                  {f.lineas.length>1&&<button onClick={()=>quitarLinea(l.id)} aria-label="Quitar producto" style={{padding:4,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>}
+                </div>
+                <ProductoPredictivo value={l.producto} candidatos={candidatos} hist={hist} onSelect={id=>setLinea(l.id,{producto:id})}/>
+                {ult&&!l.cantidad&&!l.monto&&(
+                  <button onClick={()=>setLinea(l.id,{cantidad:String(ult.cantidad),monto:String(ultNeto)})} style={{alignSelf:"flex-start",fontSize:13,fontWeight:700,padding:"6px 10px",borderRadius:8,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>
+                    ↺ Repetir última compra ({ult.cantidad}{unidad(l.producto)} · {fmtARS(ultNeto)})
+                  </button>
+                )}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+                  <div><Lbl t={unidad(l.producto)==="u"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>setLinea(l.id,{cantidad:e.target.value})} placeholder={unidad(l.producto)==="u"?"24":"100"}/></div>
+                  <div><Lbl t={esFactura?"Neto ARS":"Monto ARS"}/><input type="number" inputMode="numeric" value={l.monto} onChange={e=>setLinea(l.id,{monto:e.target.value})} placeholder="0"/></div>
+                </div>
+                {costoU!=null&&(
+                  <div style={{fontSize:13,color:MU}}>
+                    {fmtARS(Math.round(costoU))} por {unidad(l.producto)==="u"?"unidad":"litro"}
+                    {varPct!=null&&<span style={{fontWeight:700,color:varPct>0?"#C62828":varPct<0?GR:MU}}> · {varPct>0?"▲ +":varPct<0?"▼ ":""}{varPct}% vs. última compra</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={agregarLinea} style={{width:"100%",marginTop:10,padding:"10px 0",borderRadius:8,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:`1px dashed ${G}88`,background:"none",color:G}}>{I.plus}Agregar otro producto</button>
+        {hayIncompletas&&<div style={{fontSize:13,color:"#C62828",marginTop:6}}>Completá producto, cantidad y monto en cada línea (o quitá la que no uses).</div>}
       </div>
 
       {esFactura&&(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
-          <div><Lbl t="IVA %"/><input type="number" inputMode="numeric" value={f.ivaPct} onChange={s("ivaPct")} placeholder="21"/></div>
-          <div><Lbl t="Otros impuestos ARS"/><input type="number" inputMode="numeric" value={f.otrosImpuestos} onChange={s("otrosImpuestos")} placeholder="0"/></div>
+        <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+            <div><Lbl t="IVA %"/><input type="number" inputMode="decimal" step="0.01" value={f.ivaPct} onChange={e=>setF(p=>({...p,ivaPct:e.target.value}))} placeholder="21"/></div>
+            <div><Lbl t="Otros (monto manual)"/><input type="number" inputMode="numeric" value={f.manual} onChange={e=>setF(p=>({...p,manual:e.target.value}))} placeholder="0"/></div>
+          </div>
+          <div>
+            <Lbl t="Otros impuestos y percepciones"/>
+            {listaImp.length===0?(
+              <div style={{fontSize:13,color:MU}}>No tenés ninguno cargado. Podés definirlos en Configuración → Otros impuestos y percepciones.</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {listaImp.map(x=>{
+                  const st=f.impSel[x.id];const on=!!(st&&st.on);
+                  const pct=on?st.pct:x.pct;
+                  const n=Number(pct);const monto=on&&!isNaN(n)?redondear2(totalNeto*n/100):null;
+                  return(
+                    <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,background:on?G+"10":"#fff",border:`1px solid ${on?G+"55":BO}`,borderRadius:8,padding:"8px 10px"}}>
+                      <button onClick={()=>toggleImp(x)} aria-label={`${on?"Quitar":"Aplicar"} ${x.nombre}`} style={{width:24,height:24,flexShrink:0,borderRadius:6,border:`1px solid ${on?G:BO}`,background:on?G:"#fff",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",lineHeight:1,padding:0}}>{on?"✓":""}</button>
+                      <div style={{flex:1,minWidth:0,fontSize:14,color:CR,fontWeight:500}}>{x.nombre}{x._huerfano||f.huerfanos.some(h=>h.id===x.id)?<span style={{color:MU,fontWeight:400}}> (ya no está en Configuración)</span>:null}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+                        <input type="number" inputMode="decimal" step="0.01" value={pct} disabled={!on} onChange={e=>setImpPct(x.id,e.target.value)} style={{width:64,padding:"6px 8px",opacity:on?1:0.5}}/>
+                        <span style={{color:MU,fontSize:14}}>%</span>
+                      </div>
+                      <div style={{width:74,textAlign:"right",fontSize:13,fontWeight:600,color:on?CR:MU,flexShrink:0}}>{monto!=null?fmtARS(monto):"—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {(esFactura&&montoNeto>0)&&(
+      {totalNeto>0&&(
         <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",fontSize:14,color:MU,display:"flex",flexDirection:"column",gap:2}}>
-          <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(montoNeto)}</span></div>
-          <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA ({f.ivaPct||0}%)</span><span>{fmtARS(ivaMonto)}</span></div>
-          {otrosImp>0&&<div style={{display:"flex",justifyContent:"space-between"}}><span>Otros impuestos</span><span>{fmtARS(otrosImp)}</span></div>}
-          <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,color:CR,fontSize:15,paddingTop:4,borderTop:`1px solid ${BO}`,marginTop:2}}><span>Total</span><span>{fmtARS(montoTotal)}</span></div>
+          {esFactura&&(
+            <>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(totalNeto)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA ({f.ivaPct||0}%)</span><span>{fmtARS(ivaMonto)}</span></div>
+              {impAplicados.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between"}}><span>{x.nombre}{x.pct!=null?` (${x.pct}%)`:""}</span><span>{fmtARS(x.monto)}</span></div>)}
+            </>
+          )}
+          <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,color:CR,fontSize:15,paddingTop:esFactura?4:0,borderTop:esFactura?`1px solid ${BO}`:"none",marginTop:esFactura?2:0}}><span>Total{f.lineas.length>1?` (${lineasOk.length} productos)`:""}</span><span>{fmtARS(total)}</span></div>
         </div>
       )}
 
-      {f.producto&&f.cantidad&&(
-        <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"8px 12px",fontSize:14,color:G}}>
-          📦 Al registrar, se suman {f.cantidad}{prod&&prod.envase==="Lata"?"u":"L"} al stock de {prod?nombreProdEnvase(prod):"este producto"}.
+      {lineasOk.length>0&&(
+        <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"8px 12px",fontSize:14,color:G,display:"flex",flexDirection:"column",gap:2}}>
+          {lineasOk.map(l=><div key={l.id}>📦 {editando?"Stock:":"Se suman"} {l.cantidad}{unidad(l.producto)} {editando?"en":"al stock de"} {nombreProdEnvase(prodDe(l.producto))}</div>)}
         </div>
       )}
+
       <div><Lbl t="¿Ya se pagó?"/>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
-          <button onClick={()=>setF(p=>({...p,pagado:true}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado?GR:BO}`,background:f.pagado?GR+"22":"transparent",color:f.pagado?GR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
-          <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${!f.pagado?AM:BO}`,background:!f.pagado?AM+"22":"transparent",color:!f.pagado?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
+          <button onClick={()=>setF(p=>({...p,pagado:true}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado===true?GR:BO}`,background:f.pagado===true?GR+"22":"transparent",color:f.pagado===true?GR:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Pagado</button>
+          <button onClick={()=>setF(p=>({...p,pagado:false}))} style={{padding:"10px 0",borderRadius:8,border:`1px solid ${f.pagado===false?AM:BO}`,background:f.pagado===false?AM+"22":"transparent",color:f.pagado===false?AM:MU,fontSize:15,fontWeight:700,cursor:"pointer"}}>Cuenta corriente</button>
         </div>
+        {f.pagado===null&&<div style={{fontSize:13,color:MU,marginTop:6}}>Este comprobante tiene pagos parciales: se conserva el estado de pago de cada línea. Si tocás una opción, se aplica a todo el comprobante.</div>}
       </div>
+
       <div style={{display:"flex",gap:8,paddingTop:4}}>
         <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
-        <Btn variant="green" onClick={()=>f.cantidad&&f.monto&&f.producto&&onSave({
-          fecha:f.fecha,
-          producto:f.producto,
-          cantidad:Number(f.cantidad),
-          monto:Math.round(montoTotal*100)/100,
-          montoNeto,
-          numeroComprobante:f.numeroComprobante.trim(),
-          tipoComprobante:f.tipoComprobante,
-          ivaPct:esFactura?(Number(f.ivaPct)||0):null,
-          otrosImpuestos:otrosImp,
-          pagado:f.pagado,
-        })} disabled={!f.cantidad||!f.monto||!f.producto}>{labelGuardar||"Registrar compra"}</Btn>
+        <Btn variant="green" onClick={guardar} disabled={!puedeGuardar}>{labelGuardar||"Registrar compra"}</Btn>
       </div>
     </div>
   );
@@ -3163,43 +3408,46 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
 }
 
 // ── DetalleProveedor ──────────────────────────────────────────────
-function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
+function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos}){
   const[cForm,setCForm]=useState(false);
   const[edit,setEdit]=useState(false);
-  const[editandoCompraId,setEditandoCompraId]=useState(null);
-  const[borrandoCompraId,setBorrandoCompraId]=useState(null);
+  const[editandoKey,setEditandoKey]=useState(null);
+  const[borrandoKey,setBorrandoKey]=useState(null);
   const[confirmBorrar,setConfirmBorrar]=useState(false);
   const total=(proveedor.compras||[]).reduce((s,c)=>s+c.monto,0);
-  const sorted=[...(proveedor.compras||[])].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const grupos=useMemo(()=>agruparCompras(proveedor.compras),[proveedor.compras]);
+  const marcas=marcasDeProveedor(proveedor);
   const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
   if(edit)return<FormProveedor initial={proveedor} marcasDisponibles={marcasDisponibles} onCancel={()=>setEdit(false)} onSave={f=>{onUpdate({...proveedor,...f});setEdit(false);}}/>;
 
-  // Registrar compra: agrega el movimiento a la cuenta corriente del proveedor Y suma la cantidad al stock del producto.
-  const registrarCompra=c=>{
-    onUpdate({...proveedor,compras:[...(proveedor.compras||[]),{id:uid(),...c}]});
-    setProds(prev=>prev.map(p=>p.id===c.producto?{...p,stock:(Number(p.stock)||0)+Number(c.cantidad)}:p));
+  // Stock: cada compra suma al stock del producto; editar ajusta por la diferencia; eliminar revierte (sin bajar de 0).
+  const deltaDe=(filas,signo,acum)=>{const d=acum||{};filas.forEach(r=>{d[r.producto]=(d[r.producto]||0)+signo*(Number(r.cantidad)||0);});return d;};
+  const ajustarStock=(delta,piso)=>setProds(prev=>prev.map(p=>delta[p.id]?{...p,stock:piso?Math.max(0,(Number(p.stock)||0)+delta[p.id]):(Number(p.stock)||0)+delta[p.id]}:p));
+
+  // Registrar compra: agrega una fila por producto a la cuenta corriente Y suma las cantidades al stock.
+  const registrarCompra=comp=>{
+    const filas=filasDeComprobante(comp,uid(),[]);
+    onUpdate({...proveedor,compras:[...(proveedor.compras||[]),...filas]});
+    ajustarStock(deltaDe(filas,1),false);
     setCForm(false);
   };
-
-  // Editar compra: corrige el movimiento y ajusta el stock por la diferencia (incluso si cambió de producto),
-  // para poder corregir cargas de saldos/compras viejas sin descuadrar el stock.
-  const guardarEdicionCompra=(compraVieja,datos)=>{
-    onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===compraVieja.id?{...c,...datos}:c)});
-    setProds(prev=>prev.map(p=>{
-      if(p.id===compraVieja.producto&&p.id===datos.producto)return{...p,stock:(Number(p.stock)||0)-Number(compraVieja.cantidad)+Number(datos.cantidad)};
-      if(p.id===compraVieja.producto)return{...p,stock:(Number(p.stock)||0)-Number(compraVieja.cantidad)};
-      if(p.id===datos.producto)return{...p,stock:(Number(p.stock)||0)+Number(datos.cantidad)};
-      return p;
-    }));
-    setEditandoCompraId(null);
+  // Editar comprobante: reemplaza sus filas (conservando ids y pagos) y ajusta el stock por la diferencia.
+  const guardarEdicion=(grupo,comp)=>{
+    const filas=filasDeComprobante(comp,grupo.rows[0].comprobanteId||uid(),grupo.rows);
+    const viejos=new Set(grupo.rows.map(r=>r.id));
+    onUpdate({...proveedor,compras:[...(proveedor.compras||[]).filter(c=>!viejos.has(c.id)),...filas]});
+    ajustarStock(deltaDe(filas,1,deltaDe(grupo.rows,-1)),false);
+    setEditandoKey(null);
   };
-
-  // Eliminar compra: saca el movimiento de la cuenta corriente Y revierte la cantidad que había sumado al stock.
-  const eliminarCompra=compra=>{
-    onUpdate({...proveedor,compras:proveedor.compras.filter(c=>c.id!==compra.id)});
-    setProds(prev=>prev.map(p=>p.id===compra.producto?{...p,stock:Math.max(0,(Number(p.stock)||0)-Number(compra.cantidad))}:p));
-    setBorrandoCompraId(null);
+  // Eliminar comprobante completo: saca todas sus filas de la cuenta corriente y revierte el stock que sumaron.
+  const eliminarGrupo=grupo=>{
+    if(!grupo)return;
+    const ids=new Set(grupo.rows.map(r=>r.id));
+    onUpdate({...proveedor,compras:(proveedor.compras||[]).filter(c=>!ids.has(c.id))});
+    ajustarStock(deltaDe(grupo.rows,-1),true);
+    setBorrandoKey(null);
   };
+  const grupoBorrando=grupos.find(g=>g.key===borrandoKey);
 
   return(
     <div>
@@ -3211,7 +3459,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
       </div>
       <ModalConfirmar open={confirmBorrar} onClose={()=>setConfirmBorrar(false)} onConfirmar={()=>onDelete(proveedor.id)} titulo="¿Eliminar proveedor?" mensaje={`Vas a eliminar a ${proveedor.nombre} y todo su historial de compras. Esta acción no se puede deshacer (el stock ya sumado por compras anteriores no se revierte).`} labelConfirmar="Sí, eliminar"/>
       {proveedor.direccion&&<div style={{color:CR,display:"flex",alignItems:"center",gap:6,fontSize:16,marginBottom:14}}><span style={{color:MU}}>{I.map}</span>{proveedor.direccion}</div>}
-      {proveedor.marca&&<div style={{color:CR,fontSize:16,marginBottom:14}}><span style={{color:MU}}>Marca · </span>{proveedor.marca}</div>}
+      {marcas.length>0&&<div style={{color:CR,fontSize:16,marginBottom:14}}><span style={{color:MU}}>{marcas.length>1?"Marcas":"Marca"} · </span>{marcas.join(", ")}</div>}
       {proveedor.telefono&&(
         <a href={`https://wa.me/${proveedor.telefono}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginBottom:14}}>{I.wa}WhatsApp</a>
       )}
@@ -3222,38 +3470,63 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds}){
         <span style={{fontSize:14,color:MU}}>Total: {fmtARS(total)}</span>
       </div>
       {cForm
-        ?<div style={{marginBottom:14}}><FormCompra prods={prods} marcaProveedor={proveedor.marca} onCancel={()=>setCForm(false)} onSave={registrarCompra}/></div>
+        ?<div style={{marginBottom:14}}><FormCompra prods={prods} marcas={marcas} impuestos={impuestos} historial={proveedor.compras} onCancel={()=>setCForm(false)} onSave={registrarCompra}/></div>
         :<button onClick={()=>setCForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Nueva compra</button>
       }
-      {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin compras aún.</p>:sorted.map(c=>{
-        if(editandoCompraId===c.id)return(
-          <div key={c.id} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
-            <FormCompra prods={prods} marcaProveedor={proveedor.marca} initial={c} labelGuardar="Guardar cambios" onCancel={()=>setEditandoCompraId(null)} onSave={datos=>guardarEdicionCompra(c,datos)}/>
+      {grupos.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin compras aún.</p>:grupos.map(g=>{
+        if(editandoKey===g.key)return(
+          <div key={g.key} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
+            <FormCompra prods={prods} marcas={marcas} impuestos={impuestos} historial={proveedor.compras} initialRows={g.rows} labelGuardar="Guardar cambios" onCancel={()=>setEditandoKey(null)} onSave={comp=>guardarEdicion(g,comp)}/>
           </div>
         );
-        const p=(prods||[]).find(x=>x.id===c.producto);return(
-        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${c.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
-          <div>
-            <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):c.producto}</div>
-            <div style={{fontSize:13,color:MU}}>{fmtDate(c.fecha)}{c.numeroComprobante?` · ${c.tipoComprobante==="factura"?"Fact.":"Rem."} ${c.numeroComprobante}`:c.tipoComprobante==="factura"?" · Factura":""}</div>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:2}}>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</div>
-              <div style={{fontSize:13,color:c.pagado?GR:"#E08070"}}>{c.cantidad}{p&&p.envase==="Lata"?"u":"L"} · {c.pagado?"Pagado":"Pendiente"}</div>
+        const esF=g.tipo==="factura";
+        const etiqueta=esF?"Factura":g.tipo==="remito"?"Remito":"Compra";
+        const colorEstado=g.estado==="pagado"?GR:g.estado==="parcial"?AM:"#E08070";
+        const textoEstado=g.estado==="pagado"?"Pagado":g.estado==="parcial"?"Pago parcial":"Pendiente";
+        return(
+          <div key={g.key} style={{background:BG,border:`1px solid ${g.estado==="pagado"?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>{etiqueta}{g.numero?` · ${g.numero}`:""}</div>
+                <div style={{fontSize:13,color:MU}}>{fmtDate(g.fecha)}</div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(g.total)}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:colorEstado}}>{textoEstado}</div>
+                </div>
+                <button onClick={()=>setEditandoKey(g.key)} aria-label="Editar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
+                <button onClick={()=>setBorrandoKey(g.key)} aria-label="Eliminar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
+              </div>
             </div>
-            <button onClick={()=>setEditandoCompraId(c.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
-            <button onClick={()=>setBorrandoCompraId(c.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
+            <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
+              {g.rows.map(r=>{
+                const p=(prods||[]).find(x=>x.id===r.producto);
+                return(
+                  <div key={r.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
+                    <span style={{color:CR,minWidth:0}}>{p?nombreProdEnvase(p):r.producto} <span style={{color:MU}}>· {r.cantidad}{p&&p.envase==="Lata"?"u":"L"}</span></span>
+                    <span style={{color:MU,flexShrink:0}}>{fmtARS(esF?(r.montoNeto??r.monto):r.monto)}</span>
+                  </div>
+                );
+              })}
+              {esF&&(
+                <div style={{marginTop:4,paddingTop:6,borderTop:`1px dashed ${BO}`,fontSize:13,color:MU,display:"flex",flexDirection:"column",gap:2}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(g.neto)}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA{g.ivaPct!=null?` (${g.ivaPct}%)`:""}</span><span>{fmtARS(g.iva)}</span></div>
+                  {g.otros.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between"}}><span>{x.nombre}{x.pct!=null?` (${x.pct}%)`:""}</span><span>{fmtARS(x.monto)}</span></div>)}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      );})}
-      <ModalConfirmar open={!!borrandoCompraId} onClose={()=>setBorrandoCompraId(null)} onConfirmar={()=>eliminarCompra(proveedor.compras.find(c=>c.id===borrandoCompraId))} titulo="¿Eliminar esta compra?" mensaje="Se quita de la cuenta corriente y se revierte la cantidad que había sumado al stock. Esta acción no se puede deshacer." labelConfirmar="Sí, eliminar"/>
+        );
+      })}
+      <ModalConfirmar open={!!grupoBorrando} onClose={()=>setBorrandoKey(null)} onConfirmar={()=>eliminarGrupo(grupoBorrando)} titulo="¿Eliminar esta compra?" mensaje={`Se elimina el comprobante completo${grupoBorrando&&grupoBorrando.rows.length>1?` (${grupoBorrando.rows.length} productos)`:""}: se quita de la cuenta corriente y se revierten las cantidades que había sumado al stock. Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
     </div>
   );
 }
 
 // ── PROVEEDORES ───────────────────────────────────────────────────
-function Proveedores({proveedores,setProveedores,prods,setProds}){
+function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
   const[q,setQ]=useState("");
   const[orden,setOrden]=useState("az");
   const[showNew,setShowNew]=useState(false);
@@ -3285,6 +3558,7 @@ function Proveedores({proveedores,setProveedores,prods,setProds}){
           <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(p.nombre)}</div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:600,color:CR}}>{p.nombre}</span><span style={{color:MU}}>{I.chev}</span></div>
+            {marcasDeProveedor(p).length>0&&<div style={{fontSize:13,color:MU,marginTop:2}}>{marcasDeProveedor(p).join(" · ")}</div>}
             {deuda>0&&<div style={{fontSize:13,fontWeight:700,color:"#E08070",marginTop:4}}>💰 Le debo {fmtARS(deuda)}</div>}
           </div>
         </button>
@@ -3293,7 +3567,7 @@ function Proveedores({proveedores,setProveedores,prods,setProds}){
         <FormProveedor marcasDisponibles={marcasDisponibles} onCancel={()=>setShowNew(false)} onSave={f=>{setProveedores(prev=>[...(prev||[]),{id:uid(),...f,compras:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleProveedor proveedor={selObj} prods={prods} setProds={setProds} onUpdate={u=>setProveedores(prev=>prev.map(x=>x.id===u.id?u:x))} onDelete={id=>{setProveedores(prev=>prev.filter(x=>x.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleProveedor proveedor={selObj} prods={prods} setProds={setProds} impuestos={impuestos} onUpdate={u=>setProveedores(prev=>prev.map(x=>x.id===u.id?u:x))} onDelete={id=>{setProveedores(prev=>prev.filter(x=>x.id!==id));setSel(null);}}/>}
       </Modal>
     </div>
   );
@@ -5648,7 +5922,7 @@ function Compras({proveedores,prods}){
   const litros=filtradas.reduce((s,c)=>s+litrosDeItem(c.cantidad,envaseMap[c.producto]),0);
   const pendiente=filtradas.filter(c=>!c.pagado).reduce((s,c)=>s+(c.monto||0),0);
 
-  const exportCSV=()=>{const h="Proveedor,Fecha,Producto,Cantidad,Monto ARS,Pagado\n",r=filtradas.map(c=>`"${c.proveedorNombre}",${c.fecha},${c.producto},${c.cantidad},${c.monto},${c.pagado?"Sí":"No"}`).join("\n"),b=new Blob([h+r],{type:"text/csv;charset=utf-8;"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`compras_${hoyISO()}.csv`;a.click();};
+  const exportCSV=()=>{const h="Proveedor,Fecha,Comprobante,N° comprobante,Producto,Cantidad,Neto ARS,Monto ARS (con impuestos),Pagado\n",r=filtradas.map(c=>`"${c.proveedorNombre}",${c.fecha},${c.tipoComprobante||""},"${(c.numeroComprobante||"").replace(/"/g,'""')}",${c.producto},${c.cantidad},${c.montoNeto??c.monto},${c.monto},${c.pagado?"Sí":"No"}`).join("\n"),b=new Blob([h+r],{type:"text/csv;charset=utf-8;"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`compras_${hoyISO()}.csv`;a.click();};
 
   // Evolución mensual (últimos 6 meses, sin filtrar — panorama fijo)
   const evolucionMensual=useMemo(()=>{
@@ -6822,6 +7096,53 @@ function Notas({notas,setNotas,cal}){
   );
 }
 
+// ── Gestor de otros impuestos / percepciones (Configuración) ────────────────────────
+// Lista editable de {id, nombre, pct}. Al cargar una compra con factura se tildan los que apliquen y se calculan sobre el neto.
+// Cada compra guarda una copia (nombre, %, monto) al momento de cargarse, así que editar o borrar acá NO modifica compras ya registradas.
+function GestorImpuestos({impuestos,setImpuestos}){
+  const lista=impuestos||[];
+  const[nombre,setNombre]=useState("");
+  const[pct,setPct]=useState("");
+  const actualizar=(id,campo,valor)=>setImpuestos(prev=>(prev||[]).map(x=>x.id===id?{...x,[campo]:valor}:x));
+  const agregar=()=>{
+    const n=nombre.trim();
+    if(!n||pct===""||isNaN(Number(pct)))return;
+    setImpuestos(prev=>[...(prev||[]),{id:uid(),nombre:n,pct:String(pct)}]);
+    setNombre("");setPct("");
+  };
+  const quitar=x=>{if(!confirm(`¿Quitar "${x.nombre||"impuesto"}"? Las compras ya cargadas conservan lo que se les aplicó.`))return;setImpuestos(prev=>(prev||[]).filter(y=>y.id!==x.id));};
+  const valido=nombre.trim()&&pct!==""&&!isNaN(Number(pct));
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:4}}>🧾 Otros impuestos y percepciones</div>
+      <p style={{fontSize:13,color:MU,marginBottom:14,lineHeight:1.45}}>Percepciones de IIBB, IVA percibido, impuestos internos, etc., cada uno con su descripción y porcentaje. Aparecen para tildar cuando cargás una compra con factura (se calculan sobre el neto y se pueden ajustar en el momento). El IVA se carga aparte en cada compra.</p>
+      {lista.length===0&&<div style={{fontSize:13,color:MU,marginBottom:12}}>Todavía no cargaste ninguno. Agregá el primero acá abajo.</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+        {lista.map(x=>(
+          <div key={x.id} style={{display:"flex",alignItems:"center",gap:8}}>
+            <input value={x.nombre} onChange={e=>actualizar(x.id,"nombre",e.target.value)} placeholder="Descripción" style={{flex:1,minWidth:0}}/>
+            <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+              <input type="number" inputMode="decimal" step="0.01" value={x.pct} onChange={e=>actualizar(x.id,"pct",e.target.value)} style={{width:76}}/>
+              <span style={{color:MU,fontSize:15}}>%</span>
+            </div>
+            <button onClick={()=>quitar(x)} aria-label={`Quitar ${x.nombre}`} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
+          </div>
+        ))}
+      </div>
+      <div style={{paddingTop:lista.length?12:0,borderTop:lista.length?`1px solid ${BO}`:"none"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <input value={nombre} onChange={e=>setNombre(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")agregar();}} placeholder="Ej: Percepción IIBB Bs. As." style={{flex:1,minWidth:0}}/>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+            <input type="number" inputMode="decimal" step="0.01" value={pct} onChange={e=>setPct(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")agregar();}} placeholder="%" style={{width:76}}/>
+            <span style={{color:MU,fontSize:15}}>%</span>
+          </div>
+        </div>
+        <button onClick={agregar} disabled={!valido} style={{marginTop:8,width:"100%",padding:"10px 16px",borderRadius:10,fontSize:14,fontWeight:700,background:valido?G:BO,color:valido?"#fff":MU,border:"none",cursor:valido?"pointer":"not-allowed"}}>+ Agregar impuesto</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Gestor de categorías de producto (Configuración) ────────────────────────────────
 function GestorCategorias({categorias,setCategorias,prods,setProds}){
   const[nueva,setNueva]=useState("");
@@ -6899,7 +7220,7 @@ function GestorCategorias({categorias,setCategorias,prods,setProds}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -6982,7 +7303,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     const data=JSON.stringify({
       version:1,exportadoEn:new Date().toISOString(),
       clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,
-      config:{metaSemanal,diasMora,promo51,envasesExtra,categorias}
+      config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos}
     },null,2);
     const fileName=`backup_nomades_${hoyISO()}.json`;
     const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
@@ -7044,6 +7365,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           if(data.config.promo51&&typeof data.config.promo51==="object")setPromo51(prev=>({...prev,...data.config.promo51}));
           if(setEnvasesExtra&&Array.isArray(data.config.envasesExtra))setEnvasesExtra(data.config.envasesExtra);
           if(setCategorias&&Array.isArray(data.config.categorias))setCategorias(data.config.categorias);
+          if(setImpuestos&&Array.isArray(data.config.impuestos))setImpuestos(data.config.impuestos);
         }
         alert("✓ Backup restaurado correctamente.");
       }catch(err){
@@ -7319,6 +7641,8 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
 
       <GestorCategorias categorias={categorias} setCategorias={setCategorias} prods={prods} setProds={setProds}/>
 
+      <GestorImpuestos impuestos={impuestos} setImpuestos={setImpuestos}/>
+
       {/* ── Zona de peligro ── */}
       <div style={{background:RE+"08",border:`1px solid ${RE}33`,borderRadius:18,padding:20,marginBottom:16}}>
         <div style={{fontSize:16,fontWeight:700,color:RE,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>{I.alert}Zona de peligro</div>
@@ -7347,13 +7671,13 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
   const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
@@ -7361,7 +7685,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
     proveedores:d=>{if(Array.isArray(d))setProveedores(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);},
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);if(d&&Array.isArray(d.impuestos))setImpuestos(d.impuestos);},
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
@@ -7472,7 +7796,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra,categorias]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos]);
 
   return{status,errorMsg};
 }
@@ -7932,6 +8256,7 @@ function App(){
   const[comisiones,setComisiones]=useState([]);
   const[envasesExtra,setEnvasesExtra]=useState([]);
   const[categorias,setCategorias]=useState(CATEGORIAS_INIT);
+  const[impuestos,setImpuestos]=useState([]);   // otros impuestos / percepciones editables (se usan en las compras con factura)
   const[proveedores,setProveedores]=useState([]);
   const mostrarBadgeCaja=useMemo(()=>{
     const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:Number(c.comisionPctDefault)||0})));
@@ -7986,7 +8311,8 @@ function App(){
     promo51,setPromo51,
     envasesExtra,setEnvasesExtra,
     proveedores,setProveedores,
-    categorias,setCategorias
+    categorias,setCategorias,
+    impuestos,setImpuestos
   );
  
   const convertir=p=>{
@@ -8044,10 +8370,10 @@ function App(){
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra} categorias={categorias}/>}
           {tab==="stock"&&<Stock prods={prods} setProds={setProds} pedidos={pedidos}/>}
-          {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds}/>}
+          {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds} impuestos={impuestos}/>}
           {tab==="compras"&&<Compras proveedores={proveedores} prods={prods}/>}
           {tab==="rentabilidad"&&<Rentabilidad clientes={clientes} proveedores={proveedores} prods={prods}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos}/>}
         </main>
       </div>
     </div>
