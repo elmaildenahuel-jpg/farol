@@ -693,21 +693,9 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
   });
   y+=24;
 
-  // Libro de movimientos: cada venta genera una fila "venta" en su fecha de remito,
-  // y si está pagada genera además una fila "pago" en la fecha real del cobro.
-  // El saldo se acumula línea por línea, correlacionando venta con pago en el orden en que ocurrieron.
-  const movs=[];
-  ventas.forEach(v=>{
-    movs.push({id:v.id+"-v",orden:0,fecha:v.fecha,tipo:"venta",producto:v.producto,cantidad:v.cantidad,monto:v.monto||0});
-    if(v.pagado){
-      movs.push({id:v.id+"-p",orden:1,fecha:v.fechaCobro||v.fecha,tipo:"pago",medioPago:v.medioPago,monto:v.monto||0});
-    }
-  });
-  saldosAnt.forEach(x=>{
-    movs.push({id:x.id+"-v",orden:0,fecha:x.fecha,tipo:"venta",saldoAnterior:true,descripcion:x.descripcion||"",monto:Number(x.monto)||0});
-    if(x.pagado)movs.push({id:x.id+"-p",orden:1,fecha:x.fechaCobro||x.fecha,tipo:"pago",medioPago:x.medioPago,monto:Number(x.monto)||0});
-  });
-  movs.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
+  // Libro de movimientos: el mismo que se ve en la app (tarjetas). Cada cobro es UN solo pago aunque haya cubierto varias
+  // ventas, y va del más reciente al más viejo; el saldo de cada fila es el acumulado hasta ese movimiento.
+  const movs=[...construirMovimientosCliente(cliente,prods,pedidos)].reverse();
 
   asegurarEspacio(12);
   doc.setFont("helvetica","bold");
@@ -732,31 +720,30 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
   };
   dibujarHeaderTabla();
 
-  let saldoAcum=0;
   doc.setFont("helvetica","normal");
   movs.forEach(m=>{
     asegurarEspacio(7);
     if(y<40){dibujarHeaderTabla();}
-    saldoAcum+=m.tipo==="venta"?m.monto:-m.monto;
     doc.setFontSize(8.3);
-    if(m.tipo==="venta"){
-      const cantTxt=m.saldoAnterior?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
-      doc.setTextColor(60,60,60);
-      doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
-      let prodTxt=m.saldoAnterior?`Saldo anterior${m.descripcion?" · "+m.descripcion:""}`:nombreDeProd(m.producto);
-      if(m.saldoAnterior){const ls=doc.splitTextToSize(prodTxt,54);prodTxt=ls.length>1?ls[0].replace(/\s+$/,"").slice(0,-1)+"…":ls[0];}
-      doc.text(prodTxt,colX.prod+1,y,{maxWidth:54});
-      doc.text(cantTxt,colX.monto-4,y,{align:"right"});
-      doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
-    }else{
+    if(m.tipo==="pago"){
       doc.setTextColor(15,122,66);
       doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
       doc.text(`Pago recibido${m.medioPago?" · "+m.medioPago:""}`,colX.prod+1,y,{maxWidth:54});
       doc.text(fmtARS(m.monto),colX.saldo-24,y,{align:"right"});
+    }else{
+      const esSaldo=m.tipo==="saldo";
+      const cantTxt=esSaldo?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
+      doc.setTextColor(60,60,60);
+      doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
+      let prodTxt=esSaldo?`Saldo anterior${m.descripcion?" · "+m.descripcion:""}`:nombreDeProd(m.producto);
+      if(esSaldo){const ls=doc.splitTextToSize(prodTxt,54);prodTxt=ls.length>1?ls[0].replace(/\s+$/,"").slice(0,-1)+"…":ls[0];}
+      doc.text(prodTxt,colX.prod+1,y,{maxWidth:54});
+      doc.text(cantTxt,colX.monto-4,y,{align:"right"});
+      doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }
     doc.setFont("helvetica","bold");
-    doc.setTextColor(saldoAcum>0?198:15,saldoAcum>0?40:122,saldoAcum>0?40:66);
-    doc.text(fmtARS(saldoAcum),colX.saldo,y,{align:"right"});
+    doc.setTextColor(m.saldoAcum>0?198:15,m.saldoAcum>0?40:122,m.saldoAcum>0?40:66);
+    doc.text(fmtARS(m.saldoAcum),colX.saldo,y,{align:"right"});
     doc.setFont("helvetica","normal");
     y+=6.3;
     doc.setDrawColor(240,241,240);
@@ -1807,13 +1794,14 @@ const PERIODO_LIQUIDACION_DIAS=30;
 function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",fecha=null}={}){
   const monto=Number(montoCobro);
   if(!monto||monto<=0)return cliente;
+  const cobroId=uid();   // todo cobro es UN movimiento: las ventas/saldos que cubre quedan etiquetadas con este id
   const pendientesOrdenadas=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(v=>v.id);
   const fechaCobro=fecha||hoyISO();
-  const resSaldos=aplicarPagoASaldos(cliente.saldosAnteriores,monto,"fechaCobro",fechaCobro,medioPago,nota);
+  const resSaldos=aplicarPagoASaldos(cliente.saldosAnteriores,monto,"fechaCobro",fechaCobro,medioPago,nota,cobroId);
   let restante=resSaldos.restante;
-  const nuevasVentas=[...cliente.ventas].map(v=>{
+  const nuevasVentas=[...(cliente.ventas||[])].map(v=>{
     if(v.pagado||!pendientesOrdenadas.includes(v.id)||restante<=0)return v;
-    if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||""};}
+    if(restante>=v.monto){restante-=v.monto;return{...v,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",cobroId};}
     const montoPagado=restante,montoRestante=v.monto-restante;
     const cantPagada=Math.round((v.cantidad*(montoPagado/v.monto))*10)/10;
     restante=0;
@@ -1822,11 +1810,86 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
   const ventasFinales=[];
   nuevasVentas.forEach(v=>{
     if(v._split){
-      ventasFinales.push({id:v.id,fecha:v.fecha,producto:v.producto,cantidad:v._cantPagada,monto:v._montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||""});
-      ventasFinales.push({id:uid(),fecha:v.fecha,producto:v.producto,cantidad:v._cantRestante,monto:v._montoRestante,pagado:false});
+      const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=v;
+      ventasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",cobroId});
+      ventasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,pagado:false,fechaCobro:null,cobroId:null,_origenId:v.id});
     }else{ventasFinales.push(v);}
   });
-  return{...cliente,ventas:ventasFinales,saldosAnteriores:resSaldos.saldos};
+  const aplicado=Math.round((monto-restante)*100)/100;   // lo que realmente cubrió (nunca más que la deuda)
+  if(aplicado<=0)return cliente;
+  const cobro={id:cobroId,fecha:fechaCobro,monto:aplicado,medioPago,nota};
+  return{...cliente,ventas:ventasFinales,saldosAnteriores:resSaldos.saldos,cobros:[...(cliente.cobros||[]),cobro]};
+}
+
+// Cobro rápido de UNA venta (hoy, en efectivo): también queda como un cobro propio en el historial.
+function cobrarVentaCliente(cliente,ventaId){
+  const v=(cliente.ventas||[]).find(x=>x.id===ventaId);
+  if(!v||v.pagado)return cliente;
+  const fecha=hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(v.monto)||0,medioPago,nota:""};
+  return{...cliente,ventas:cliente.ventas.map(x=>x.id===ventaId?{...x,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:x),cobros:[...(cliente.cobros||[]),cobro]};
+}
+// Misma idea para un saldo anterior (cobro rápido desde el bloque de saldos)
+function cobrarSaldoCliente(cliente,saldoId){
+  const x=(cliente.saldosAnteriores||[]).find(y=>y.id===saldoId);
+  if(!x||x.pagado)return cliente;
+  const fecha=hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(x.monto)||0,medioPago,nota:x.descripcion||""};
+  return{...cliente,saldosAnteriores:cliente.saldosAnteriores.map(y=>y.id===saldoId?{...y,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:y),cobros:[...(cliente.cobros||[]),cobro]};
+}
+// Deshace un cobro completo: vuelve a deuda todo lo que cubrió y recompone las ventas/saldos que se habían partido.
+function revertirFilasDeCobro(lista,cobroId,extra){
+  let out=[...(lista||[])];
+  const tocados=out.filter(x=>x.cobroId===cobroId).map(x=>x.id);
+  out=out.map(x=>tocados.includes(x.id)?{...x,pagado:false,fechaCobro:null,cobroId:null}:x);
+  tocados.forEach(id=>{
+    const io=out.findIndex(x=>x.id===id),ir=out.findIndex(x=>x._origenId===id&&!x.pagado);
+    if(io>=0&&ir>=0){
+      const o=out[io],r=out[ir];
+      out[io]={...o,monto:(Number(o.monto)||0)+(Number(r.monto)||0),...(extra?{cantidad:Math.round(((Number(o.cantidad)||0)+(Number(r.cantidad)||0))*10)/10}:{})};
+      out.splice(ir,1);
+    }
+  });
+  return out;
+}
+function deshacerCobroCliente(cliente,cobroId){
+  return{...cliente,
+    ventas:revertirFilasDeCobro(cliente.ventas,cobroId,true),
+    saldosAnteriores:revertirFilasDeCobro(cliente.saldosAnteriores,cobroId,false),
+    cobros:(cliente.cobros||[]).filter(c=>c.id!==cobroId)};
+}
+// Deshacer un movimiento de pago: cobros nuevos se revierten enteros; los pagos viejos (sin cobro) vuelven a deuda fila por fila.
+function deshacerPagoCliente(cliente,mov){
+  if(mov.cobroId)return deshacerCobroCliente(cliente,mov.cobroId);
+  if(mov.origenTipo==="venta")return{...cliente,ventas:cliente.ventas.map(v=>v.id===mov.origenId?{...v,pagado:false,fechaCobro:null}:v)};
+  if(mov.origenTipo==="saldo")return{...cliente,saldosAnteriores:cliente.saldosAnteriores.map(x=>x.id===mov.origenId?{...x,pagado:false,fechaCobro:null}:x)};
+  return cliente;
+}
+// Libro de movimientos del cliente (ventas, saldos anteriores y pagos) en orden cronológico con saldo acumulado.
+// Cada COBRO es un solo movimiento de pago aunque haya cubierto varias ventas; su monto sale de lo que realmente cubrió,
+// así el saldo del último movimiento siempre coincide con la deuda real. Quien lo muestre lo da vuelta (más reciente primero).
+function construirMovimientosCliente(cliente,prods,pedidos){
+  const ctx=ctxDescuentos(prods,pedidos);
+  const movs=[];
+  const sumaCobro={};
+  const sumar=(x,monto)=>{if(x.pagado&&x.cobroId)sumaCobro[x.cobroId]=(sumaCobro[x.cobroId]||0)+monto;};
+  (cliente.ventas||[]).forEach(v=>{
+    const monto=Number(v.monto)||0;
+    movs.push({id:v.id+"-v",orden:0,tipo:"venta",fecha:v.fecha,producto:v.producto,cantidad:v.cantidad,monto,pagado:!!v.pagado,d:desgloseVenta(v,cliente.id,ctx)});
+    sumar(v,monto);
+    if(v.pagado&&!v.cobroId)movs.push({id:v.id+"-p",orden:1,tipo:"pago",fecha:v.fechaCobro||v.fecha,monto,medioPago:v.medioPago,nota:v.nota||"",origenTipo:"venta",origenId:v.id});
+  });
+  (cliente.saldosAnteriores||[]).forEach(x=>{
+    const monto=Number(x.monto)||0;
+    movs.push({id:x.id+"-v",orden:0,tipo:"saldo",fecha:x.fecha,descripcion:x.descripcion||"",monto,pagado:!!x.pagado});
+    sumar(x,monto);
+    if(x.pagado&&!x.cobroId)movs.push({id:x.id+"-p",orden:1,tipo:"pago",fecha:x.fechaCobro||x.fecha,monto,medioPago:x.medioPago,nota:x.descripcion||"",origenTipo:"saldo",origenId:x.id});
+  });
+  (cliente.cobros||[]).forEach(c=>{
+    const monto=Math.round((sumaCobro[c.id]||0)*100)/100;
+    if(monto>0)movs.push({id:"cobro-"+c.id,orden:1,tipo:"pago",fecha:c.fecha,monto,medioPago:c.medioPago,nota:c.nota||"",cobroId:c.id});
+  });
+  movs.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)||a.orden-b.orden||String(a.id).localeCompare(String(b.id)));
+  let acum=0;
+  return movs.map(m=>{acum+=m.tipo==="pago"?-m.monto:m.monto;return{...m,saldoAcum:Math.round(acum*100)/100};});
 }
  
 // ── Proveedores: cuenta corriente invertida (lo que yo les debo por compras) ──
@@ -1854,8 +1917,8 @@ function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota=""
       const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=c;
       const escalar=(campo,ratio)=>base[campo]!=null?redondear2((Number(base[campo])||0)*ratio):base[campo];
       const rP=c.monto>0?_montoPagado/c.monto:0,rR=c.monto>0?_montoRestante/c.monto:0;
-      comprasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,montoNeto:escalar("montoNeto",rP),ivaMonto:escalar("ivaMonto",rP),otrosImpuestos:escalar("otrosImpuestos",rP),pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
-      comprasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,montoNeto:escalar("montoNeto",rR),ivaMonto:escalar("ivaMonto",rR),otrosImpuestos:escalar("otrosImpuestos",rR),pagado:false});
+      comprasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,montoNeto:escalar("montoNeto",rP),ivaMonto:escalar("ivaMonto",rP),otrosImpuestos:escalar("otrosImpuestos",rP),descuentoMonto:escalar("descuentoMonto",rP),pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
+      comprasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,montoNeto:escalar("montoNeto",rR),ivaMonto:escalar("ivaMonto",rR),otrosImpuestos:escalar("otrosImpuestos",rR),descuentoMonto:escalar("descuentoMonto",rR),pagado:false});
     }else{comprasFinales.push(c);}
   });
   return{...proveedor,compras:comprasFinales,saldosAnteriores:resSaldos.saldos};
@@ -2321,7 +2384,15 @@ function marcasDeProveedor(p){
   if(Array.isArray(p.marcas))return p.marcas.filter(Boolean);
   return String(p.marca||"").split(",").map(x=>x.trim()).filter(Boolean);
 }
-const nuevaLineaCompra=()=>({id:uid(),rowId:null,producto:"",cantidad:"",monto:""});
+const fmtARS2=n=>(Number(n)||0).toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2});
+const nuevaLineaCompra=()=>({id:uid(),rowId:null,producto:"",cantidad:"",precio:"",descTipo:"pct",descValor:""});
+// Neto de una línea = cantidad × precio unitario − descuento (descTipo "pct" = porcentaje, "monto" = importe en ARS)
+function calcLineaCompra(l){
+  const bruto=redondear2((Number(l.cantidad)||0)*(Number(l.precio)||0));
+  const v=Number(l.descValor)||0;
+  const desc=redondear2(Math.min(Math.max(l.descTipo==="pct"?bruto*v/100:v,0),bruto));
+  return{bruto,desc,neto:redondear2(bruto-desc)};
+}
 // Agrupa las filas de compras por comprobante (las compras viejas, sin comprobanteId, quedan como un comprobante de una línea)
 function agruparCompras(compras){
   const m=new Map();
@@ -2346,7 +2417,8 @@ function agruparCompras(compras){
 // Convierte el comprobante cargado en el formulario en filas de compra. `previas` = filas existentes (al editar) para conservar ids y estado de pago.
 function filasDeComprobante(comp,comprobanteId,previas){
   const esF=comp.tipoComprobante==="factura";
-  const netos=comp.lineas.map(l=>Number(l.montoNeto)||0);
+  const calc=comp.lineas.map(l=>calcLineaCompra({cantidad:l.cantidad,precio:l.precioUnit,descTipo:l.descTipo,descValor:l.descValor}));
+  const netos=calc.map(c=>c.neto);
   const totalNeto=netos.reduce((s,n)=>s+n,0);
   const ivaTot=esF?redondear2(totalNeto*(Number(comp.ivaPct)||0)/100):0;
   const otrosTot=esF?redondear2((comp.impuestos||[]).reduce((s,x)=>s+(Number(x.monto)||0),0)):0;
@@ -2356,6 +2428,7 @@ function filasDeComprobante(comp,comprobanteId,previas){
     const fila={
       id:(prev&&prev.id)||uid(),comprobanteId,fecha:comp.fecha,producto:l.producto,cantidad:Number(l.cantidad),
       monto:redondear2(netos[i]+ivas[i]+otros[i]),montoNeto:netos[i],
+      precioUnit:Number(l.precioUnit)||0,descuentoMonto:calc[i].desc,descuentoPct:l.descTipo==='pct'&&Number(l.descValor)>0?Number(l.descValor):null,
       tipoComprobante:comp.tipoComprobante,numeroComprobante:comp.numeroComprobante||"",
       ivaPct:esF?(Number(comp.ivaPct)||0):null,ivaMonto:ivas[i],otrosImpuestos:otros[i],compImpuestos:esF?(comp.impuestos||[]):[],
     };
@@ -2388,7 +2461,13 @@ function estadoInicialComprobante(rows,impuestos){
   return{
     fecha:first.fecha,tipo:first.tipoComprobante||"remito",numero:first.numeroComprobante||"",ivaPct:String(first.ivaPct??21),
     pagado:pag===rows.length?true:pag===0?false:null,
-    lineas:rows.map(r=>({id:uid(),rowId:r.id,producto:r.producto,cantidad:String(r.cantidad??""),monto:String(r.montoNeto??r.monto??"")})),
+    lineas:rows.map(r=>{
+      const cant=Number(r.cantidad)||0,neto=Number(r.montoNeto??r.monto)||0,desc=Number(r.descuentoMonto)||0;
+      const esPct=r.descuentoPct!=null;
+      // Compras viejas no guardaban precio unitario: se deduce del neto
+      const precio=r.precioUnit!=null?r.precioUnit:(cant>0?Math.round(((neto+desc)/cant)*10000)/10000:"");
+      return{id:uid(),rowId:r.id,producto:r.producto,cantidad:String(r.cantidad??""),precio:String(precio),descTipo:esPct||!(desc>0)?"pct":"monto",descValor:esPct?String(r.descuentoPct):(desc>0?String(desc):"")};
+    }),
     impSel,manual,huerfanos,
   };
 }
@@ -2464,7 +2543,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
   const prodDe=id=>prods.find(p=>p.id===id);
   const unidad=id=>{const p=prodDe(id);return p&&p.envase==="Lata"?"u":"L";};
 
-  const totalNeto=f.lineas.reduce((s,l)=>s+(Number(l.monto)||0),0);
+  const totalNeto=redondear2(f.lineas.reduce((s,l)=>s+calcLineaCompra(l).neto,0));
   const ivaMonto=esFactura?redondear2(totalNeto*(Number(f.ivaPct)||0)/100):0;
   const impAplicados=esFactura?[
     ...listaImp.filter(x=>f.impSel[x.id]&&f.impSel[x.id].on).map(x=>{const n=Number(f.impSel[x.id].pct);const pct=isNaN(n)?0:n;return{id:x.id,nombre:x.nombre,pct,monto:redondear2(totalNeto*pct/100)};}),
@@ -2473,8 +2552,8 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
   const otrosTotal=impAplicados.reduce((s,x)=>s+x.monto,0);
   const total=redondear2(totalNeto+ivaMonto+otrosTotal);
 
-  const tocada=l=>l.producto||l.cantidad||l.monto;
-  const completa=l=>l.producto&&Number(l.cantidad)>0&&Number(l.monto)>0;
+  const tocada=l=>l.producto||l.cantidad||l.precio;
+  const completa=l=>l.producto&&Number(l.cantidad)>0&&Number(l.precio)>0;
   const lineasOk=f.lineas.filter(completa);
   const hayIncompletas=f.lineas.some(l=>tocada(l)&&!completa(l));
   const puedeGuardar=lineasOk.length>0&&!hayIncompletas;
@@ -2485,7 +2564,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
     onSave({
       fecha:f.fecha,tipoComprobante:f.tipo,numeroComprobante:f.numero.trim(),
       ivaPct:esFactura?(Number(f.ivaPct)||0):null,impuestos:impAplicados,pagado:f.pagado,
-      lineas:lineasOk.map(l=>({rowId:l.rowId,producto:l.producto,cantidad:Number(l.cantidad),montoNeto:redondear2(l.monto)})),
+      lineas:lineasOk.map(l=>({rowId:l.rowId,producto:l.producto,cantidad:Number(l.cantidad),precioUnit:Number(l.precio),descTipo:l.descTipo,descValor:Number(l.descValor)||0})),
     });
   };
   const btnTipo=(k,t)=>(
@@ -2496,7 +2575,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {hayMarcas
         ?<div style={{fontSize:13,color:MU}}>Mostrando solo productos de: <strong style={{color:CR}}>{marcas.join(", ")}</strong>{candidatos.length===0?" — no hay productos cargados con esa marca.":"."}</div>
-        :<div style={{fontSize:13,color:"#B7691F",background:AM+"14",border:`1px solid ${AM}44`,borderRadius:8,padding:"8px 10px"}}>Este proveedor no tiene marca asignada, por eso aparecen todos los productos. Editá el proveedor y elegí qué marcas provee para limitar el listado.</div>}
+        :<div style={{fontSize:13,color:"#B7691F",background:AM+"14",border:`1px solid ${AM}44`,borderRadius:8,padding:"8px 10px"}}>Este proveedor no tiene marca asignada, por eso aparecen todos los productos. Para limitarlo: cerrá esto, tocá el lápiz ✎ del proveedor y tildá las marcas en "Marcas que provee".</div>}
 
       <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={e=>setF(p=>({...p,fecha:e.target.value}))}/></div>
 
@@ -2513,8 +2592,8 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {f.lineas.map((l,i)=>{
             const h=l.producto?hist[l.producto]:null;
-            const cant=Number(l.cantidad)||0,monto=Number(l.monto)||0;
-            const costoU=cant>0&&monto>0?monto/cant:null;
+            const cant=Number(l.cantidad)||0,cl=calcLineaCompra(l);
+            const costoU=cant>0&&cl.neto>0?cl.neto/cant:null;
             const ult=h&&h.ult?h.ult:null;
             const ultNeto=ult?(Number(ult.montoNeto??ult.monto)||0):0;
             const costoUlt=ult&&Number(ult.cantidad)>0?ultNeto/Number(ult.cantidad):null;
@@ -2526,15 +2605,32 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
                   {f.lineas.length>1&&<button onClick={()=>quitarLinea(l.id)} aria-label="Quitar producto" style={{padding:4,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>}
                 </div>
                 <ProductoPredictivo value={l.producto} candidatos={candidatos} hist={hist} onSelect={id=>setLinea(l.id,{producto:id})}/>
-                {ult&&!l.cantidad&&!l.monto&&(
-                  <button onClick={()=>setLinea(l.id,{cantidad:String(ult.cantidad),monto:String(ultNeto)})} style={{alignSelf:"flex-start",fontSize:13,fontWeight:700,padding:"6px 10px",borderRadius:8,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>
-                    ↺ Repetir última compra ({ult.cantidad}{unidad(l.producto)} · {fmtARS(ultNeto)})
+                {ult&&!l.cantidad&&!l.precio&&(
+                  <button onClick={()=>setLinea(l.id,{cantidad:String(ult.cantidad),precio:String(ult.precioUnit!=null?ult.precioUnit:Math.round(ultNeto/ult.cantidad*10000)/10000),descTipo:"pct",descValor:ult.descuentoPct!=null?String(ult.descuentoPct):""})} style={{alignSelf:"flex-start",fontSize:13,fontWeight:700,padding:"6px 10px",borderRadius:8,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>
+                    ↺ Repetir última compra ({ult.cantidad}{unidad(l.producto)} · {fmtARS2(ult.precioUnit!=null?ult.precioUnit:ultNeto/(Number(ult.cantidad)||1))} c/u)
                   </button>
                 )}
                 <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
                   <div><Lbl t={unidad(l.producto)==="u"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>setLinea(l.id,{cantidad:e.target.value})} placeholder={unidad(l.producto)==="u"?"24":"100"}/></div>
-                  <div><Lbl t={esFactura?"Neto ARS":"Monto ARS"}/><input type="number" inputMode="numeric" value={l.monto} onChange={e=>setLinea(l.id,{monto:e.target.value})} placeholder="0"/></div>
+                  <div><Lbl t={unidad(l.producto)==="u"?"Precio por unidad ARS":"Precio por litro ARS"}/><input type="number" inputMode="decimal" step="0.01" value={l.precio} onChange={e=>setLinea(l.id,{precio:e.target.value})} placeholder="0"/></div>
                 </div>
+                <div>
+                  <Lbl t="Descuento (opcional)"/>
+                  <div style={{display:"flex",gap:8}}>
+                    <input type="number" inputMode="decimal" step="0.01" value={l.descValor} onChange={e=>setLinea(l.id,{descValor:e.target.value})} placeholder={l.descTipo==="pct"?"Ej: 10":"Importe en ARS"} style={{flex:1,minWidth:0}}/>
+                    <div style={{display:"flex",flexShrink:0}}>
+                      {[["pct","%"],["monto","$"]].map(([k,t],j)=>(
+                        <button key={k} onClick={()=>setLinea(l.id,{descTipo:k})} style={{width:44,fontSize:15,fontWeight:700,cursor:"pointer",border:`1px solid ${l.descTipo===k?G:BO}`,background:l.descTipo===k?G+"22":"transparent",color:l.descTipo===k?G:MU,borderRadius:j===0?"8px 0 0 8px":"0 8px 8px 0",marginLeft:j===0?0:-1}}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {cl.bruto>0&&(
+                  <div style={{fontSize:14,color:MU,display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                    <span>{cl.desc>0?`${fmtARS(cl.bruto)} − desc. ${fmtARS(cl.desc)}`:`${l.cantidad} × ${fmtARS2(Number(l.precio))}`}</span>
+                    <span style={{fontWeight:700,color:CR}}>Neto: {fmtARS(cl.neto)}</span>
+                  </div>
+                )}
                 {costoU!=null&&(
                   <div style={{fontSize:13,color:MU}}>
                     {fmtARS(Math.round(costoU))} por {unidad(l.producto)==="u"?"unidad":"litro"}
@@ -2672,7 +2768,8 @@ function PanelCobro({cliente,onUpdate,onDone}){
   const[medioPago,setMedioPago]=useState("Efectivo");
   const[fecha,setFecha]=useState(hoyISO());
   const[nota,setNota]=useState("");
-  const montoNum=Number(monto)||0;
+  const excede=(Number(monto)||0)>saldo+0.5;
+  const montoNum=Math.min(Number(monto)||0,Math.max(0,saldo));   // nunca se cobra más de lo que se debe
   const esParcial=montoNum>0&&montoNum<saldo;
   const confirmar=()=>{
     if(!montoNum||montoNum<=0)return;
@@ -2699,6 +2796,7 @@ function PanelCobro({cliente,onUpdate,onDone}){
         ))}
       </div>
       <div style={{marginBottom:10}}><Lbl t="Nota (opcional)"/><input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ej: pagó en el local, transferencia..."/></div>
+      {excede&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginBottom:8}}>⚠ El cliente debe {fmtARS(saldo)}: se registra ese monto como máximo.</div>}
       {montoNum>0&&(
         <div style={{fontSize:14,color:MU,marginBottom:10}}>
           {esParcial?"Pago parcial":"Salda toda la cuenta"} de <strong style={{color:G}}>{fmtARS(montoNum)}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-montoNum))}</strong>
@@ -2794,14 +2892,20 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   const[editId,setEditId]=useState(null);
   const[showHist,setShowHist]=useState(false);
   const saldos=entidad.saldosAnteriores||[];
-  const pend=saldos.filter(x=>!x.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  const pend=saldos.filter(x=>!x.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const pagados=saldos.filter(x=>x.pagado).sort((a,b)=>new Date(b[campoFecha]||b.fecha)-new Date(a[campoFecha]||a.fecha));
   const actualizar=nuevos=>onUpdate({...entidad,saldosAnteriores:nuevos});
   const agregar=d=>{actualizar([...saldos,{id:uid(),fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}]);setMostrarForm(false);};
   const guardar=(id,d)=>{actualizar(saldos.map(x=>x.id===id?{...x,fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}:x));setEditId(null);};
   const eliminar=x=>{if(!confirm(`¿Eliminar este saldo anterior de ${fmtARS(x.monto)}?`))return;actualizar(saldos.filter(y=>y.id!==x.id));};
-  const marcar=x=>actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:hoyISO(),medioPago:"Efectivo"}:y));
-  const deshacer=x=>actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:false,[campoFecha]:null}:y));
+  const marcar=x=>{
+    if(!esProveedor){onUpdate(cobrarSaldoCliente(entidad,x.id));return;}   // en clientes queda como un cobro propio
+    actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:hoyISO(),medioPago:"Efectivo"}:y));
+  };
+  const deshacer=x=>{
+    if(!esProveedor&&x.cobroId){if(confirm("Este saldo se cobró dentro de un pago. Se deshace el pago completo y todo lo que cubrió vuelve a deuda. ¿Continuar?"))onUpdate(deshacerCobroCliente(entidad,x.cobroId));return;}
+    actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:false,[campoFecha]:null}:y));
+  };
   return(
     <div style={{marginTop:6,marginBottom:12}}>
       {pend.length>0&&(
@@ -2885,34 +2989,75 @@ function CargarSaldoClienteRapido({clientes,setClientes}){
 }
 
 // ── CuentaCorriente ───────────────────────────────────────────────
+// Vista en tarjetas del estado de cuenta: ventas, saldos anteriores y pagos en una sola línea de tiempo, del más reciente al más viejo.
+function MovimientosCards({cliente,prods,pedidos}){
+  const movs=useMemo(()=>[...construirMovimientosCliente(cliente,prods,pedidos)].reverse(),[cliente,prods,pedidos]);
+  const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
+  const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
+  if(movs.length===0)return<p style={{fontSize:15,color:MU,textAlign:"center",padding:16}}>Sin movimientos registrados.</p>;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {movs.map(m=>{
+        const pago=m.tipo==="pago",saldoAnt=m.tipo==="saldo";
+        return(
+          <div key={m.id} style={{background:pago?GR+"11":"#fff",border:`1px solid ${pago?GR+"44":BO}`,borderRadius:8,padding:"10px 12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:pago?GR:saldoAnt?"#B7691F":MU}}>{pago?"✓ Pago":saldoAnt?"Saldo anterior":"Venta"} · {fmtDate(m.fecha)}</div>
+                {pago?(
+                  <div style={{fontSize:14,color:CR}}>{m.medioPago||"Efectivo"}{m.nota?` · ${m.nota}`:""}</div>
+                ):saldoAnt?(
+                  <div style={{fontSize:14,color:CR,wordBreak:"break-word"}}>{m.descripcion||"Saldo del sistema anterior"}</div>
+                ):(
+                  <div style={{fontSize:14,color:CR}}>{nombreProd(m.producto)} · {m.cantidad}{envaseMap[m.producto]==="Lata"?"u":"L"}</div>
+                )}
+                {!pago&&<div style={{fontSize:12,fontWeight:700,color:m.pagado?GR:"#C62828"}}>{m.pagado?"Cobrada":"Pendiente"}</div>}
+                {m.d&&<ChipBeneficio d={m.d}/>}
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:16,fontWeight:700,color:pago?GR:CR}}>{pago?"− ":""}{fmtARS(m.monto)}</div>
+                <div style={{fontSize:12,color:m.saldoAcum>0?"#C62828":GR,marginTop:2}}>Saldo: {fmtARS(m.saldoAcum)}</div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Cuenta corriente ÚNICA del cliente (se abre desde la ficha, tanto desde Clientes como desde "Cobrar")
 function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
+  const[showMovs,setShowMovs]=useState(false);
+  const[verTodos,setVerTodos]=useState(false);
   const[showHistorial,setShowHistorial]=useState(false);
-  const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
-  const descPorId=useMemo(()=>{const m={};itemsDesc.forEach(({v,d})=>{m[v.id]=d;});return m;},[itemsDesc]);
   const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
- 
-  const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
-  const pagadas=(cliente.ventas||[]).filter(v=>v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
+  const descPorId=useMemo(()=>{const m={};itemsDesc.forEach(({v,d})=>{m[v.id]=d;});return m;},[itemsDesc]);
+  const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  const pagos=useMemo(()=>construirMovimientosCliente(cliente,prods,pedidos).filter(m=>m.tipo==="pago").reverse(),[cliente,prods,pedidos]);
   const saldo=saldoCliente(cliente);
   const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora)||saldosPendientes(cliente).some(x=>daysSince(x.fecha)>=diasMora);
- 
-  // Cobro rápido de una venta puntual (queda para el caso de "cobré justo esto, hoy, en efectivo").
-  // Para fecha/medio de pago distintos, o pagos parciales, se usa el panel unificado "Registrar pago".
-  const marcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:true,fechaCobro:hoyISO(),medioPago:"Efectivo"}:v)});
-  const desmarcarPagada=id=>onUpdate({...cliente,ventas:cliente.ventas.map(v=>v.id===id?{...v,pagado:false,fechaCobro:null}:v)});
- 
+  const hayMovs=(cliente.ventas||[]).length>0||(cliente.saldosAnteriores||[]).length>0;
+  const deshacer=m=>{
+    const msg=m.cobroId?`¿Deshacer este pago de ${fmtARS(m.monto)}? Todo lo que cubrió vuelve a quedar como deuda.`:`¿Deshacer este pago de ${fmtARS(m.monto)}? Vuelve a quedar como deuda.`;
+    if(confirm(msg))onUpdate(deshacerPagoCliente(cliente,m));
+  };
+  const btn2={flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:"pointer"};
+
   return(
     <div style={{background:saldo>0?RE+"11":GR+"11",border:`1px solid ${saldo>0?RE+"33":GR+"33"}`,borderRadius:10,padding:14,marginBottom:14}}>
-      {/* Saldo siempre visible */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <span style={{fontSize:16,fontWeight:700,color:saldo>0?"#C62828":GR}}>
-          {saldo>0?"💰 Cuenta corriente":"✓ Sin deuda pendiente"}
-        </span>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <span style={{fontSize:16,fontWeight:700,color:saldo>0?"#C62828":GR}}>{saldo>0?"💰 Cuenta corriente":"✓ Sin deuda pendiente"}</span>
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
-      <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!((cliente.ventas||[]).length||(cliente.saldosAnteriores||[]).length)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:compartiendoEC?"not-allowed":"pointer",marginBottom:saldo>0?12:0,opacity:compartiendoEC?0.6:1}}>{I.share}{compartiendoEC?"Generando estado de cuenta...":"Enviar estado de cuenta (PDF)"}</button>
- 
+      <div style={{display:"flex",gap:8,marginBottom:saldo>0?12:8}}>
+        <button onClick={()=>setShowMovs(v=>!v)} disabled={!hayMovs} style={{...btn2,opacity:hayMovs?1:0.5}}>📋 {showMovs?"Ocultar movimientos":"Ver movimientos"}</button>
+        <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!hayMovs} style={{...btn2,opacity:compartiendoEC||!hayMovs?0.6:1,cursor:compartiendoEC?"not-allowed":"pointer"}}>{I.share}{compartiendoEC?"Generando...":"Enviar PDF"}</button>
+      </div>
+      {showMovs&&<div style={{marginBottom:12}}><MovimientosCards cliente={cliente} prods={prods} pedidos={pedidos}/></div>}
+
       <BloqueSaldosAnteriores entidad={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
 
       {saldo>0&&(
@@ -2923,7 +3068,6 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
               {cliente.telefono&&<a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,saldo,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"5px 10px",borderRadius:6,background:"#fff",color:"#C62828",textDecoration:"none",whiteSpace:"nowrap"}}>{I.wa} Recordar por WhatsApp</a>}
             </div>
           )}
-          {/* Ventas pendientes */}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
             {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
               <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
@@ -2935,13 +3079,11 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(v.monto)}</span>
-                  <button onClick={()=>marcarPagada(v.id)} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
+                  <button onClick={()=>onUpdate(cobrarVentaCliente(cliente,v.id))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
                 </div>
               </div>
             );})}
           </div>
- 
-          {/* Registrar pago — panel único (reemplaza los antiguos "efectivo"/"parcial"/"saldar todo") */}
           {!showPago?(
             <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               {I.check} Registrar pago
@@ -2951,31 +3093,29 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
           )}
         </>
       )}
- 
-      {/* Descuentos y bonificaciones del cliente */}
+
       <PanelDescuentosCliente items={itemsDesc}/>
 
-      {/* Historial de pagos */}
-      {pagadas.length>0&&(
+      {pagos.length>0&&(
         <div style={{marginTop:saldo>0?12:0}}>
           <button onClick={()=>setShowHistorial(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
-            {showHistorial?"▲":"▼"} Historial de pagos ({pagadas.length})
+            {showHistorial?"▲":"▼"} Historial de pagos ({pagos.length})
           </button>
           {showHistorial&&(
             <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
-              {pagadas.slice(0,8).map(v=>(
-                <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div>
-                    <div style={{fontSize:15,color:CR}}>{fmtDate(v.fechaCobro||v.fecha)}</div>
-                    <div style={{fontSize:13,color:GR}}>✓ {v.medioPago||"Cobrado"}{v.nota?` · ${v.nota}`:""}</div>
-                    <ChipBeneficio d={descPorId[v.id]}/>
+              {(verTodos?pagos:pagos.slice(0,8)).map(m=>(
+                <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:15,color:CR}}>{fmtDate(m.fecha)}</div>
+                    <div style={{fontSize:13,color:GR}}>✓ {m.medioPago||"Cobrado"}{m.nota?` · ${m.nota}`:""}</div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
-                    <button onClick={()=>desmarcarPagada(v.id)} style={{fontSize:13,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(m.monto)}</span>
+                    <button onClick={()=>deshacer(m)} style={{fontSize:13,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
                   </div>
                 </div>
               ))}
+              {pagos.length>8&&<button onClick={()=>setVerTodos(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G,fontWeight:700,padding:"4px 0"}}>{verTodos?"Ver menos":`Ver todos (${pagos.length})`}</button>}
             </div>
           )}
         </div>
@@ -2983,8 +3123,8 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
     </div>
   );
 }
- 
- 
+
+
 // ── DetalleCliente ────────────────────────────────────────────────
 function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,promo51,pedidos}){
   const[vForm,setVForm]=useState(false);
@@ -3084,7 +3224,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
 }
  
 // ── INICIO ────────────────────────────────────────────────────────
-function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}){
+function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,irACobranza}){
   const[catalogoAbierto,setCatalogoAbierto]=useState(false);
   const alertas=clientes.filter(c=>["inactivo","atencion"].includes(estadoC(c))).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}).slice(0,4);
   const pedidosHoy=(pedidos||[]).filter(p=>p.estado==="pendiente"&&p.fechaEntrega===hoyISO());
@@ -3229,7 +3369,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}
  
       {/* Alerta: deuda pendiente */}
       {deuda>0&&(
-        <button onClick={()=>setTab("cuentascorrientes")} style={{display:"block",width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:16,padding:"12px 14px",cursor:"pointer",textAlign:"left",marginBottom:16}}>
+        <button onClick={()=>(irACobranza?irACobranza():setTab("clientes"))} style={{display:"block",width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:16,padding:"12px 14px",cursor:"pointer",textAlign:"left",marginBottom:16}}>
           <div style={{fontSize:13,fontWeight:700,color:"#E08070",textTransform:"uppercase",letterSpacing:"0.06em"}}>Por cobrar</div>
           <div className="bebas" style={{fontSize:20,color:"#E08070",marginTop:2}}>{fmtARS(deuda)}</div>
         </button>
@@ -3268,61 +3408,127 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab}
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
-function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedidos}){
+function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp}){
   const[q,setQ]=useState("");
-  const[filtro,setFiltro]=useState("todos");
+  const[filtroLocal,setFiltroLocal]=useState("todos");
+  const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
   const[orden,setOrden]=useState("reciente");
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
-  const filtered=useMemo(()=>clientes.filter(c=>{const t=q.toLowerCase();return!t||c.nombre.toLowerCase().includes(t)||c.zona.toLowerCase().includes(t)||c.rubro.toLowerCase().includes(t);}).filter(c=>filtro==="todos"||estadoC(c)===filtro).sort((a,b)=>{
+  const[cobrandoId,setCobrandoId]=useState(null);
+  const filtroDeuda=filtro==="deuda"||filtro==="vencidos";
+  useEffect(()=>{if(filtroDeuda)setOrden("deuda");},[filtro]);   // con deuda: arranca por mayor deuda
+
+  // Resumen de deuda por cliente (una sola vez): total, monto vencido y días del vencimiento más viejo
+  const infoDeuda=useMemo(()=>{
+    const m={};
+    clientes.forEach(c=>{
+      const deuda=saldoCliente(c);
+      if(deuda<=0){m[c.id]={deuda:0,vencido:0,diasMax:0};return;}
+      const filas=[...(c.ventas||[]).filter(v=>!v.pagado),...saldosPendientes(c)];
+      let vencido=0,diasMax=0;
+      filas.forEach(f=>{const d=daysSince(f.fecha);if(d>=diasMora){vencido+=Number(f.monto)||0;if(d>diasMax)diasMax=d;}});
+      m[c.id]={deuda,vencido,diasMax};
+    });
+    return m;
+  },[clientes,diasMora]);
+  const totales=useMemo(()=>{
+    let pendiente=0,vencido=0,conDeuda=0,conVencido=0;
+    Object.values(infoDeuda).forEach(x=>{if(x.deuda>0){pendiente+=x.deuda;conDeuda++;}if(x.vencido>0){vencido+=x.vencido;conVencido++;}});
+    return{pendiente,vencido,conDeuda,conVencido};
+  },[infoDeuda]);
+
+  const filtered=useMemo(()=>clientes.filter(c=>{const t=q.toLowerCase();return!t||c.nombre.toLowerCase().includes(t)||(c.zona||"").toLowerCase().includes(t)||(c.rubro||"").toLowerCase().includes(t);}).filter(c=>{
+    if(filtro==="todos")return true;
+    if(filtro==="deuda")return infoDeuda[c.id].deuda>0;
+    if(filtro==="vencidos")return infoDeuda[c.id].vencido>0;
+    return estadoC(c)===filtro;
+  }).sort((a,b)=>{
     if(orden==="az")return a.nombre.localeCompare(b.nombre);
-    if(orden==="deuda")return saldoCliente(b)-saldoCliente(a);
+    if(orden==="deuda")return infoDeuda[b.id].deuda-infoDeuda[a.id].deuda;
     const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);
-  }),[clientes,q,filtro,orden]);
+  }),[clientes,q,filtro,orden,infoDeuda]);
   const selObj=clientes.find(c=>c.id===sel);
+  const cobrandoObj=clientes.find(c=>c.id===cobrandoId);
+  const actualizar=u=>setClientes(p=>p.map(c=>c.id===u.id?u:c));
+  const chips=[{k:"todos",l:"Todos"},{k:"activo",l:"Activos"},{k:"atencion",l:"Atención"},{k:"inactivo",l:"Inactivos"},{k:"deuda",l:`💰 Con deuda (${totales.conDeuda})`},{k:"vencidos",l:`⚠ Vencidos (${totales.conVencido})`}];
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Clientes</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
       </div>
+
+      {totales.conDeuda>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:14}}>
+          <button onClick={()=>setFiltro("deuda")} style={{textAlign:"left",background:CA,border:`1px solid ${filtro==="deuda"?RE:RE+"33"}`,borderRadius:16,padding:"12px 14px",cursor:"pointer"}}>
+            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>Por cobrar</div>
+            <div className="bebas" style={{fontSize:22,color:"#C24545"}}>{fmtARS(totales.pendiente)}</div>
+            <div style={{fontSize:12,color:MU}}>{totales.conDeuda} cliente{totales.conDeuda!==1?"s":""}</div>
+          </button>
+          <button onClick={()=>setFiltro("vencidos")} style={{textAlign:"left",background:CA,border:`1px solid ${totales.conVencido>0?(filtro==="vencidos"?"#C62828":"#C6282866"):BO}`,borderRadius:16,padding:"12px 14px",cursor:"pointer"}}>
+            <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>⚠ Vencido (+{diasMora}d)</div>
+            <div className="bebas" style={{fontSize:22,color:totales.conVencido>0?"#C62828":CR}}>{fmtARS(totales.vencido)}</div>
+            <div style={{fontSize:12,color:MU}}>{totales.conVencido} cliente{totales.conVencido!==1?"s":""}</div>
+          </button>
+        </div>
+      )}
+
       <div style={{position:"relative",marginBottom:12}}>
         <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:MU,pointerEvents:"none"}}>{I.search}</span>
         <input style={{paddingLeft:38}} placeholder="Buscar por nombre, zona o rubro..." value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:10,overflowX:"auto",paddingBottom:4}}>
-        {[{k:"todos",l:"Todos"},{k:"activo",l:"Activos"},{k:"atencion",l:"Atención"},{k:"inactivo",l:"Inactivos"}].map(f=>(
+        {chips.map(f=>(
           <button key={f.k} onClick={()=>setFiltro(f.k)} style={{whiteSpace:"nowrap",padding:"6px 12px",borderRadius:20,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro===f.k?G:BO}`,background:filtro===f.k?G:"transparent",color:filtro===f.k?"#fff":MU}}>{f.l}</button>
         ))}
       </div>
-      <div style={{marginBottom:16}}>
+      <div style={{marginBottom:filtroDeuda?12:16}}>
         <select value={orden} onChange={e=>setOrden(e.target.value)}>
           <option value="reciente">Ordenar: más recientes</option>
           <option value="az">Ordenar: A → Z</option>
           <option value="deuda">Ordenar: mayor deuda</option>
         </select>
       </div>
-      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Sin clientes para mostrar.</p>:filtered.map(c=>{const e=EST[estadoC(c)];const ls=lastSale(c);const deuda=saldoCliente(c);return(
-        <button key={c.id} onClick={()=>setSel(c.id)} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",marginBottom:8}}>
-          <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(c.nombre)}</div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:600,color:CR}}>{c.nombre}</span><span style={{color:MU}}>{I.chev}</span></div>
-            <div style={{fontSize:14,color:MU,marginTop:2}}>{c.rubro} · {c.zona}</div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
-              <div style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:20,background:e.c+"15"}}>
-                <span style={{width:5,height:5,borderRadius:"50%",background:e.c}}/>
-                <span style={{fontSize:13,fontWeight:600,color:e.c}}>{ls?`Hace ${daysSince(ls.fecha)} días`:e.l}</span>
+      {filtroDeuda&&<CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>}
+
+      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>:filtered.map(c=>{const e=EST[estadoC(c)];const ls=lastSale(c);const inf=infoDeuda[c.id];const deuda=inf.deuda;return(
+        <div key={c.id} style={{display:"flex",alignItems:"stretch",background:CA,border:`1px solid ${inf.vencido>0?"#C6282866":BO}`,borderRadius:18,marginBottom:8,overflow:"hidden"}}>
+          <button onClick={()=>setSel(c.id)} style={{display:"flex",alignItems:"center",gap:12,background:"none",border:"none",padding:"12px 16px",cursor:"pointer",textAlign:"left",flex:1,minWidth:0}}>
+            <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(c.nombre)}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</span><span style={{color:MU}}>{I.chev}</span></div>
+              <div style={{fontSize:14,color:MU,marginTop:2}}>{c.rubro} · {c.zona}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,gap:8}}>
+                <div style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:20,background:e.c+"15"}}>
+                  <span style={{width:5,height:5,borderRadius:"50%",background:e.c}}/>
+                  <span style={{fontSize:13,fontWeight:600,color:e.c}}>{ls?`Hace ${daysSince(ls.fecha)} días`:e.l}</span>
+                </div>
+                {deuda>0&&<div style={{fontSize:13,fontWeight:700,color:"#E08070"}}>💰{fmtARS(deuda)}</div>}
               </div>
-              {deuda>0&&<div style={{fontSize:13,fontWeight:700,color:"#E08070"}}>💰{fmtARS(deuda)}</div>}
+              {inf.vencido>0&&<div style={{fontSize:12,fontWeight:700,color:"#C62828",marginTop:4}}>⚠ vencido hace {inf.diasMax}d</div>}
             </div>
-          </div>
-        </button>
+          </button>
+          {deuda>0&&<button onClick={()=>setCobrandoId(c.id)} aria-label={`Cobrar a ${c.nombre}`} style={{flexShrink:0,width:74,background:GR+"22",color:GR,border:"none",borderLeft:`1px solid ${GR}33`,fontSize:14,fontWeight:700,cursor:"pointer"}}>Cobrar</button>}
+        </div>
       );})}
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo cliente">
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} onUpdate={u=>setClientes(p=>p.map(c=>c.id===u.id?u:c))} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} onUpdate={actualizar} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+      </Modal>
+      <Modal open={!!cobrandoObj} onClose={()=>setCobrandoId(null)} title={cobrandoObj?`Cobrar · ${cobrandoObj.nombre}`:""}>
+        {cobrandoObj&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:12}}>
+              <span style={{fontSize:14,color:MU}}>Deuda actual</span>
+              <span className="bebas" style={{fontSize:26,color:"#C24545"}}>{fmtARS(saldoCliente(cobrandoObj))}</span>
+            </div>
+            <PanelCobro cliente={cobrandoObj} onUpdate={actualizar} onDone={()=>setCobrandoId(null)}/>
+            <button onClick={()=>{setSel(cobrandoObj.id);setCobrandoId(null);}} style={{width:"100%",marginTop:12,padding:"10px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:14,fontWeight:600,cursor:"pointer"}}>Ver ficha y movimientos</button>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -3504,7 +3710,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos}
                 const p=(prods||[]).find(x=>x.id===r.producto);
                 return(
                   <div key={r.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
-                    <span style={{color:CR,minWidth:0}}>{p?nombreProdEnvase(p):r.producto} <span style={{color:MU}}>· {r.cantidad}{p&&p.envase==="Lata"?"u":"L"}</span></span>
+                    <span style={{color:CR,minWidth:0}}>{p?nombreProdEnvase(p):r.producto} <span style={{color:MU}}>· {r.cantidad}{p&&p.envase==="Lata"?"u":"L"}{r.precioUnit?` × ${fmtARS2(r.precioUnit)}`:""}{r.descuentoMonto>0?` · desc. ${r.descuentoPct!=null?`${r.descuentoPct}%`:fmtARS(r.descuentoMonto)}`:""}</span></span>
                     <span style={{color:MU,flexShrink:0}}>{fmtARS(esF?(r.montoNeto??r.monto):r.monto)}</span>
                   </div>
                 );
@@ -5130,103 +5336,6 @@ function Speeches({speeches,setSpeeches}){
 }
  
 // ── VENTAS ────────────────────────────────────────────────────────
-function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
-  const ctxDesc=useMemo(()=>ctxDescuentos(prods,pedidos),[prods,pedidos]);
-  const[expandido,setExpandido]=useState(null);
-  const[filtro,setFiltro]=useState("todos"); // todos | vencidos
-  const[pagoAbierto,setPagoAbierto]=useState(null); // id del cliente con el panel de pago abierto
-
-  const todasConDeuda=useMemo(()=>clientes
-    .map(c=>({cliente:c,deuda:saldoCliente(c),saldosN:saldosPendientes(c).length,pendientes:(c.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))}))
-    .filter(x=>x.deuda>0)
-    .map(x=>({...x,vencidas:[...x.pendientes,...saldosPendientes(x.cliente)].filter(v=>daysSince(v.fecha)>=diasMora)}))
-    .sort((a,b)=>b.deuda-a.deuda),[clientes,diasMora]);
-  const deudaTotal=todasConDeuda.reduce((s,x)=>s+x.deuda,0);
-  const clientesVencidos=todasConDeuda.filter(x=>x.vencidas.length>0);
-  const deudaVencida=clientesVencidos.reduce((s,x)=>s+x.vencidas.reduce((a,v)=>a+v.monto,0),0);
-  const conDeuda=filtro==="vencidos"?clientesVencidos:todasConDeuda;
-
-  // Cobro rápido de una venta puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
-  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:hoyISO(),medioPago:"Efectivo"}:v)}));
-  const actualizarCliente=u=>setClientes(prev=>prev.map(c=>c.id===u.id?u:c));
-
-  return(
-    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
-      <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Cuentas corrientes</span>
-      <p style={{fontSize:14,color:MU,marginBottom:16}}>{todasConDeuda.length} cliente{todasConDeuda.length!==1?"s":""} con saldo pendiente</p>
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
-        <div style={{background:CA,border:`1px solid ${RE}33`,borderRadius:18,padding:16}}>
-          <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Total pendiente</div>
-          <div className="bebas" style={{fontSize:24,color:"#C24545"}}>{fmtARS(deudaTotal)}</div>
-        </div>
-        <div style={{background:CA,border:`1px solid ${clientesVencidos.length>0?"#C6282866":BO}`,borderRadius:18,padding:16}}>
-          <div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>⚠ Vencido (+{diasMora}d)</div>
-          <div className="bebas" style={{fontSize:24,color:clientesVencidos.length>0?"#C62828":CR}}>{fmtARS(deudaVencida)}</div>
-        </div>
-      </div>
-
-      <CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>
-
-      <div style={{display:"flex",gap:8,marginBottom:18}}>
-        <button onClick={()=>setFiltro("todos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="todos"?G:BO}`,background:filtro==="todos"?G+"18":"none",color:filtro==="todos"?G:MU}}>Todos ({todasConDeuda.length})</button>
-        <button onClick={()=>setFiltro("vencidos")} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro==="vencidos"?"#C62828":BO}`,background:filtro==="vencidos"?"#C6282818":"none",color:filtro==="vencidos"?"#C62828":MU}}>⚠ Vencidos ({clientesVencidos.length})</button>
-      </div>
-
-      {conDeuda.length===0?(
-        <p style={{color:MU,textAlign:"center",padding:"40px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":"🎉 No hay cuentas pendientes. Todo cobrado."}</p>
-      ):conDeuda.map(({cliente,deuda,pendientes,vencidas,saldosN})=>{
-        const abierto=expandido===cliente.id;
-        const tieneVencidas=vencidas.length>0;
-        return(
-          <div key={cliente.id} style={{background:CA,border:`1px solid ${tieneVencidas?"#C6282866":BO}`,borderRadius:18,overflow:"hidden",marginBottom:10}}>
-            <button onClick={()=>setExpandido(abierto?null:cliente.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:14,background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
-              <div style={{width:36,height:36,borderRadius:"50%",background:RE+"15",color:"#C24545",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>{iniciales(cliente.nombre)}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:16,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente.nombre}</div>
-                <div style={{fontSize:13,color:tieneVencidas?"#C62828":MU,marginTop:2,fontWeight:tieneVencidas?700:400}}>{tieneVencidas?`⚠ ${vencidas.length} vencida${vencidas.length!==1?"s":""} · `:""}{pendientes.length} venta{pendientes.length!==1?"s":""} pendiente{pendientes.length!==1?"s":""}{saldosN>0?` · ${saldosN} saldo${saldosN!==1?"s":""} anterior${saldosN!==1?"es":""}`:""}</div>
-              </div>
-              <div style={{fontSize:16,fontWeight:700,color:"#C24545",flexShrink:0}}>{fmtARS(deuda)}</div>
-              <span style={{color:MU,display:"flex",flexShrink:0,transform:abierto?"rotate(90deg)":"none",transition:"transform 0.2s"}}>{I.chev}</span>
-            </button>
-            {abierto&&(
-              <div style={{borderTop:`1px solid ${BO}`,padding:"8px 14px 14px"}}>
-                <BloqueSaldosAnteriores entidad={cliente} onUpdate={actualizarCliente} diasMora={diasMora}/>
-                {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
-                  <div key={v.id} style={{padding:"8px 0",borderBottom:`1px solid ${BO}`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                      <div style={{fontSize:14,color:vencida?"#C62828":MU,fontWeight:vencida?700:400}}>{fmtDate(v.fecha)} · {v.cantidad}L{vencida?` · vencido ${dias}d`:""}</div>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
-                        <button onClick={()=>marcarPagada(cliente.id,v.id)} style={{padding:"5px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>Cobrado</button>
-                      </div>
-                    </div>
-                    <ChipBeneficio d={desgloseVenta(v,cliente.id,ctxDesc)}/>
-                    {!!cliente.comisionPctDefault&&<div style={{fontSize:13,color:G,marginTop:4}}>% comisión ({cliente.comisionPctDefault}%) = {fmtARS(Math.round(v.monto*Number(cliente.comisionPctDefault)/100))}</div>}
-                  </div>
-                );})}
-
-                <PanelDescuentosCliente items={(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctxDesc)}))}/>
-                {vencidas.length>0&&cliente.telefono&&(
-                  <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
-                )}
-
-                {pagoAbierto===cliente.id?(
-                  <div style={{marginTop:10}}>
-                    <PanelCobro cliente={cliente} onUpdate={actualizarCliente} onDone={()=>setPagoAbierto(null)}/>
-                  </div>
-                ):(
-                  <button onClick={()=>setPagoAbierto(cliente.id)} style={{width:"100%",marginTop:10,padding:"10px 0",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer"}}>💰 Registrar pago</button>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
@@ -7552,7 +7661,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
       {/* ── Cobranzas ── */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:20,marginBottom:16}}>
         <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:4}}>💰 Cobranzas</div>
-        <p style={{fontSize:14,color:MU,marginBottom:14,lineHeight:1.5}}>Una venta pendiente se marca como "vencida" cuando pasan más de estos días sin cobrarse. Se usa para las alertas de mora en Cta.Cte y en la ficha de cada cliente.</p>
+        <p style={{fontSize:14,color:MU,marginBottom:14,lineHeight:1.5}}>Una venta pendiente se marca como "vencida" cuando pasan más de estos días sin cobrarse. Se usa para el filtro "Vencidos" y las alertas de mora en Clientes y en la ficha de cada cliente.</p>
         <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
           <div style={{flex:1}}><Lbl t="Días para considerar mora"/><input type="number" inputMode="numeric" value={moraTmp} onChange={e=>setMoraTmp(e.target.value)} placeholder="Ej: 15"/></div>
           <button onClick={guardarMora} disabled={!moraTmp||Number(moraTmp)<=0} style={{padding:"10px 16px",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",opacity:!moraTmp||Number(moraTmp)<=0?0.4:1}}>Guardar</button>
@@ -8111,7 +8220,6 @@ const TABS=[
   {key:"clientes",label:"Clientes",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>},
   {key:"comercios",label:"Comercios",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7"/><rect x="3" y="9" width="18" height="13" rx="1"/><path d="M9 22V12h6v10"/></svg>},
   {key:"pedidos",label:"Pedidos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>},
-  {key:"cuentascorrientes",label:"Cta.Cte",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>},
   {key:"maps",label:"Buscar",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>},
   {key:"speeches",label:"Speeches",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
   {key:"notas",label:"Notas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>},
@@ -8238,6 +8346,8 @@ function AppGate(){
 
 function App(){
   const[tab,setTab]=useState("inicio");
+  const[filtroClientes,setFiltroClientes]=useState("todos");
+  const irACobranza=()=>{setFiltroClientes("deuda");setTab("clientes");};
   const[showMore,setShowMore]=useState(false);
   const[temaOscuro,setTemaOscuro]=useState(()=>{
     try{return localStorage.getItem("farol_tema")==="oscuro";}catch(e){return false;}
@@ -8354,11 +8464,10 @@ function App(){
         </aside>
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:58,minHeight:"100vh"}} id="mn">
-          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab}/>}
-          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos}/>}
+          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza}/>}
+          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
-          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora} prods={prods} pedidos={pedidos}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="notas"&&<Notas notas={notas} setNotas={setNotas} cal={cal}/>}
