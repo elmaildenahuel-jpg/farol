@@ -59,6 +59,16 @@ html.tema-oscuro #root{filter:invert(1) hue-rotate(180deg);background:#fff}
 html.tema-oscuro ::-webkit-scrollbar-thumb{background:#666}
 /* El modo oscuro invierte todo #root; se re-aplica el mismo filtro al logo para que se vea con sus colores reales */
 html.tema-oscuro #root .logo-nomades{filter:invert(1) hue-rotate(180deg)}
+/* ── Estado de cuenta (tarjeta de movimientos): mismas columnas que el PDF. En pantallas angostas, importe y saldo van apilados a la derecha ── */
+.ec-card{container-type:inline-size}
+.ec-grid{display:grid;grid-template-columns:36px minmax(96px,1fr) 104px;column-gap:8px;align-items:start}
+.ec-d{display:none}
+/* El diseño de 6 columnas solo se usa si la tarjeta es lo bastante ancha; si el navegador no soporta container queries, queda el diseño compacto */
+@container (min-width:640px){
+  .ec-grid{grid-template-columns:78px minmax(150px,1fr) 52px 92px 92px 100px}
+  .ec-m{display:none}
+  .ec-d{display:block}
+}
 </style>
 </head>
 <body>
@@ -432,12 +442,54 @@ async function compartirCatalogoPDF(prods,promo51){
     alert("No se pudo generar el catálogo:\n\n"+(e&&e.message?e.message:String(e))+"\n\nMandame este mensaje para arreglarlo.");
   }
 }
+// ── Numeración correlativa de remitos (0001-00000001, 0001-00000002…) ──
+function fmtRemito(n){const x=parseInt(n,10);return x>0?"0001-"+String(x).padStart(8,"0"):"";}
+// El próximo número es el mayor ya usado (en pedidos o en ventas ya entregadas) + 1
+function proximoRemito(pedidos,clientes){
+  let mx=0;
+  (pedidos||[]).forEach(p=>{mx=Math.max(mx,Number(p.remitoNro)||0);});
+  (clientes||[]).forEach(c=>(c.ventas||[]).forEach(v=>{mx=Math.max(mx,Number(v.remitoNro)||0);}));
+  return mx+1;
+}
+// Migración única: numera los pedidos que todavía no tienen remito (por fecha de entrega) y vincula a cada uno las ventas que generó al entregarse
+function numerarRemitosExistentes(pedidos,clientes){
+  const sinNro=(pedidos||[]).filter(p=>!p.remitoNro);
+  if(!sinNro.length)return null;
+  let sig=proximoRemito(pedidos,clientes);
+  const orden=[...sinNro].sort((a,b)=>String(a.fechaEntrega||"").localeCompare(String(b.fechaEntrega||""))||String(a.creadoEn||"").localeCompare(String(b.creadoEn||""))||String(a.id).localeCompare(String(b.id)));
+  const asignado={};orden.forEach(p=>{asignado[p.id]=sig++;});
+  const nuevosPedidos=pedidos.map(p=>asignado[p.id]?{...p,remitoNro:asignado[p.id]}:p);
+  const entregados=orden.filter(p=>p.estado==="entregado");
+  const nuevosClientes=(clientes||[]).map(c=>{
+    const mios=entregados.filter(p=>p.clienteId===c.id);
+    if(!mios.length)return c;
+    let ventas=[...(c.ventas||[])],cambio=false;
+    mios.forEach(p=>{
+      const nro=asignado[p.id],factor=p.factorAjuste||1;
+      (p.lineas||[]).forEach(l=>{
+        const libres=ventas.filter(v=>!v.remitoNro&&!v._origenId&&v.fecha===p.fechaEntrega&&v.producto===l.productoId);
+        const raiz=libres.find(v=>Math.round(Number(v.monto)||0)===Math.round((Number(l.monto)||0)*factor)&&Number(v.cantidad)===Number(l.cantidad))||libres.find(v=>Number(v.cantidad)===Number(l.cantidad))||libres[0];
+        if(!raiz)return;
+        const tag=new Set([raiz.id]);let crecio=true;
+        while(crecio){crecio=false;ventas.forEach(v=>{if(v._origenId&&tag.has(v._origenId)&&!tag.has(v.id)){tag.add(v.id);crecio=true;}});}
+        ventas=ventas.map(v=>tag.has(v.id)?{...v,remitoNro:nro,pedidoId:p.id}:v);cambio=true;
+      });
+    });
+    return cambio?{...c,ventas}:c;
+  });
+  return{pedidos:nuevosPedidos,clientes:nuevosClientes};
+}
+// Texto del número de remito de un pedido (los pedidos viejos sin número usan el código anterior hasta que se numeren)
+function nroRemitoDePedido(pedido){
+  return pedido.remitoNro?fmtRemito(pedido.remitoNro):((pedido.id||"").replace(/\D/g,"").slice(-6)||String(Date.now()).slice(-6));
+}
+
 // ── Remito PDF (para compartir por WhatsApp) ─────────────────────
 function construirRemitoPDF(pedido,cliente,prods){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const pageW=210,marginX=15;
-  const nroRemito=(pedido.id||"").replace(/\D/g,"").slice(-6)||String(Date.now()).slice(-6);
+  const nroRemito=nroRemitoDePedido(pedido);
 
   // Header
   doc.setFillColor(14,74,44);
@@ -584,7 +636,7 @@ async function compartirRemitoPDF(pedido,cliente,prods,onEstado){
   try{
     onEstado&&onEstado(true);
     const doc=construirRemitoPDF(pedido,cliente,prods);
-    const nroRemito=(pedido.id||"").replace(/\D/g,"").slice(-6)||String(Date.now()).slice(-6);
+    const nroRemito=nroRemitoDePedido(pedido);
     const fileName=`remito-${nroRemito}-${(cliente&&cliente.nombre?cliente.nombre.replace(/\s+/g,"-").toLowerCase():"cliente")}.pdf`;
     const blob=doc.output("blob");
     let compartido=false;
@@ -730,6 +782,14 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
       doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
       doc.text(`Pago recibido${m.medioPago?" · "+m.medioPago:""}`,colX.prod+1,y,{maxWidth:54});
       doc.text(fmtARS(m.monto),colX.saldo-24,y,{align:"right"});
+    }else if(m.remitoNro){
+      doc.setTextColor(60,60,60);
+      doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
+      doc.setFont("helvetica","bold");
+      doc.text(`Remito ${fmtRemito(m.remitoNro)}`,colX.prod+1,y,{maxWidth:54});
+      doc.setFont("helvetica","normal");
+      doc.text(`${m.items.length} prod.`,colX.monto-4,y,{align:"right"});
+      doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }else{
       const esSaldo=m.tipo==="saldo";
       const cantTxt=esSaldo?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
@@ -746,6 +806,20 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
     doc.text(fmtARS(m.saldoAcum),colX.saldo,y,{align:"right"});
     doc.setFont("helvetica","normal");
     y+=6.3;
+    if(m.remitoNro){
+      m.items.forEach(it=>{
+        asegurarEspacio(5);
+        if(y<40){dibujarHeaderTabla();}
+        doc.setFont("helvetica","normal");
+        doc.setFontSize(7.6);
+        doc.setTextColor(120,120,120);
+        doc.text(`· ${nombreDeProd(it.producto)}`,colX.prod+3,y-0.6,{maxWidth:52});
+        doc.text(`${it.cantidad}${esLata(it.producto)?"u":"L"}`,colX.monto-4,y-0.6,{align:"right"});
+        doc.text(fmtARS(it.monto),colX.pago-2,y-0.6,{align:"right"});
+        y+=4.6;
+      });
+      y+=0.8;
+    }
     doc.setDrawColor(240,241,240);
     doc.setLineWidth(0.15);
     doc.line(marginX,y-4.3,pageW-marginX,y-4.3);
@@ -1651,6 +1725,13 @@ function desgloseAlEntregar(prod,l,ped){
     descuentoPct:Number(l.descuentoPct)||0,descPedidoPct:dp,
   };
 }
+// Suma los desgloses de las partes de una misma venta
+function sumarDesgloses(ds){
+  const r={neto:0,volumen:0,linea:0,pedido:0,bono:0,iva:0,bruto:0,beneficio:0,litros:0,litrosBono:0,estimado:false};
+  ds.forEach(d=>{Object.keys(r).forEach(k=>{if(k==="estimado")r.estimado=r.estimado||!!d.estimado;else r[k]+=Number(d[k])||0;});});
+  r.esBono=ds.length>0&&ds.every(d=>d.esBono);
+  return r;
+}
 // Desglose de cualquier venta (nueva o vieja). ctx = ctxDescuentos(prods,pedidos)
 function desgloseVenta(v,clienteId,ctx){
   const monto=Number(v.monto)||0,cant=Number(v.cantidad)||0;
@@ -1805,14 +1886,16 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
     const montoPagado=restante,montoRestante=v.monto-restante;
     const cantPagada=Math.round((v.cantidad*(montoPagado/v.monto))*10)/10;
     restante=0;
-    return{...v,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:v.cantidad-cantPagada};
+    return{...v,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:Math.round((v.cantidad-cantPagada)*10)/10};
   });
   const ventasFinales=[];
   nuevasVentas.forEach(v=>{
     if(v._split){
       const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=v;
-      ventasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",cobroId});
-      ventasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,pagado:false,fechaCobro:null,cobroId:null,_origenId:v.id});
+      const rP=v.monto>0?_montoPagado/v.monto:0,dvP={},dvR={};
+      if(v.dv===1){["neto","volumen","linea","pedido","bono","iva"].forEach(f=>{const t=Number(v[f])||0,pp=Math.round(t*rP);dvP[f]=pp;dvR[f]=t-pp;});dvP.dvEsc=true;dvR.dvEsc=true;}
+      ventasFinales.push({...base,...dvP,cantidad:_cantPagada,monto:_montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",cobroId});
+      ventasFinales.push({...base,...dvR,id:uid(),cantidad:_cantRestante,monto:_montoRestante,pagado:false,fechaCobro:null,cobroId:null,_origenId:v.id});
     }else{ventasFinales.push(v);}
   });
   const aplicado=Math.round((monto-restante)*100)/100;   // lo que realmente cubrió (nunca más que la deuda)
@@ -1827,6 +1910,15 @@ function cobrarVentaCliente(cliente,ventaId){
   if(!v||v.pagado)return cliente;
   const fecha=hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(v.monto)||0,medioPago,nota:""};
   return{...cliente,ventas:cliente.ventas.map(x=>x.id===ventaId?{...x,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:x),cobros:[...(cliente.cobros||[]),cobro]};
+}
+// Cobro rápido de VARIAS ventas a la vez (p. ej. todo un remito): queda como un único pago en el historial.
+function cobrarVentasCliente(cliente,ventaIds,nota){
+  const ids=new Set(ventaIds);
+  const filas=(cliente.ventas||[]).filter(x=>ids.has(x.id)&&!x.pagado);
+  if(!filas.length)return cliente;
+  const fecha=hoyISO(),medioPago="Efectivo",monto=Math.round(filas.reduce((a,x)=>a+(Number(x.monto)||0),0)*100)/100;
+  const cobro={id:uid(),fecha,monto,medioPago,nota:nota||""};
+  return{...cliente,ventas:cliente.ventas.map(x=>ids.has(x.id)&&!x.pagado?{...x,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:x),cobros:[...(cliente.cobros||[]),cobro]};
 }
 // Misma idea para un saldo anterior (cobro rápido desde el bloque de saldos)
 function cobrarSaldoCliente(cliente,saldoId){
@@ -1871,11 +1963,38 @@ function construirMovimientosCliente(cliente,prods,pedidos){
   const movs=[];
   const sumaCobro={};
   const sumar=(x,monto)=>{if(x.pagado&&x.cobroId)sumaCobro[x.cobroId]=(sumaCobro[x.cobroId]||0)+monto;};
+  // Una venta cobrada en partes (cobro parcial) queda partida en varias filas internas, enlazadas por _origenId. En el libro se muestra
+  // como UNA sola venta (con lo cobrado y lo que falta); lo cobrado aparece en los pagos. Los totales y el saldo no cambian.
+  const porId={};(cliente.ventas||[]).forEach(v=>{porId[v.id]=v;});
+  const raizDe=v=>{let x=v,n=0;while(x._origenId&&porId[x._origenId]&&n<100){x=porId[x._origenId];n++;}return x.id;};
+  const grupos={},ordenGrupos=[],porRemito={},ordenRemitos=[];
   (cliente.ventas||[]).forEach(v=>{
     const monto=Number(v.monto)||0;
-    movs.push({id:v.id+"-v",orden:0,tipo:"venta",fecha:v.fecha,producto:v.producto,cantidad:v.cantidad,monto,pagado:!!v.pagado,d:desgloseVenta(v,cliente.id,ctx)});
+    const r=raizDe(v);if(!grupos[r]){grupos[r]=[];ordenGrupos.push(r);}grupos[r].push(v);
     sumar(v,monto);
     if(v.pagado&&!v.cobroId)movs.push({id:v.id+"-p",orden:1,tipo:"pago",fecha:v.fechaCobro||v.fecha,monto,medioPago:v.medioPago,nota:v.nota||"",origenTipo:"venta",origenId:v.id});
+  });
+  ordenGrupos.forEach(r=>{
+    const piezas=grupos[r],raiz=porId[r]||piezas[0];
+    const monto=Math.round(piezas.reduce((a,x)=>a+(Number(x.monto)||0),0)*100)/100;
+    const cobrado=Math.round(piezas.filter(x=>x.pagado).reduce((a,x)=>a+(Number(x.monto)||0),0)*100)/100;
+    const cantidad=Math.round(piezas.reduce((a,x)=>a+(Number(x.cantidad)||0),0)*10)/10;
+    const ds=piezas.map(x=>desgloseVenta(x,cliente.id,ctx));
+    // Las ventas partidas antes de que se repartiera el desglose llevan el desglose completo en cada parte: ahí se usa solo el de la venta original
+    const sumable=piezas.every(x=>x.dv!==1||x.dvEsc);
+    const d=piezas.length===1?ds[0]:(sumable?sumarDesgloses(ds):desgloseVenta(raiz,cliente.id,ctx));
+    const pagada=piezas.length===1?!!piezas[0].pagado:cobrado>=monto-0.005;
+    const mv={id:raiz.id+"-v",orden:0,tipo:"venta",fecha:raiz.fecha,producto:raiz.producto,cantidad,monto,pagado:pagada,cobrado,parcial:!pagada&&cobrado>0.005,d};
+    if(raiz.remitoNro){const k=String(raiz.remitoNro);if(!porRemito[k]){porRemito[k]=[];ordenRemitos.push(k);}porRemito[k].push(mv);}
+    else movs.push(mv);
+  });
+  // Las ventas de un mismo remito se muestran juntas: una fila por remito (número + importe) con sus productos adentro
+  ordenRemitos.forEach(k=>{
+    const items=porRemito[k];
+    const monto=Math.round(items.reduce((a,x)=>a+x.monto,0)*100)/100;
+    const cobrado=Math.round(items.reduce((a,x)=>a+x.cobrado,0)*100)/100;
+    const pagada=items.every(x=>x.pagado);
+    movs.push({id:"rem-"+k+"-v",orden:0,tipo:"venta",remitoNro:Number(k),fecha:items.reduce((mn,x)=>x.fecha<mn?x.fecha:mn,items[0].fecha),items,monto,cobrado,pagado:pagada,parcial:!pagada&&cobrado>0.005,d:sumarDesgloses(items.map(x=>x.d))});
   });
   (cliente.saldosAnteriores||[]).forEach(x=>{
     const monto=Number(x.monto)||0;
@@ -1908,7 +2027,7 @@ function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota=""
     const montoPagado=restante,montoRestante=c.monto-restante;
     const cantPagada=Math.round((c.cantidad*(montoPagado/c.monto))*10)/10;
     restante=0;
-    return{...c,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:c.cantidad-cantPagada};
+    return{...c,_split:true,_montoPagado:montoPagado,_montoRestante:montoRestante,_cantPagada:cantPagada,_cantRestante:Math.round((c.cantidad-cantPagada)*10)/10};
   });
   const comprasFinales=[];
   nuevasCompras.forEach(c=>{
@@ -2990,38 +3109,127 @@ function CargarSaldoClienteRapido({clientes,setClientes}){
 
 // ── CuentaCorriente ───────────────────────────────────────────────
 // Vista en tarjetas del estado de cuenta: ventas, saldos anteriores y pagos en una sola línea de tiempo, del más reciente al más viejo.
+// Tarjeta "Estado de cuenta": misma estructura y colores que el PDF (banda verde, 3 recuadros de resumen y libro de movimientos de
+// más reciente a más viejo con el saldo acumulado). Cada cobro es un solo movimiento. En celular, importe y saldo van apilados a la derecha.
 function MovimientosCards({cliente,prods,pedidos}){
+  const[limite,setLimite]=useState(20);
+  const[abiertos,setAbiertos]=useState(()=>new Set());
+  const alternar=id=>setAbiertos(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else n.add(id);return n;});
   const movs=useMemo(()=>[...construirMovimientosCliente(cliente,prods,pedidos)].reverse(),[cliente,prods,pedidos]);
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
+  const resumen=useMemo(()=>{
+    let fact=0,cob=0;
+    movs.forEach(m=>{if(m.tipo==="pago")cob+=m.monto;else fact+=m.monto;});
+    return{fact,cob,saldo:Math.round((fact-cob)*100)/100};
+  },[movs]);
   if(movs.length===0)return<p style={{fontSize:15,color:MU,textAlign:"center",padding:16}}>Sin movimientos registrados.</p>;
+  const m$=n=>fmtARS(n).replace(/\$\s+/,"$");                       // "$ 60.000" → "$60.000" (más compacto en la tabla)
+  const fl1=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");   // evita decimales de más (p. ej. 2.1000000000000014)
+  const partes=f=>{const[a,m,d]=String(f||"").split("-");return{d:d||"",m:m||"",a:a||""};};
+  const hoyTxt=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"});
+  const rojo="#C62828";
+  const caja=(lbl,val,color)=>(
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",minWidth:0}}>
+      <div style={{fontSize:10,color:MU,textTransform:"uppercase",letterSpacing:"0.05em",whiteSpace:"nowrap"}}>{lbl}</div>
+      <div style={{fontSize:"clamp(12px,3.7vw,15px)",fontWeight:700,color,whiteSpace:"nowrap"}}>{m$(val)}</div>
+    </div>
+  );
+  const visibles=movs.slice(0,limite);
+  const colHead={fontSize:10,fontWeight:700,color:MU,letterSpacing:"0.05em"};
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-      {movs.map(m=>{
+    <div className="ec-card" style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden"}}>
+      <div style={{background:GDK,color:"#fff",padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+        <span style={{fontSize:13,fontWeight:700,letterSpacing:"0.08em"}}>ESTADO DE CUENTA</span>
+        <span style={{fontSize:12,opacity:0.85}}>Al {hoyTxt}</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,padding:10}}>
+        {caja("Facturado",resumen.fact,CR)}
+        {caja("Cobrado",resumen.cob,GR)}
+        {caja("Saldo",resumen.saldo,resumen.saldo>0?rojo:GR)}
+      </div>
+      <div style={{padding:"2px 12px 8px",fontSize:13,fontWeight:700,color:CR}}>Historial de cuenta corriente</div>
+      <div className="ec-grid" style={{background:"#E6E9E7",padding:"6px 12px",...colHead}}>
+        <span>FECHA</span>
+        <span>DETALLE</span>
+        <span className="ec-m" style={{textAlign:"right"}}>IMPORTE · SALDO</span>
+        <span className="ec-d" style={{textAlign:"right"}}>CANT.</span>
+        <span className="ec-d" style={{textAlign:"right"}}>MONTO</span>
+        <span className="ec-d" style={{textAlign:"right"}}>PAGO</span>
+        <span className="ec-d" style={{textAlign:"right"}}>SALDO</span>
+      </div>
+      {visibles.map(m=>{
         const pago=m.tipo==="pago",saldoAnt=m.tipo==="saldo";
+        const f=partes(m.fecha);
+        const colorSaldo=m.saldoAcum>0?rojo:GR;
+        const esRem=!!m.remitoNro,abierto=abiertos.has(m.id);
+        const cantTxt=esRem?`${m.items.length} prod.`:(!pago&&!saldoAnt)?`${fl1(m.cantidad)}${envaseMap[m.producto]==="Lata"?"u":"L"}`:"—";
         return(
-          <div key={m.id} style={{background:pago?GR+"11":"#fff",border:`1px solid ${pago?GR+"44":BO}`,borderRadius:8,padding:"10px 12px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:pago?GR:saldoAnt?"#B7691F":MU}}>{pago?"✓ Pago":saldoAnt?"Saldo anterior":"Venta"} · {fmtDate(m.fecha)}</div>
-                {pago?(
-                  <div style={{fontSize:14,color:CR}}>{m.medioPago||"Efectivo"}{m.nota?` · ${m.nota}`:""}</div>
-                ):saldoAnt?(
-                  <div style={{fontSize:14,color:CR,wordBreak:"break-word"}}>{m.descripcion||"Saldo del sistema anterior"}</div>
-                ):(
-                  <div style={{fontSize:14,color:CR}}>{nombreProd(m.producto)} · {m.cantidad}{envaseMap[m.producto]==="Lata"?"u":"L"}</div>
-                )}
-                {!pago&&<div style={{fontSize:12,fontWeight:700,color:m.pagado?GR:"#C62828"}}>{m.pagado?"Cobrada":"Pendiente"}</div>}
-                {m.d&&<ChipBeneficio d={m.d}/>}
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:16,fontWeight:700,color:pago?GR:CR}}>{pago?"− ":""}{fmtARS(m.monto)}</div>
-                <div style={{fontSize:12,color:m.saldoAcum>0?"#C62828":GR,marginTop:2}}>Saldo: {fmtARS(m.saldoAcum)}</div>
-              </div>
+          <div key={m.id} className="ec-grid" style={{padding:"9px 12px",borderTop:`1px solid ${BO}`,background:pago?GR+"0D":"transparent"}}>
+            <div style={{fontSize:12,color:pago?GR:MU,fontWeight:pago?700:400,lineHeight:1.25,whiteSpace:"nowrap"}}>
+              <span className="ec-m">{f.d}/{f.m}<br/><span style={{fontSize:10,opacity:0.8}}>{f.a}</span></span>
+              <span className="ec-d">{f.d}/{f.m}/{f.a}</span>
             </div>
+            <div style={{minWidth:0}}>
+              {pago?(
+                <>
+                  <div style={{fontSize:14,fontWeight:700,color:GR,whiteSpace:"nowrap"}}>Pago recibido</div>
+                  <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.medioPago||"Efectivo"}{m.nota?` · ${m.nota}`:""}</div>
+                </>
+              ):saldoAnt?(
+                <>
+                  <div style={{fontSize:14,fontWeight:700,color:"#B7691F",whiteSpace:"nowrap"}}>Saldo anterior</div>
+                  <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.descripcion||"Saldo del sistema anterior"}</div>
+                </>
+              ):esRem?(
+                <>
+                  <button onClick={()=>alternar(m.id)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",display:"block",width:"100%"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:CR,overflowWrap:"break-word",lineHeight:1.3}}>Remito {fmtRemito(m.remitoNro)}</div>
+                    <div style={{fontSize:12,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":`▼ Ver ${m.items.length} producto${m.items.length>1?"s":""}`}</div>
+                  </button>
+                  <div style={{fontSize:12,color:MU}}>
+                    <span className="ec-m">{cantTxt} · </span>
+                    <span style={{fontWeight:700,color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Cobrado":m.parcial?"Cobro parcial":"Pendiente"}</span>
+                  </div>
+                  {m.parcial&&<div style={{fontSize:12,color:MU}}>Cobrado {m$(m.cobrado)} · falta {m$(m.monto-m.cobrado)}</div>}
+                  {m.d&&<ChipBeneficio d={m.d}/>}
+                </>
+              ):(
+                <>
+                  <div style={{fontSize:14,fontWeight:600,color:CR,overflowWrap:"break-word",lineHeight:1.3}}>{nombreProd(m.producto)}</div>
+                  <div style={{fontSize:12,color:MU}}>
+                    <span className="ec-m">{cantTxt} · </span>
+                    <span style={{fontWeight:700,color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Cobrada":m.parcial?"Cobro parcial":"Pendiente"}</span>
+                  </div>
+                  {m.parcial&&<div style={{fontSize:12,color:MU}}>Cobrado {m$(m.cobrado)} · falta {m$(m.monto-m.cobrado)}</div>}
+                  {m.d&&<ChipBeneficio d={m.d}/>}
+                </>
+              )}
+            </div>
+            <div className="ec-m" style={{textAlign:"right"}}>
+              <div style={{fontSize:13,fontWeight:700,color:pago?GR:CR,whiteSpace:"nowrap"}}>{pago?"− ":""}{m$(m.monto)}</div>
+              <div style={{fontSize:11,fontWeight:600,color:colorSaldo,whiteSpace:"nowrap"}}>Saldo {m$(m.saldoAcum)}</div>
+            </div>
+            <span className="ec-d" style={{textAlign:"right",fontSize:12,color:MU}}>{cantTxt}</span>
+            <span className="ec-d" style={{textAlign:"right",fontSize:13,color:CR,whiteSpace:"nowrap"}}>{pago?"":m$(m.monto)}</span>
+            <span className="ec-d" style={{textAlign:"right",fontSize:13,fontWeight:600,color:GR,whiteSpace:"nowrap"}}>{pago?m$(m.monto):""}</span>
+            <span className="ec-d" style={{textAlign:"right",fontSize:13,fontWeight:700,color:colorSaldo,whiteSpace:"nowrap"}}>{m$(m.saldoAcum)}</span>
+            {esRem&&abierto&&(
+              <div style={{gridColumn:"1 / -1",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",marginTop:4}}>
+                {m.items.map(it=>(
+                  <div key={it.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"4px 0",fontSize:13}}>
+                    <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{nombreProd(it.producto)} <span style={{color:MU}}>· {fl1(it.cantidad)}{envaseMap[it.producto]==="Lata"?"u":"L"}</span></span>
+                    <span style={{color:it.pagado?GR:CR,flexShrink:0,whiteSpace:"nowrap"}}>{m$(it.monto)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
+      {movs.length>limite&&(
+        <button onClick={()=>setLimite(l=>l+20)} style={{width:"100%",padding:"11px 0",background:BG,border:"none",borderTop:`1px solid ${BO}`,color:G,fontSize:14,fontWeight:700,cursor:"pointer"}}>Ver más movimientos ({movs.length-limite} restantes)</button>
+      )}
     </div>
   );
 }
@@ -3035,7 +3243,19 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
   const[compartiendoEC,setCompartiendoEC]=useState(false);
   const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
   const descPorId=useMemo(()=>{const m={};itemsDesc.forEach(({v,d})=>{m[v.id]=d;});return m;},[itemsDesc]);
+  const[remAbiertos,setRemAbiertos]=useState(()=>new Set());
+  const alternarRem=k=>setRemAbiertos(prev=>{const n=new Set(prev);if(n.has(k))n.delete(k);else n.add(k);return n;});
+  const nombreProdCC=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
   const pendientes=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  // Lo pendiente se muestra por remito (una fila con número e importe, con los productos adentro); las ventas sin remito quedan sueltas
+  const pendientesAgrupados=useMemo(()=>{
+    const out=[],idx={};
+    pendientes.forEach(v=>{
+      if(v.remitoNro){const k="r"+v.remitoNro;if(idx[k]==null){idx[k]=out.length;out.push({key:k,remitoNro:v.remitoNro,fecha:v.fecha,filas:[]});}out[idx[k]].filas.push(v);}
+      else out.push({key:"v"+v.id,filas:[v],fecha:v.fecha});
+    });
+    return out;
+  },[cliente]);
   const pagos=useMemo(()=>construirMovimientosCliente(cliente,prods,pedidos).filter(m=>m.tipo==="pago").reverse(),[cliente,prods,pedidos]);
   const saldo=saldoCliente(cliente);
   const hayVencidas=pendientes.some(v=>daysSince(v.fecha)>=diasMora)||saldosPendientes(cliente).some(x=>daysSince(x.fecha)>=diasMora);
@@ -3069,7 +3289,37 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
             </div>
           )}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
-            {pendientes.map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
+            {pendientesAgrupados.map(g=>{
+              if(!g.remitoNro)return null;
+              const dias=daysSince(g.fecha),vencida=dias>=diasMora,abierto=remAbiertos.has(g.key);
+              const total=g.filas.reduce((a,x)=>a+(Number(x.monto)||0),0);
+              return(
+              <div key={g.key} style={{background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                  <button onClick={()=>alternarRem(g.key)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",minWidth:0}}>
+                    <div style={{fontSize:16,color:CR,fontWeight:700}}>Remito {fmtRemito(g.remitoNro)}</div>
+                    <div style={{fontSize:14,color:MU}}>{fmtDate(g.fecha)} · {g.filas.length} producto{g.filas.length>1?"s":""}</div>
+                    <div style={{fontSize:13,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":"▼ Ver productos"}</div>
+                    {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
+                  </button>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(total)}</span>
+                    <button onClick={()=>onUpdate(cobrarVentasCliente(cliente,g.filas.map(x=>x.id),`Remito ${fmtRemito(g.remitoNro)}`))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
+                  </div>
+                </div>
+                {abierto&&(
+                  <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
+                    {g.filas.map(x=>(
+                      <div key={x.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
+                        <span style={{color:CR,minWidth:0}}>{nombreProdCC(x.producto)} <span style={{color:MU}}>· {x.cantidad}{(prods||[]).find(p=>p.id===x.producto)?.envase==="Lata"?"u":"L"}</span></span>
+                        <span style={{color:MU,flexShrink:0}}>{fmtARS(x.monto)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );})}
+            {pendientes.filter(v=>!v.remitoNro).map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
               <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
                 <div>
                   <div style={{fontSize:16,color:CR,fontWeight:500}}>{fmtDate(v.fecha)}</div>
@@ -3538,12 +3788,22 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
 function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
   const[showHistorial,setShowHistorial]=useState(false);
   const[showPago,setShowPago]=useState(false);
+  const[abiertos,setAbiertos]=useState(()=>new Set());
+  const alternar=k=>setAbiertos(prev=>{const n=new Set(prev);if(n.has(k))n.delete(k);else n.add(k);return n;});
   const pendientes=(proveedor.compras||[]).filter(c=>!c.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  // Lo pendiente se muestra por comprobante (remito/factura): número e importe, con los productos adentro
+  const pendGrupos=useMemo(()=>{
+    const m=new Map();
+    pendientes.forEach(c=>{const k=c.comprobanteId||c.id;if(!m.has(k))m.set(k,[]);m.get(k).push(c);});
+    return Array.from(m.entries()).map(([key,rows])=>({key,rows,fecha:rows[0].fecha,tipo:rows[0].tipoComprobante||null,numero:rows[0].numeroComprobante||"",total:rows.reduce((a,r)=>a+(Number(r.monto)||0),0)}));
+  },[proveedor.compras]);
+  const etiquetaComp=(tipo,numero)=>`${tipo==="factura"?"Factura":tipo==="remito"?"Remito":"Compra"}${numero?` ${numero}`:""}`;
   const pagadas=(proveedor.compras||[]).filter(c=>c.pagado).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
   const saldo=saldoProveedor(proveedor);
 
   // Pago rápido de una compra puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
   const marcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:hoyISO(),medioPago:"Efectivo"}:c)});
+  const marcarGrupoPagado=ids=>{const set=new Set(ids);onUpdate({...proveedor,compras:proveedor.compras.map(c=>set.has(c.id)&&!c.pagado?{...c,pagado:true,fechaPago:hoyISO(),medioPago:"Efectivo"}:c)});};
   const desmarcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:false,fechaPago:null}:c)});
   const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):id;};
 
@@ -3561,18 +3821,34 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
       {saldo>0&&(
         <>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12,marginBottom:12}}>
-            {pendientes.map(c=>(
-              <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                <div>
-                  <div style={{fontSize:15,fontWeight:500,color:CR}}>{nombreProd(c.producto)}</div>
-                  <div style={{fontSize:14,color:MU}}>{fmtDate(c.fecha)} · {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}{c.numeroComprobante?` · ${c.tipoComprobante==="factura"?"Fact.":"Rem."} ${c.numeroComprobante}`:""}</div>
+            {pendGrupos.map(g=>{
+              const abierto=abiertos.has(g.key);
+              return(
+                <div key={g.key} style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <button onClick={()=>alternar(g.key)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",minWidth:0}}>
+                      <div style={{fontSize:16,fontWeight:700,color:CR}}>{etiquetaComp(g.tipo,g.numero)}</div>
+                      <div style={{fontSize:14,color:MU}}>{fmtDate(g.fecha)} · {g.rows.length} producto{g.rows.length>1?"s":""}</div>
+                      <div style={{fontSize:13,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":"▼ Ver productos"}</div>
+                    </button>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                      <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(g.total)}</span>
+                      <button onClick={()=>marcarGrupoPagado(g.rows.map(r=>r.id))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
+                    </div>
+                  </div>
+                  {abierto&&(
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
+                      {g.rows.map(c=>(
+                        <div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
+                          <span style={{color:CR,minWidth:0}}>{nombreProd(c.producto)} <span style={{color:MU}}>· {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}</span></span>
+                          <span style={{color:MU,flexShrink:0}}>{fmtARS(c.monto)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(c.monto)}</span>
-                  <button onClick={()=>marcarPagada(c.id)} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Registrar pago — mismo panel unificado que con clientes */}
@@ -3598,6 +3874,7 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
                   <div>
                     <div style={{fontSize:15,color:CR}}>{fmtDate(c.fechaPago||c.fecha)}</div>
                     <div style={{fontSize:13,color:GR}}>✓ {c.medioPago||"Pagado"}{c.nota?` · ${c.nota}`:""}</div>
+                    {c.numeroComprobante&&<div style={{fontSize:13,color:MU}}>{etiquetaComp(c.tipoComprobante,c.numeroComprobante)} · {nombreProd(c.producto)}</div>}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</span>
@@ -4506,7 +4783,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       }));
     }else{
       const nuevoPedido={
-        id:uid(),clienteId,fechaEntrega,horaEntrega,pagado,notas,
+        id:uid(),remitoNro:proximoRemito(pedidos,clientes),clienteId,fechaEntrega,horaEntrega,pagado,notas,
         lineas:lineasFinal,
         descuentoPct:descPctNum,incluyeIVA,factorAjuste:factor,
         montoTotal:totalFinal,promoAplica,
@@ -4522,13 +4799,14 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
     const ped=pedidos.find(p=>p.id===pedidoId);
     if(!ped)return;
     const factor=ped.factorAjuste||1;
+    const nroRem=ped.remitoNro||proximoRemito(pedidos,clientes);   // cada pedido = un remito correlativo; las ventas lo guardan
     // Registrar una venta por cada línea del pedido, aplicando proporcionalmente el descuento/IVA del pedido
     setClientes(prev=>prev.map(c=>{
       if(c.id!==ped.clienteId)return c;
       const nuevasVentas=(ped.lineas||[]).map(l=>{
         const prod=prods.find(x=>x.id===l.productoId);
         return{
-          id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,
+          id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,remitoNro:nroRem,pedidoId:ped.id,
           cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado,
           promoAcumulable:!!(ped.promoAplica&&prodCuentaParaPromo(prod,promo51)),esBono:!!l.esBono,
           ...desgloseAlEntregar(prod,l,ped),
@@ -4536,7 +4814,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       });
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
-    setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado"}:p));
+    setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado",remitoNro:nroRem}:p));
   };
  
   const pendientes=pedidos.filter(p=>p.estado==="pendiente").sort((a,b)=>a.fechaEntrega.localeCompare(b.fechaEntrega));
@@ -8424,6 +8702,15 @@ function App(){
     categorias,setCategorias,
     impuestos,setImpuestos
   );
+
+  // Una sola vez, cuando ya cargaron los datos de la nube: numera los pedidos viejos y vincula sus ventas a su remito
+  useEffect(()=>{
+    if(syncStatus!=="synced")return;
+    const r=numerarRemitosExistentes(pedidos,clientes);
+    if(!r)return;
+    setPedidos(r.pedidos);
+    setClientes(r.clientes);
+  },[syncStatus,pedidos,clientes]);
  
   const convertir=p=>{
     setClientes(prev=>[...prev,{id:uid(),nombre:p.nombre,rubro:p.rubro,zona:p.zona,direccion:p.direccion,telefono:p.telefono,notas:p.notas,agenda:[],historial:[],ventas:[]}]);
