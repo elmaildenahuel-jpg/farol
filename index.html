@@ -69,6 +69,31 @@ html.tema-oscuro #root .logo-nomades{filter:invert(1) hue-rotate(180deg)}
   .ec-m{display:none}
   .ec-d{display:block}
 }
+/* ── Pantallas grandes (computadora): más ancho útil, listas y tarjetas en varias columnas. El celular no cambia. ── */
+@media(min-width:1024px){
+  #mn > div[style*="max-width: 640px"]{max-width:1240px!important;padding:28px 40px 48px!important}
+  div[style*="max-width: 540px"]{max-width:780px!important}
+  div:has(> .card-desk){display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));column-gap:14px;row-gap:10px;align-items:stretch}
+  div:has(> .card-desk) > *{grid-column:1/-1}
+  div:has(> .card-desk) > .card-desk{grid-column:auto;margin-bottom:0!important}
+  /* Pedidos: todas las tarjetas de una fila miden lo mismo; los productos se estiran y los botones quedan alineados abajo */
+  .card-ped{display:flex;flex-direction:column}
+  .card-ped > .ped-lineas{flex:1}
+  #mn input,#mn select,#mn textarea{font-size:15px;padding:10px 12px;max-width:620px}
+  #mn input[type="checkbox"],#mn input[type="radio"]{max-width:none}
+  #mn button:not([disabled]):hover{filter:brightness(0.96)}
+  .card-desk:hover{box-shadow:0 2px 10px rgba(0,0,0,0.10)!important}
+  ::-webkit-scrollbar{width:10px;height:10px}
+}
+@media(min-width:1024px){
+  .inicio-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:stretch}
+  .inicio-grid > *{margin-bottom:0!important}
+  .inicio-grid > .ini-span2{grid-column:1/-1}
+}
+@media(min-width:1600px){
+  #mn > div[style*="max-width: 640px"]{max-width:1480px!important}
+  div:has(> .card-desk){grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}
+}
 </style>
 </head>
 <body>
@@ -1998,7 +2023,7 @@ function construirMovimientosCliente(cliente,prods,pedidos){
   });
   (cliente.saldosAnteriores||[]).forEach(x=>{
     const monto=Number(x.monto)||0;
-    movs.push({id:x.id+"-v",orden:0,tipo:"saldo",fecha:x.fecha,descripcion:x.descripcion||"",monto,pagado:!!x.pagado});
+    movs.push({id:x.id+"-v",orden:0,tipo:"saldo",fecha:x.fecha,descripcion:x.descripcion||"",monto,pagado:!!x.pagado,ajuste:x.tipo==="ajuste"});
     sumar(x,monto);
     if(x.pagado&&!x.cobroId)movs.push({id:x.id+"-p",orden:1,tipo:"pago",fecha:x.fechaCobro||x.fecha,monto,medioPago:x.medioPago,nota:x.descripcion||"",origenTipo:"saldo",origenId:x.id});
   });
@@ -3003,11 +3028,35 @@ function FormSaldoAnterior({initial,onSave,onCancel}){
   );
 }
 
+// Ajuste manual del saldo actual: se escribe el saldo que debería quedar y la app registra la diferencia
+function FormAjusteSaldo({actual,esProveedor,onSave,onCancel}){
+  const[nuevo,setNuevo]=useState("");
+  const[motivo,setMotivo]=useState("");
+  const n=Number(nuevo),hay=nuevo!==""&&!isNaN(n)&&n>=0;
+  const dif=hay?Math.round((n-actual)*100)/100:0;
+  return(
+    <div style={{background:"#fff",border:`1px solid ${AM}66`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{fontSize:15,fontWeight:700,color:CR}}>Ajustar saldo</div>
+      <div style={{fontSize:14,color:MU}}>Saldo actual: <b style={{color:CR}}>{fmtARS(actual)}</b></div>
+      <div><Lbl t="Saldo correcto ($)"/><input type="number" inputMode="numeric" value={nuevo} onChange={e=>setNuevo(e.target.value)} placeholder="Cómo debería quedar el saldo"/></div>
+      <div><Lbl t="Motivo (opcional)"/><input value={motivo} onChange={e=>setMotivo(e.target.value)} maxLength={120} placeholder="Ej: diferencia de precio, nota de crédito, error de carga"/></div>
+      {hay&&dif!==0&&<div style={{fontSize:13,fontWeight:700,color:dif>0?"#C62828":GR}}>{dif>0?`Se suman ${fmtARS(dif)} a la deuda`:`Se descuentan ${fmtARS(-dif)} de la deuda`} (queda en {fmtARS(n)}).</div>}
+      {hay&&dif===0&&<div style={{fontSize:13,color:MU}}>El saldo ya es ese, no hay nada que ajustar.</div>}
+      <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Queda registrado en la cuenta corriente como “Ajuste”. Si fue un error, se puede deshacer desde el historial{esProveedor?"":" de pagos"} (cuando baja la deuda) o eliminando el ajuste (cuando la sube).</div>
+      <div style={{display:"flex",gap:8}}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="green" onClick={()=>hay&&dif!==0&&onSave({nuevo:n,motivo:motivo.trim()})}>Aplicar ajuste</Btn>
+      </div>
+    </div>
+  );
+}
+
 // Lista editable de saldos anteriores + botón para cargar uno nuevo. Sirve para clientes (se cobran) y proveedores (se pagan).
 function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   const campoFecha=esProveedor?"fechaPago":"fechaCobro";
   const verbo=esProveedor?"Pagado":"Cobrado";
   const[mostrarForm,setMostrarForm]=useState(false);
+  const[mostrarAjuste,setMostrarAjuste]=useState(false);
   const[editId,setEditId]=useState(null);
   const[showHist,setShowHist]=useState(false);
   const saldos=entidad.saldosAnteriores||[];
@@ -3016,6 +3065,17 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   const actualizar=nuevos=>onUpdate({...entidad,saldosAnteriores:nuevos});
   const agregar=d=>{actualizar([...saldos,{id:uid(),fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}]);setMostrarForm(false);};
   const guardar=(id,d)=>{actualizar(saldos.map(x=>x.id===id?{...x,fecha:d.fecha,monto:d.monto,descripcion:d.descripcion}:x));setEditId(null);};
+  const ajustar=({nuevo,motivo})=>{
+    const actual=esProveedor?saldoProveedor(entidad):saldoCliente(entidad);
+    const d=Math.round((nuevo-actual)*100)/100;
+    if(d===0)return;
+    if(d>0)actualizar([...saldos,{id:uid(),fecha:hoyISO(),monto:d,descripcion:`Ajuste de saldo${motivo?" · "+motivo:""}`,tipo:"ajuste"}]);
+    else{
+      const opts={medioPago:"Ajuste",nota:motivo?`Ajuste de saldo · ${motivo}`:"Ajuste de saldo"};
+      onUpdate(esProveedor?aplicarPagoAProveedor(entidad,-d,opts):aplicarCobroACliente(entidad,-d,opts));
+    }
+    setMostrarAjuste(false);
+  };
   const eliminar=x=>{if(!confirm(`¿Eliminar este saldo anterior de ${fmtARS(x.monto)}?`))return;actualizar(saldos.filter(y=>y.id!==x.id));};
   const marcar=x=>{
     if(!esProveedor){onUpdate(cobrarSaldoCliente(entidad,x.id));return;}   // en clientes queda como un cobro propio
@@ -3036,7 +3096,7 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
               <div key={x.id} style={{background:"#fff",border:`1px solid ${vencida?"#C6282866":AM+"66"}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{minWidth:0}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#B7691F",textTransform:"uppercase",letterSpacing:"0.06em"}}>Saldo anterior</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#B7691F",textTransform:"uppercase",letterSpacing:"0.06em"}}>{x.tipo==="ajuste"?"Ajuste de saldo":"Saldo anterior"}</div>
                     <div style={{fontSize:15,color:CR,fontWeight:500}}>{fmtDate(x.fecha)}</div>
                     {x.descripcion&&<div style={{fontSize:14,color:MU,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{x.descripcion}</div>}
                     {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
@@ -3055,8 +3115,13 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
       )}
       {mostrarForm?(
         <FormSaldoAnterior onCancel={()=>setMostrarForm(false)} onSave={agregar}/>
+      ):mostrarAjuste?(
+        <FormAjusteSaldo actual={esProveedor?saldoProveedor(entidad):saldoCliente(entidad)} esProveedor={esProveedor} onCancel={()=>setMostrarAjuste(false)} onSave={ajustar}/>
       ):(
-        <button onClick={()=>setMostrarForm(true)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"#fff",color:"#B7691F",border:`1px dashed ${AM}`,fontSize:14,fontWeight:700,cursor:"pointer"}}>＋ Cargar saldo anterior (otro sistema)</button>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setMostrarForm(true)} style={{flex:1,padding:"9px 6px",borderRadius:8,background:"#fff",color:"#B7691F",border:`1px dashed ${AM}`,fontSize:14,fontWeight:700,cursor:"pointer"}}>＋ Saldo anterior</button>
+          <button onClick={()=>setMostrarAjuste(true)} style={{flex:1,padding:"9px 6px",borderRadius:8,background:"#fff",color:G,border:`1px dashed ${G}`,fontSize:14,fontWeight:700,cursor:"pointer"}}>⚖ Ajustar saldo</button>
+        </div>
       )}
       {pagados.length>0&&(
         <div style={{marginTop:8}}>
@@ -3178,7 +3243,7 @@ function MovimientosCards({cliente,prods,pedidos}){
                 </>
               ):saldoAnt?(
                 <>
-                  <div style={{fontSize:14,fontWeight:700,color:"#B7691F",whiteSpace:"nowrap"}}>Saldo anterior</div>
+                  <div style={{fontSize:14,fontWeight:700,color:"#B7691F",whiteSpace:"nowrap"}}>{m.ajuste?"Ajuste de saldo":"Saldo anterior"}</div>
                   <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.descripcion||"Saldo del sistema anterior"}</div>
                 </>
               ):esRem?(
@@ -3489,6 +3554,12 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
   const deuda=totalAdeudado(clientes);
   const[editandoMeta,setEditandoMeta]=useState(false);
   const[metaTmp,setMetaTmp]=useState(String(metaSemanal));
+  // Productos más vendidos (por cantidad en todas las ventas registradas) para mostrar su precio en el catálogo
+  const masVendidos=useMemo(()=>{
+    const t={};
+    clientes.forEach(c=>(c.ventas||[]).forEach(v=>{if(v.producto)t[v.producto]=(t[v.producto]||0)+(Number(v.cantidad)||0);}));
+    return Object.entries(t).map(([id,cant])=>({p:prods.find(x=>x.id===id),cant})).filter(x=>x.p).sort((a,b)=>b.cant-a.cant).slice(0,5);
+  },[clientes,prods]);
  
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
@@ -3528,6 +3599,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
         <span style={{color:"#fff",opacity:0.75}}>{I.chev}</span>
       </button>
  
+      <div className="inicio-grid">
       {/* Últimos pedidos cargados */}
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${BO}`,gap:8,flexWrap:"wrap"}}>
@@ -3577,11 +3649,11 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
           <button onClick={()=>setTab("notas")} style={{fontSize:14,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:2}}>{(notas||[]).length>0?"Ver todas":"Agregar"}{I.chev}</button>
         </div>
         {(notas||[]).length>0&&(
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,padding:"12px 16px"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:8,padding:"12px 16px"}}>
             {[...notas].sort((a,b)=>new Date(b.actualizadoEn||b.creadoEn)-new Date(a.actualizadoEn||a.creadoEn)).slice(0,8).map(n=>{
               const col=colorNota(n.color);
               return(
-                <button key={n.id} onClick={()=>setTab("notas")} style={{padding:"6px 12px",borderRadius:20,fontSize:14,fontWeight:600,cursor:"pointer",background:col.bg,border:`1px solid ${col.bd}`,color:col.tx,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.titulo}</button>
+                <button key={n.id} onClick={()=>setTab("notas")} style={{width:"100%",textAlign:"left",padding:"9px 14px",borderRadius:12,fontSize:15,fontWeight:600,cursor:"pointer",background:col.bg,border:`1px solid ${col.bd}`,color:col.tx,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.titulo}</button>
               );
             })}
           </div>
@@ -3589,7 +3661,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
       </div>
 
       {/* Meta semanal */}
-      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+      <div className={deuda>0?"":"ini-span2"} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <span style={{fontSize:15,fontWeight:700,color:CR}}>🎯 Meta semanal</span>
           {!editandoMeta&&<button onClick={()=>{setMetaTmp(String(metaSemanal));setEditandoMeta(true);}} style={{fontSize:13,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>{I.edit}Editar</button>}
@@ -3619,9 +3691,10 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
  
       {/* Alerta: deuda pendiente */}
       {deuda>0&&(
-        <button onClick={()=>(irACobranza?irACobranza():setTab("clientes"))} style={{display:"block",width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:16,padding:"12px 14px",cursor:"pointer",textAlign:"left",marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#E08070",textTransform:"uppercase",letterSpacing:"0.06em"}}>Por cobrar</div>
-          <div className="bebas" style={{fontSize:20,color:"#E08070",marginTop:2}}>{fmtARS(deuda)}</div>
+        <button onClick={()=>(irACobranza?irACobranza():setTab("clientes"))} style={{display:"flex",flexDirection:"column",justifyContent:"center",width:"100%",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:18,padding:"16px 18px",cursor:"pointer",textAlign:"left",marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#E08070",textTransform:"uppercase",letterSpacing:"0.06em"}}>💰 Por cobrar</div>
+          <div className="bebas" style={{fontSize:26,color:"#E08070",marginTop:4}}>{fmtARS(deuda)}</div>
+          <div style={{fontSize:13,color:MU,marginTop:2}}>Tocá para ver los clientes con deuda</div>
         </button>
       )}
 
@@ -3641,17 +3714,29 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
         <div onClick={()=>setCatalogoAbierto(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",cursor:"pointer"}}>
           <span style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:7}}>
-            Catálogo de productos
+            {catalogoAbierto?"Catálogo completo":"Catálogo de productos"}
             <span style={{background:BG,color:MU,borderRadius:10,padding:"1px 7px",fontSize:12,fontWeight:700,textTransform:"none",letterSpacing:"normal"}}>{prods.length}</span>
           </span>
           <span style={{display:"flex",alignItems:"center",gap:12}}>
-            <button onClick={e=>{e.stopPropagation();setTab("productos");}} style={{fontSize:13,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>{I.edit}Editar precios</button>
+            <button onClick={e=>{e.stopPropagation();setTab("productos");}} style={{fontSize:13,color:G,background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0,whiteSpace:"nowrap"}}>{I.edit}Editar precios</button>
             <span style={{color:MU,display:"flex",transition:"transform 0.2s",transform:catalogoAbierto?"rotate(90deg)":"rotate(0deg)"}}>{I.chev}</span>
           </span>
         </div>
+        {masVendidos.length>0&&(
+          <>
+            <div style={{padding:"4px 16px 6px",fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",borderTop:`1px solid ${BO}`,paddingTop:10}}>🔥 Más vendidos</div>
+            {masVendidos.map(({p,cant})=>(
+              <div key={"mv"+p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"8px 16px",borderTop:`1px solid ${BO}`}}>
+                <div style={{minWidth:0}}><div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.nombre}</div><div style={{fontSize:13,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"} · {Math.round(cant*10)/10}{p.envase==="Lata"?"u":"L"} vendidos</div></div>
+                <div className="bebas" style={{fontSize:19,color:G,flexShrink:0}}>{fmtARS(p.precio)}<span style={{fontSize:12,color:MU,fontWeight:400}}> /{p.envase==="Lata"?"u":"L"}</span></div>
+              </div>
+            ))}
+          </>
+        )}
         {catalogoAbierto&&prods.map(p=>(
           <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:16,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:14,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"}{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:20,color:G}}>{fmtARS(p.precio)}<span style={{fontSize:12,color:MU,fontWeight:400}}> /L</span></div></div>
         ))}
+      </div>
       </div>
     </div>
   );
@@ -3743,7 +3828,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
       {filtroDeuda&&<CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>}
 
       {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>:filtered.map(c=>{const e=EST[estadoC(c)];const ls=lastSale(c);const inf=infoDeuda[c.id];const deuda=inf.deuda;return(
-        <div key={c.id} style={{display:"flex",alignItems:"stretch",background:CA,border:`1px solid ${inf.vencido>0?"#C6282866":BO}`,borderRadius:18,marginBottom:8,overflow:"hidden"}}>
+        <div key={c.id} className="card-desk" style={{display:"flex",alignItems:"stretch",background:CA,border:`1px solid ${inf.vencido>0?"#C6282866":BO}`,borderRadius:18,marginBottom:8,overflow:"hidden"}}>
           <button onClick={()=>setSel(c.id)} style={{display:"flex",alignItems:"center",gap:12,background:"none",border:"none",padding:"12px 16px",cursor:"pointer",textAlign:"left",flex:1,minWidth:0}}>
             <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(c.nombre)}</div>
             <div style={{flex:1,minWidth:0}}>
@@ -4037,7 +4122,7 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
         </select>
       </div>
       {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Sin proveedores para mostrar.</p>:filtered.map(p=>{const deuda=saldoProveedor(p);return(
-        <button key={p.id} onClick={()=>setSel(p.id)} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",marginBottom:8}}>
+        <button key={p.id} className="card-desk" onClick={()=>setSel(p.id)} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",marginBottom:8}}>
           <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(p.nombre)}</div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:600,color:CR}}>{p.nombre}</span><span style={{color:MU}}>{I.chev}</span></div>
@@ -4869,13 +4954,24 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       {resumenProductos.length>0&&(
         <div style={{background:CA,border:`1px solid ${G}33`,borderRadius:18,padding:16,marginBottom:20}}>
           <div style={{fontSize:12,fontWeight:700,color:G,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>🍺 Para preparar · entregas pendientes</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {resumenProductos.map(({productoId,cantidad,prod})=>(
-              <div key={productoId} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:15,color:CR,fontWeight:500}}>{prod?nombreProdEnvase(prod):productoId}</span>
-                <span className="bebas" style={{fontSize:20,color:G}}>{cantidad}{prod&&prod.envase==="Lata"?" u.":"L"}</span>
-              </div>
-            ))}
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto auto auto",columnGap:16,rowGap:8,alignItems:"center"}}>
+            <span/>
+            <span style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",textAlign:"right"}}>Necesito</span>
+            <span style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",textAlign:"right"}}>Stock</span>
+            <span style={{fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",textAlign:"right"}}>Falta</span>
+            {resumenProductos.map(({productoId,cantidad,prod})=>{
+              const u=prod&&prod.envase==="Lata"?" u.":"L";
+              const stock=prod?(Number(prod.stock)||0):0;
+              const falta=Math.round(Math.max(0,cantidad-stock)*10)/10;
+              return(
+                <React.Fragment key={productoId}>
+                  <span style={{fontSize:15,color:CR,fontWeight:500,minWidth:0}}>{prod?nombreProdEnvase(prod):productoId}</span>
+                  <span className="bebas" style={{fontSize:20,color:G,textAlign:"right",whiteSpace:"nowrap"}}>{cantidad}{u}</span>
+                  <span style={{fontSize:14,color:MU,textAlign:"right",whiteSpace:"nowrap"}}>{Math.round(stock*10)/10}{u}</span>
+                  <span className="bebas" style={{fontSize:20,color:falta>0?"#C62828":GR,textAlign:"right",whiteSpace:"nowrap",minWidth:56}}>{falta>0?`${falta}${u}`:"✓"}</span>
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
       )}
@@ -4899,7 +4995,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
             const lineas=p.lineas||[];
             const enRuta=seleccionRuta.has(p.id);
             return(
-              <div key={p.id} style={{background:CA,border:`1px solid ${enRuta?G:esHoy?G+"55":BO}`,borderRadius:18,padding:14,marginBottom:10,boxShadow:esHoy?`0 2px 8px ${G}22`:"0 1px 3px rgba(0,0,0,0.04)"}}>
+              <div key={p.id} className="card-desk card-ped" style={{background:CA,border:`1px solid ${enRuta?G:esHoy?G+"55":BO}`,borderRadius:18,padding:14,marginBottom:10,boxShadow:esHoy?`0 2px 8px ${G}22`:"0 1px 3px rgba(0,0,0,0.04)"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,gap:10}}>
                   <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
                     <button onClick={()=>toggleRuta(p.id)} title="Incluir en ruta de reparto" style={{width:22,height:22,borderRadius:6,border:`2px solid ${enRuta?G:BO}`,background:enRuta?G:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",padding:0}}>
@@ -4921,7 +5017,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                   </div>
                 </div>
                 {/* Líneas del pedido */}
-                <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
+                <div className="ped-lineas" style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
                   {lineas.map((l,idx)=>{
                     const prod=prods.find(x=>x.id===l.productoId);
                     return(
@@ -4963,7 +5059,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
             const nombreCliente=cliente?cliente.nombre:"—";
             const lineas=p.lineas||[];
             return(
-              <div key={p.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"10px 12px",marginBottom:6,opacity:0.75,display:"flex",alignItems:"center",gap:10}}>
+              <div key={p.id} className="card-desk" style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"10px 12px",marginBottom:6,opacity:0.75,display:"flex",alignItems:"center",gap:10}}>
                 <div style={{width:30,height:30,borderRadius:"50%",background:GR+"14",color:GR,border:`1px solid ${GR}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0}}>{iniciales(nombreCliente)}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -5292,7 +5388,7 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
       )}
 
       {!vistaLista&&prodsFiltrados.map(p=>(
-        <div key={p.id} style={{background:CA,border:`1px solid ${editId===p.id?G:BO}`,borderRadius:18,padding:16,marginBottom:12}}>
+        <div key={p.id} className={editId===p.id?"":"card-desk"} style={{background:CA,border:`1px solid ${editId===p.id?G:BO}`,borderRadius:18,padding:16,marginBottom:12}}>
           {editId===p.id?(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
               <div><Lbl t="Nombre"/><input value={ef.nombre} onChange={e=>setEf(x=>({...x,nombre:e.target.value}))}/></div>
