@@ -300,6 +300,14 @@ button:hover svg,[role="button"]:hover svg{transform:translateY(-1px)}
 #sb .logo-nomades{object-fit:contain;transition:transform .3s ease,filter .3s ease}
 #sb .logo-nomades:hover{transform:translateY(-2px) scale(1.02)}
 #sb .nomades-theme-control button:active,#sb nav button:active{transform:scale(.98)}
+#sb .nomades-brand-head{padding:10px 12px 9px!important}
+#sb .nomades-brand-head .logo-nomades{width:76px!important;margin:0 auto 0!important}
+#sb .nomades-brand-head .nomades-tagline{display:none!important}
+#sb nav{padding:8px 8px!important;gap:3px!important}
+#sb nav button{min-height:32px!important;padding-top:6px!important;padding-bottom:6px!important}
+#sb .nomades-sb-foot{padding:8px 10px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:8px}
+#sb .nomades-theme-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid #dce5df;border-radius:9px;background:transparent;color:inherit;cursor:pointer;flex-shrink:0}
+#sb .nomades-theme-btn:hover{background:rgba(23,141,79,.08);border-color:#178D4F}
 @media(max-width:767px){#sb{display:none!important}#mn{margin-left:0!important;width:100%!important}}
 @media(prefers-reduced-motion:reduce){#sb nav button,#sb .nomades-theme-control button,#sb .logo-nomades{transition:none!important;animation:none!important}#sb nav button:hover,#sb .logo-nomades:hover{transform:none!important}}
 </style>
@@ -1917,9 +1925,30 @@ const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
   // Detalle de lo ya entregado, para tener referencia de qué se fue pidiendo (no solo el número)
   const detalleEntregado=ventasPromo.map(v=>({id:v.id,producto:nombreDe(v.producto),cantidad:Number(v.cantidad||0),fecha:v.fecha,estado:"entregado"}));
   const detalle=[...detalleEntregado,...detallePendiente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
-  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
+  // Reseña del ciclo en curso: qué productos componen las unidades que lleva acumuladas (las últimas `enCicloActual` entregadas)
+  const cicloMap={};
+  let restoCiclo=enCicloActual;
+  [...detalleEntregado].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).forEach(d=>{
+    if(restoCiclo<=0)return;
+    const tomar=Math.min(restoCiclo,d.cantidad);
+    cicloMap[d.producto]=(cicloMap[d.producto]||0)+tomar;
+    restoCiclo-=tomar;
+  });
+  const cicloActual=Object.entries(cicloMap).map(([producto,cantidad])=>({producto,cantidad}));
+  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,cicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
 };
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
+function PromoCicloResumen({prog}){
+  if(!prog||!prog.cicloActual||prog.cicloActual.length===0)return null;
+  return(
+    <div style={{marginTop:6}}>
+      <div style={{fontSize:12,color:MU,marginBottom:2}}>Lo que lleva en este ciclo:</div>
+      <ul style={{margin:0,paddingLeft:18,fontSize:13,color:CR,lineHeight:1.5}}>
+        {prog.cicloActual.map(c=><li key={c.producto}>{c.cantidad} {c.producto}</li>)}
+      </ul>
+    </div>
+  );
+}
 function PromoDetalleLista({detalle,onQuitar}){
   if(!detalle||detalle.length===0)return null;
   return(
@@ -3834,6 +3863,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
             ):(
               <div style={{fontSize:14,color:MU}}>Lleva {promoProg.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado). Faltan {promoProg.faltan}.{promoProg.pendiente>0&&<span style={{color:AM}}> +{promoProg.pendiente} en pedidos pendientes de entregar.</span>}</div>
             )}
+            <PromoCicloResumen prog={promoProg}/>
             <PromoDetalleLista detalle={promoProg.detalle} onQuitar={id=>onUpdate({...cliente,ventas:(cliente.ventas||[]).map(v=>v.id===id?{...v,promoAcumulable:false}:v)})}/>
           </div>
         );
@@ -5458,6 +5488,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                 ):(
                   <div style={{fontSize:12,color:MU,paddingTop:4,borderTop:`1px solid ${BO}`}}>
                     Lleva {promoProgresoSel.enCicloActual}/{promo51.cantidadNecesaria} acumulados (entregado){promoAplica?" (este pedido ya lo cuenta si el producto corresponde)":""}. Faltan {promoProgresoSel.faltan}.{promoProgresoSel.pendiente>0&&<span style={{color:AM}}> +{promoProgresoSel.pendiente} en otros pedidos pendientes de entregar.</span>}
+                    <PromoCicloResumen prog={promoProgresoSel}/>
                   </div>
                 )
               )}
@@ -6073,7 +6104,137 @@ function Speeches({speeches,setSpeeches}){
 }
  
 // ── VENTAS ────────────────────────────────────────────────────────
-function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos}){
+// ── Balance de Caja: DEBE (compras + gastos) vs HABER (ventas) y SALDO, por día / mes / año / todo ──
+function CajaBalance({todas,proveedores,gastos}){
+  const[periodo,setPeriodo]=useState("mes"); // dia | mes | anio | todo
+  const[ref,setRef]=useState(hoyISO());
+  const[incPersonales,setIncPersonales]=useState(false);
+  const[verMov,setVerMov]=useState(false);
+  const f0=n=>fmtARS(Math.round(Number(n)||0));
+  const movs=useMemo(()=>{
+    const arr=[];
+    todas.forEach(v=>arr.push({tipo:"haber",fecha:v.fecha||"",monto:v.monto||0,ganancia:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta · ${v.clienteNombre}`,hecho:!!v.pagado,cat:"venta"}));
+    (proveedores||[]).forEach(p=>(p.compras||[]).forEach(c=>arr.push({tipo:"debe",fecha:c.fecha||"",monto:c.monto||0,concepto:`Compra · ${p.nombre}`,hecho:!!c.pagado,cat:"compra"})));
+    (gastos||[]).forEach(g=>{
+      if(g.tipo==="personal"&&!incPersonales)return;
+      const cat=(typeof GASTO_CATEGORIAS!=="undefined"&&GASTO_CATEGORIAS.find(c=>c.key===g.categoria))||null;
+      arr.push({tipo:"debe",fecha:g.fecha||"",monto:g.monto||0,concepto:`Gasto · ${cat?cat.label:(g.categoria||"")}${g.descripcion?` — ${g.descripcion}`:""}`,hecho:true,cat:"gasto"});
+    });
+    return arr.filter(m=>m.fecha);
+  },[todas,proveedores,gastos,incPersonales]);
+
+  const clave=periodo==="dia"?ref.slice(0,10):periodo==="mes"?ref.slice(0,7):periodo==="anio"?ref.slice(0,4):"";
+  const largo=clave.length;
+  const delPeriodo=useMemo(()=>movs.filter(m=>periodo==="todo"||m.fecha.slice(0,largo)===clave).sort((a,b)=>a.fecha.localeCompare(b.fecha)),[movs,periodo,clave,largo]);
+  const suma=(arr,fn)=>arr.reduce((s,m)=>s+fn(m),0);
+  const haber=suma(delPeriodo.filter(m=>m.tipo==="haber"),m=>m.monto);
+  const debe=suma(delPeriodo.filter(m=>m.tipo==="debe"),m=>m.monto);
+  const saldo=haber-debe;
+  const compras=suma(delPeriodo.filter(m=>m.cat==="compra"),m=>m.monto);
+  const gastosT=suma(delPeriodo.filter(m=>m.cat==="gasto"),m=>m.monto);
+  const ganancia=suma(delPeriodo.filter(m=>m.cat==="venta"),m=>m.ganancia);
+  const rentPct=haber>0?Math.round(ganancia/haber*1000)/10:0;
+  const haberCobrado=suma(delPeriodo.filter(m=>m.tipo==="haber"&&m.hecho),m=>m.monto);
+  const debePagado=suma(delPeriodo.filter(m=>m.tipo==="debe"&&m.hecho),m=>m.monto);
+
+  // Desglose: por día (día/mes) o por mes (año/todo), con saldo acumulado dentro del período
+  const filas=useMemo(()=>{
+    if(periodo==="dia")return[];
+    const n=periodo==="mes"?10:7;
+    const map={};
+    delPeriodo.forEach(m=>{const k=m.fecha.slice(0,n);const o=map[k]=map[k]||{k,debe:0,haber:0};if(m.tipo==="debe")o.debe+=m.monto;else o.haber+=m.monto;});
+    let acum=0;
+    return Object.values(map).sort((a,b)=>a.k.localeCompare(b.k)).map(o=>{acum+=o.haber-o.debe;return{...o,saldo:o.haber-o.debe,acum};}).reverse();
+  },[delPeriodo,periodo]);
+  const lblFila=k=>k.length===10?fmtDateCorta(k):new Date(k+"-01T00:00:00").toLocaleDateString("es-AR",{month:"short",year:"numeric"});
+  const lblPeriodo=periodo==="dia"?fmtDate(ref.slice(0,10)):periodo==="mes"?new Date(ref.slice(0,7)+"-01T00:00:00").toLocaleDateString("es-AR",{month:"long",year:"numeric"}):periodo==="anio"?ref.slice(0,4):"Todo el historial";
+  const colSaldo=n=>n>0?G:n<0?RE:MU;
+  const Chip=({k,l})=>(<button onClick={()=>setPeriodo(k)} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${periodo===k?G:BO}`,background:periodo===k?G:BG,color:periodo===k?"#fff":MU}}>{l}</button>);
+  const mover=d=>{
+    const base=ref.slice(0,10);const dt=new Date(base+"T00:00:00");
+    if(periodo==="dia")dt.setDate(dt.getDate()+d);else if(periodo==="mes")dt.setMonth(dt.getMonth()+d,1);else if(periodo==="anio")dt.setFullYear(dt.getFullYear()+d);
+    const y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,"0"),dd=String(dt.getDate()).padStart(2,"0");
+    setRef(`${y}-${m}-${dd}`);
+  };
+  const flecha={width:36,height:36,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0};
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:10}}>⚖️ Balance · cuenta corriente propia</div>
+      <div style={{display:"flex",gap:6,marginBottom:10}}>
+        <Chip k="dia" l="Día"/><Chip k="mes" l="Mes"/><Chip k="anio" l="Año"/><Chip k="todo" l="Todo"/>
+      </div>
+      {periodo!=="todo"&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+          <button onClick={()=>mover(-1)} style={flecha}>‹</button>
+          <div style={{flex:1,textAlign:"center",fontSize:15,fontWeight:700,color:CR,textTransform:"capitalize"}}>{lblPeriodo}</div>
+          <button onClick={()=>mover(1)} style={flecha}>›</button>
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,marginBottom:10}}>
+        <div style={{background:BG,borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
+          <div style={{fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em"}}>Debe</div>
+          <div className="bebas" style={{fontSize:20,color:RE}}>{f0(debe)}</div>
+          <div style={{fontSize:11,color:MU}}>compras + gastos</div>
+        </div>
+        <div style={{background:BG,borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
+          <div style={{fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em"}}>Haber</div>
+          <div className="bebas" style={{fontSize:20,color:G}}>{f0(haber)}</div>
+          <div style={{fontSize:11,color:MU}}>ventas</div>
+        </div>
+        <div style={{background:BG,borderRadius:12,padding:"10px 8px",textAlign:"center",border:`1px solid ${colSaldo(saldo)}55`}}>
+          <div style={{fontSize:11,color:MU,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em"}}>Saldo</div>
+          <div className="bebas" style={{fontSize:20,color:colSaldo(saldo)}}>{f0(saldo)}</div>
+          <div style={{fontSize:11,color:MU}}>haber − debe</div>
+        </div>
+      </div>
+      <div style={{fontSize:13,color:CR,lineHeight:1.7,borderTop:`1px solid ${BO}`,paddingTop:8}}>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🛒 Compras a proveedores</span><b>{f0(compras)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🧾 Gastos{incPersonales?" (con personales)":" del negocio"}</span><b>{f0(gastosT)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>📈 Ventas facturadas</span><b>{f0(haber)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>💰 Rentabilidad de ventas (comisión)</span><b style={{color:G}}>{f0(ganancia)} · {rentPct}%</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo realizado (cobrado − pagado)</span><b style={{color:colSaldo(haberCobrado-debePagado)}}>{f0(haberCobrado-debePagado)}</b></div>
+      </div>
+      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:MU,marginTop:10,cursor:"pointer"}}>
+        <input type="checkbox" checked={incPersonales} onChange={e=>setIncPersonales(e.target.checked)} style={{width:16,height:16}}/>Incluir gastos personales
+      </label>
+      {periodo!=="dia"&&filas.length>0&&(
+        <div style={{marginTop:12,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1fr 1fr",gap:6,padding:"7px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase"}}>
+            <span>{periodo==="mes"?"Día":"Mes"}</span><span style={{textAlign:"right"}}>Debe</span><span style={{textAlign:"right"}}>Haber</span><span style={{textAlign:"right"}}>Saldo</span>
+          </div>
+          <div style={{maxHeight:300,overflowY:"auto"}}>
+            {filas.map(o=>(
+              <div key={o.k} style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1fr 1fr",gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:13,color:CR}}>
+                <span style={{textTransform:"capitalize"}}>{lblFila(o.k)}</span>
+                <span style={{textAlign:"right",color:o.debe?RE:MU}}>{o.debe?f0(o.debe):"—"}</span>
+                <span style={{textAlign:"right",color:o.haber?G:MU}}>{o.haber?f0(o.haber):"—"}</span>
+                <span style={{textAlign:"right",fontWeight:700,color:colSaldo(o.saldo)}}>{f0(o.saldo)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <button onClick={()=>setVerMov(v=>!v)} style={{marginTop:10,background:"none",border:"none",padding:0,fontSize:13,fontWeight:700,color:MU,cursor:"pointer",textDecoration:"underline"}}>{verMov||periodo==="dia"?"▲ Ocultar":"▼ Ver"} movimientos ({delPeriodo.length})</button>
+      {(verMov||periodo==="dia")&&(
+        <div style={{marginTop:8,display:"flex",flexDirection:"column"}}>
+          {delPeriodo.length===0&&<div style={{fontSize:13,color:MU,padding:"8px 0"}}>Sin movimientos en este período.</div>}
+          {[...delPeriodo].reverse().slice(0,100).map((m,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"7px 0",borderTop:`1px solid ${BO}`,fontSize:13}}>
+              <div style={{minWidth:0}}>
+                <div style={{color:CR,overflow:"hidden",textOverflow:"ellipsis"}}>{m.concepto}</div>
+                <div style={{fontSize:11,color:MU}}>{fmtDateCorta(m.fecha)} · {m.tipo==="haber"?(m.hecho?"cobrado":"por cobrar"):(m.cat==="compra"?(m.hecho?"pagada":"por pagar"):"pagado")}{m.cat==="venta"&&m.ganancia>0?` · ganancia ${f0(m.ganancia)}`:""}</div>
+              </div>
+              <b style={{color:m.tipo==="haber"?G:RE,whiteSpace:"nowrap"}}>{m.tipo==="haber"?"+":"−"}{f0(m.monto)}</b>
+            </div>
+          ))}
+          {delPeriodo.length>100&&<div style={{fontSize:12,color:MU}}>Mostrando los 100 más recientes.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,proveedores,gastos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
@@ -6296,6 +6457,8 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos}){
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Caja</span>
       <p style={{fontSize:14,color:MU,marginBottom:20}}>Ventas totales y ganancia según el % de comisión configurado en cada cliente</p>
+
+      <CajaBalance todas={todas} proveedores={proveedores} gastos={gastos}/>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:16}}>
         <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16}}>
@@ -8701,7 +8864,7 @@ function ResumenPorCategoria({filas,titulo}){
 // ── Cuadro de litros en stock: marca › estilo (filas) × envase (columnas) ──────────────────
 // Todo se expresa en litros: las latas se cargan en unidades y se convierten (1 lata = 0,5 L). Cada producto es un estilo.
 function CuadroStockLitros({prods}){
-  const[abierto,setAbierto]=useState(true);
+  const[abierto,setAbierto]=useState(false);
   const fl=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");
   const datos=useMemo(()=>{
     const lista=prods||[];
@@ -8791,16 +8954,30 @@ function CuadroStockLitros({prods}){
   );
 }
 
+function useEsMovilStock(){
+  const q="(max-width: 767px)";
+  const[m,setM]=useState(()=>{try{return window.matchMedia(q).matches;}catch(e){return false;}});
+  useEffect(()=>{
+    let mq;try{mq=window.matchMedia(q);}catch(e){return;}
+    const h=()=>setM(mq.matches);
+    h();
+    mq.addEventListener?mq.addEventListener("change",h):mq.addListener(h);
+    return()=>{mq.removeEventListener?mq.removeEventListener("change",h):mq.removeListener(h);};
+  },[]);
+  return m;
+}
+
 function Stock({prods,setProds,pedidos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const unidadDe=id=>envaseMap[id]==="Lata"?"u":"L";
+  const movil=useEsMovilStock();
   const[busqueda,setBusqueda]=useState("");
-  const[soloFaltantes,setSoloFaltantes]=useState(false);
+  const[modo,setModo]=useState("todos"); // todos | faltan | sinstock
   const[filtroEnvase,setFiltroEnvase]=useState("");
   const[filtroEstilo,setFiltroEstilo]=useState("");
+  const[orden,setOrden]=useState("faltantes"); // faltantes | mayor | nombre
 
   const envasesDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.envase||"PET"))].sort(),[prods]);
-  // Cada producto es, en los hechos, un estilo propio (p.ej. "Grunge Honey", "Grunge Light Lager")
   const estilosDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[prods]);
 
   // Suma de cantidades pedidas por producto en pedidos todavía no entregados
@@ -8815,29 +8992,47 @@ function Stock({prods,setProds,pedidos}){
     return m;
   },[pedidos]);
 
-  // Orden por defecto: de mayor a menor stock. El input de cada fila confirma el valor recién al
-  // perder el foco (ver FilaStock más abajo), así que escribir no reordena la lista en cada tecla.
   const filas=useMemo(()=>prods.map(p=>{
+    const env=p.envase||"PET";
     const stock=Number(p.stock)||0;
     const pedido=pedidoPendientePorProd[p.id]||0;
-    return{prod:p,stock,pedido,resultado:stock-pedido};
-  }).sort((a,b)=>b.stock-a.stock||(a.prod.nombre||"").localeCompare(b.prod.nombre||"")),[prods,pedidoPendientePorProd]);
+    const resultado=stock-pedido;
+    return{prod:p,stock,pedido,resultado,
+      litStock:litrosDeItem(stock,env),litPedido:litrosDeItem(pedido,env),litFalta:litrosDeItem(Math.max(0,-resultado),env)};
+  }),[prods,pedidoPendientePorProd]);
+
+  const resumen=useMemo(()=>({
+    litStock:filas.reduce((s,f)=>s+f.litStock,0),
+    litPedido:filas.reduce((s,f)=>s+f.litPedido,0),
+    faltan:filas.filter(f=>f.resultado<0),
+    litFalta:filas.reduce((s,f)=>s+f.litFalta,0),
+    sinStock:filas.filter(f=>f.stock<=0).length,
+  }),[filas]);
 
   const filasFiltradas=useMemo(()=>{
     const q=busqueda.trim().toLowerCase();
-    return filas.filter(f=>{
-      if(soloFaltantes&&f.resultado>=0)return false;
+    const arr=filas.filter(f=>{
+      if(modo==="faltan"&&f.resultado>=0)return false;
+      if(modo==="sinstock"&&f.stock>0)return false;
       if(filtroEnvase&&(f.prod.envase||"PET")!==filtroEnvase)return false;
       if(filtroEstilo&&f.prod.nombre!==filtroEstilo)return false;
       if(q&&!`${f.prod.nombre||""} ${f.prod.marca||""}`.toLowerCase().includes(q))return false;
       return true;
     });
-  },[filas,busqueda,soloFaltantes,filtroEnvase,filtroEstilo]);
+    const porNombre=(a,b)=>(a.prod.nombre||"").localeCompare(b.prod.nombre||"");
+    if(orden==="mayor")arr.sort((a,b)=>b.litStock-a.litStock||porNombre(a,b));
+    else if(orden==="nombre")arr.sort(porNombre);
+    else arr.sort((a,b)=>{
+      const fa=a.resultado<0,fb=b.resultado<0;
+      if(fa!==fb)return fa?-1:1;
+      if(fa&&fb)return b.litFalta-a.litFalta||porNombre(a,b);
+      return b.litStock-a.litStock||porNombre(a,b);
+    });
+    return arr;
+  },[filas,busqueda,modo,filtroEnvase,filtroEstilo,orden]);
 
-  const hayFiltrosActivos=!!busqueda||soloFaltantes||!!filtroEnvase||!!filtroEstilo;
-  const limpiarFiltros=()=>{setBusqueda("");setSoloFaltantes(false);setFiltroEnvase("");setFiltroEstilo("");};
-
-  const faltantes=filas.filter(f=>f.resultado<0);
+  const hayFiltrosActivos=!!busqueda||modo!=="todos"||!!filtroEnvase||!!filtroEstilo;
+  const limpiarFiltros=()=>{setBusqueda("");setModo("todos");setFiltroEnvase("");setFiltroEstilo("");};
 
   const actualizarStock=(id,valor)=>{
     const limpio=valor===""?"":Math.max(0,Number(valor)||0);
@@ -8847,36 +9042,43 @@ function Stock({prods,setProds,pedidos}){
     setProds(prev=>prev.map(p=>p.id===id?{...p,stock:Math.max(0,(Number(p.stock)||0)+delta)}:p));
   };
 
+  const fl=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");
+  const Tarjeta=({titulo,valor,sub,color})=>(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:"12px 14px",minWidth:0}}>
+      <div style={{fontSize:12,color:MU,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",lineHeight:1.2}}>{titulo}</div>
+      <div className="bebas" style={{fontSize:28,color:color||CR,lineHeight:1.1,marginTop:4}}>{valor}</div>
+      <div style={{fontSize:12,color:MU,minHeight:15}}>{sub||""}</div>
+    </div>
+  );
+  const Chip=({activo,onClick,children,color})=>(
+    <button onClick={onClick} style={{padding:"7px 13px",borderRadius:999,border:`1px solid ${activo?(color||G):BO}`,background:activo?(color||G):BG,color:activo?"#fff":MU,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>{children}</button>
+  );
+
   return(
-    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+    <div style={{padding:"24px 16px 90px",maxWidth:movil?640:1080,margin:"0 auto"}}>
       <div style={{marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR,display:"block"}}>Stock</span>
         <p style={{fontSize:14,color:MU}}>Lo que tenés a mano vs. lo que ya está comprometido en pedidos pendientes</p>
       </div>
 
-      {faltantes.length>0?(
-        <div style={{background:"#FDEDED",border:`1px solid ${RE}44`,borderRadius:14,padding:14,marginBottom:16}}>
-          <div style={{fontSize:15,fontWeight:700,color:RE,marginBottom:2}}>⚠️ {faltantes.length} producto{faltantes.length>1?"s":""} con faltante</div>
-          <div style={{fontSize:13,color:MU}}>Te falta reponer para cubrir los pedidos pendientes. Mirá el detalle abajo.</div>
-        </div>
-      ):(
-        <div style={{background:GLT,border:`1px solid ${G}33`,borderRadius:14,padding:14,marginBottom:16}}>
-          <div style={{fontSize:15,fontWeight:700,color:GDK}}>✓ Stock cubre todos los pedidos pendientes</div>
-        </div>
-      )}
+      <div style={{display:"grid",gridTemplateColumns:movil?"repeat(2,minmax(0,1fr))":"repeat(4,minmax(0,1fr))",gap:10,marginBottom:16}}>
+        <Tarjeta titulo="Litros en stock" valor={`${fl(resumen.litStock)} L`} color={G}/>
+        <Tarjeta titulo="Comprometidos" valor={`${fl(resumen.litPedido)} L`} sub="en pedidos pendientes"/>
+        <Tarjeta titulo="Con faltante" valor={resumen.faltan.length} color={resumen.faltan.length>0?RE:G} sub={resumen.faltan.length>0?`faltan ${fl(resumen.litFalta)} L en total`:"todo cubierto"}/>
+        <Tarjeta titulo="Sin stock" valor={resumen.sinStock} color={resumen.sinStock>0?AM:G} sub="productos en 0"/>
+      </div>
 
       <CuadroStockLitros prods={prods}/>
 
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
         <input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="🔎 Buscar producto o marca..." style={{marginBottom:10}}/>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
-          <div>
-            <Lbl t="Envase"/>
-            <select value={filtroEnvase} onChange={e=>setFiltroEnvase(e.target.value)}>
-              <option value="">Todos</option>
-              {envasesDisponibles.map(env=><option key={env} value={env}>{env}</option>)}
-            </select>
-          </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          <Chip activo={modo==="todos"&&!filtroEnvase} onClick={()=>{setModo("todos");setFiltroEnvase("");}}>Todos</Chip>
+          <Chip activo={modo==="faltan"} color={RE} onClick={()=>setModo(modo==="faltan"?"todos":"faltan")}>Faltan ({resumen.faltan.length})</Chip>
+          <Chip activo={modo==="sinstock"} color={AM} onClick={()=>setModo(modo==="sinstock"?"todos":"sinstock")}>Sin stock ({resumen.sinStock})</Chip>
+          {envasesDisponibles.map(env=><Chip key={env} activo={filtroEnvase===env} onClick={()=>setFiltroEnvase(filtroEnvase===env?"":env)}>{env}</Chip>)}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
           <div>
             <Lbl t="Estilo"/>
             <select value={filtroEstilo} onChange={e=>setFiltroEstilo(e.target.value)}>
@@ -8884,71 +9086,119 @@ function Stock({prods,setProds,pedidos}){
               {estilosDisponibles.map(es=><option key={es} value={es}>{es}</option>)}
             </select>
           </div>
+          <div>
+            <Lbl t="Orden"/>
+            <select value={orden} onChange={e=>setOrden(e.target.value)}>
+              <option value="faltantes">Faltantes primero</option>
+              <option value="mayor">Mayor stock</option>
+              <option value="nombre">Nombre A–Z</option>
+            </select>
+          </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,color:MU,cursor:"pointer"}}>
-            <input type="checkbox" checked={soloFaltantes} onChange={e=>setSoloFaltantes(e.target.checked)} style={{width:16,height:16}}/>
-            Solo lo que falta reponer
-          </label>
-          {hayFiltrosActivos&&<button onClick={limpiarFiltros} style={{fontSize:13,fontWeight:700,color:MU,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Limpiar filtros</button>}
-        </div>
+        {hayFiltrosActivos&&<div style={{marginTop:10}}><button onClick={limpiarFiltros} style={{fontSize:13,fontWeight:700,color:MU,background:"none",border:"none",cursor:"pointer",textDecoration:"underline",padding:0}}>Limpiar filtros</button></div>}
       </div>
 
       {filasFiltradas.length===0&&(
         <div style={{textAlign:"center",padding:"40px 0",color:MU,fontSize:14}}>
-          {prods.length===0?"Todavía no cargaste productos.":"No hay productos que coincidan con la búsqueda."}
+          {prods.length===0?"Todavía no cargaste productos.":"No hay productos que coincidan con los filtros."}
         </div>
       )}
 
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {filasFiltradas.map(({prod,stock,pedido,resultado})=>(
-          <FilaStock key={prod.id} prod={prod} pedido={pedido} resultado={resultado} unidad={unidadDe(prod.id)} onCommit={actualizarStock} onAjustar={ajustarStock}/>
-        ))}
-      </div>
+      {filasFiltradas.length>0&&(movil?(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
+          {filasFiltradas.map((f,i)=>(
+            <FilaStock key={f.prod.id} movil f={f} primera={i===0} unidad={unidadDe(f.prod.id)} onCommit={actualizarStock} onAjustar={ajustarStock}/>
+          ))}
+        </div>
+      ):(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead>
+              <tr style={{background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.04em"}}>
+                <th style={{textAlign:"left",padding:"9px 14px"}}>Producto</th>
+                <th style={{textAlign:"center",padding:"9px 8px"}}>Stock</th>
+                <th style={{textAlign:"right",padding:"9px 8px"}}>Pedidos pend.</th>
+                <th style={{textAlign:"right",padding:"9px 8px"}}>Queda</th>
+                <th style={{textAlign:"left",padding:"9px 14px",width:"22%"}}>Cobertura</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filasFiltradas.map(f=>(
+                <FilaStock key={f.prod.id} f={f} unidad={unidadDe(f.prod.id)} onCommit={actualizarStock} onAjustar={ajustarStock}/>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   );
 }
 
 // Fila de Stock con estado local propio: el valor tipeado solo se confirma (y por lo tanto solo
-// reordena la lista por mayor-a-menor-stock) al perder el foco, no en cada tecla.
-function FilaStock({prod,pedido,resultado,unidad,onCommit,onAjustar}){
+// reordena la lista) al perder el foco, no en cada tecla. Tabla en compu, bloque vertical en celular.
+function FilaStock({f,unidad,onCommit,onAjustar,movil,primera}){
+  const{prod,stock,pedido,resultado}=f;
   const[valor,setValor]=useState(String(prod.stock??""));
   const[enFoco,setEnFoco]=useState(false);
   useEffect(()=>{if(!enFoco)setValor(String(prod.stock??""));},[prod.stock,enFoco]);
-  return(
-    <div style={{background:CA,border:`1px solid ${resultado<0?RE+"55":BO}`,borderRadius:14,padding:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
-        <div style={{minWidth:0}}>
-          <div style={{fontSize:15,fontWeight:700,color:CR}}>{prod.nombre}</div>
-          <div style={{fontSize:12,color:MU}}>{prod.marca?`${prod.marca} · `:""}{prod.envase||"PET"}</div>
-        </div>
-        {resultado<0?(
-          <span style={{fontSize:13,fontWeight:700,color:RE,whiteSpace:"nowrap"}}>Faltan {Math.abs(resultado)}{unidad}</span>
-        ):resultado>0?(
-          <span style={{fontSize:13,fontWeight:700,color:G,whiteSpace:"nowrap"}}>Sobran {resultado}{unidad}</span>
-        ):(
-          <span style={{fontSize:13,fontWeight:700,color:MU,whiteSpace:"nowrap"}}>Justo</span>
-        )}
+  const cobertura=pedido>0?Math.max(0,Math.min(1,stock/pedido)):null;
+  const colorCob=cobertura===null?MU:cobertura>=1?G:cobertura>=0.5?AM:RE;
+  const textoQueda=resultado<0?`Faltan ${resultado*-1}${unidad}`:resultado>0?`Sobran ${resultado}${unidad}`:"Justo";
+  const colorQueda=resultado<0?RE:resultado>0?G:MU;
+  const barra=(
+    <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <div style={{flex:1,height:8,borderRadius:99,background:BO,overflow:"hidden"}}>
+        <div style={{width:`${cobertura===null?0:Math.round(cobertura*100)}%`,height:"100%",background:colorCob,borderRadius:99}}/>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:12,alignItems:"center"}}>
+      <span style={{fontSize:12,color:MU,minWidth:56,textAlign:"right"}}>{cobertura===null?"sin pedidos":`${Math.round(cobertura*100)}%`}</span>
+    </div>
+  );
+  const tam=movil?34:30;
+  const btn={width:tam,height:tam,borderRadius:8,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",flexShrink:0,padding:0};
+  const editor=(
+    <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
+      <button onClick={()=>onAjustar(prod.id,-1)} style={btn}>−</button>
+      <input type="number" inputMode="numeric" value={valor}
+        onFocus={()=>setEnFoco(true)}
+        onChange={e=>setValor(e.target.value)}
+        onBlur={()=>{setEnFoco(false);onCommit(prod.id,valor);}}
+        placeholder="0" style={{textAlign:"center",width:movil?84:72,height:tam+(movil?8:0),fontSize:movil?20:15,fontWeight:700,margin:0}}/>
+      <button onClick={()=>onAjustar(prod.id,1)} style={btn}>+</button>
+    </div>
+  );
+  const nombre=(
+    <div style={{minWidth:0}}>
+      <div style={{fontSize:15,fontWeight:700,color:CR}}>{prod.nombre}</div>
+      <div style={{fontSize:12,color:MU}}>{prod.marca?`${prod.marca} · `:""}{prod.envase||"PET"} · en {unidad==="u"?"unidades":"litros"}</div>
+    </div>
+  );
+  if(movil)return(
+    <div style={{padding:14,borderTop:primera?"none":`1px solid ${BO}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
+        {nombre}
+        <span style={{fontSize:13,fontWeight:700,color:colorQueda,whiteSpace:"nowrap"}}>{textoQueda}</span>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10}}>
         <div>
-          <Lbl t={`Stock actual (${unidad})`}/>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <button onClick={()=>onAjustar(prod.id,-1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer"}}>−</button>
-            <input type="number" inputMode="numeric" value={valor}
-              onFocus={()=>setEnFoco(true)}
-              onChange={e=>setValor(e.target.value)}
-              onBlur={()=>{setEnFoco(false);onCommit(prod.id,valor);}}
-              placeholder="0" style={{textAlign:"center"}}/>
-            <button onClick={()=>onAjustar(prod.id,1)} style={{width:32,height:32,borderRadius:8,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer"}}>+</button>
-          </div>
+          <Lbl t={`Stock (${unidad})`}/>
+          {editor}
         </div>
         <div style={{textAlign:"right"}}>
           <Lbl t="Pedidos pend."/>
-          <div style={{fontSize:16,fontWeight:700,color:CR}}>{pedido}{unidad}</div>
+          <div style={{fontSize:18,fontWeight:700,color:CR}}>{pedido}{unidad}</div>
         </div>
       </div>
+      {barra}
     </div>
+  );
+  return(
+    <tr style={{borderTop:`1px solid ${BO}`}}>
+      <td style={{padding:"10px 14px"}}>{nombre}</td>
+      <td style={{padding:"10px 8px",textAlign:"center"}}>{editor}</td>
+      <td style={{padding:"10px 8px",textAlign:"right",fontSize:15,fontWeight:700,color:CR,whiteSpace:"nowrap"}}>{pedido}{unidad}</td>
+      <td style={{padding:"10px 8px",textAlign:"right",fontSize:14,fontWeight:700,color:colorQueda,whiteSpace:"nowrap"}}>{textoQueda}</td>
+      <td style={{padding:"10px 14px"}}>{barra}</td>
+    </tr>
   );
 }
 
@@ -9398,7 +9648,7 @@ function App(){
         <aside style={{width:238,height:"100vh",background:SU,borderRight:`1px solid ${BO}`,position:"fixed",top:0,left:0,flexDirection:"column",display:"none",overflow:"hidden"}} id="sb">
           <div className="nomades-brand-head" style={{padding:"24px 16px 19px",borderBottom:`1px solid ${BO}`}}>
             <button onClick={()=>setTab("inicio")} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"center"}}>
-              <LogoNomades w={132} style={{marginBottom:9}}/>
+              <LogoNomades w={76} style={{marginBottom:0}}/>
               <div className="nomades-tagline" style={{fontSize:10,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.12em",marginTop:2}}>Distribución de cerveza artesanal</div>
             </button>
           </div>
@@ -9411,18 +9661,11 @@ function App(){
             {renderGrupoMenu("herramientas","HERRAMIENTAS",["maps","difusion","speeches","notas","asistente"])}
             {TABS.filter(t=>t.key==="config").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",marginTop:5,borderRadius:10,fontSize:14,fontWeight:tab===item.key?750:650,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label==="Config"?"Configuración":item.label}</button>)}
           </nav>
-          <div style={{padding:"14px 14px 16px",borderTop:`1px solid ${BO}`}}>
-            <div className="nomades-theme-control">
-              <span style={{display:"flex",alignItems:"center",gap:8,fontSize:12,fontWeight:650,color:MU}}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{temaOscuro?<><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></>:<path d="M20.9 13A9 9 0 1 1 11 3.1 7 7 0 0 0 20.9 13Z"/>}</svg>
-                {temaOscuro?"Modo oscuro":"Modo claro"}
-              </span>
-              <button onClick={()=>setTemaOscuro(t=>!t)} title="Cambiar modo claro u oscuro" aria-label="Cambiar modo claro u oscuro">
-                {temaOscuro?"Activar claro":"Activar oscuro"}
-              </button>
-            </div>
+          <div className="nomades-sb-foot" style={{borderTop:`1px solid ${BO}`}}>
             <SyncBadge status={syncStatus} errorMsg={syncError}/>
-            <div style={{fontSize:10,color:MU,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginTop:10,textAlign:"center"}}>Dos marcas, un mismo reparto</div>
+            <button className="nomades-theme-btn" onClick={()=>setTemaOscuro(t=>!t)} title={temaOscuro?"Cambiar a modo claro":"Cambiar a modo oscuro"} aria-label="Cambiar modo claro u oscuro">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{temaOscuro?<><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></>:<path d="M20.9 13A9 9 0 1 1 11 3.1 7 7 0 0 0 20.9 13Z"/>}</svg>
+            </button>
           </div>
         </aside>
  
@@ -9438,7 +9681,7 @@ function App(){
           {tab==="difusion"&&<EnvioMasivo clientes={clientes} speeches={speeches}/>}
           {tab==="asistente"&&<AsistenteIA clientes={clientes} pedidos={pedidos} prods={prods}/>}
           {tab==="ventas"&&<Ventas clientes={clientes} prods={prods}/>}
-          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos}/>}
+          {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos} proveedores={proveedores} gastos={gastos}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods} pedidos={pedidos}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra} categorias={categorias}/>}
