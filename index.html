@@ -1935,16 +1935,22 @@ const progresoPromo51=(cliente,promo51,prods,pedidos)=>{
     restoCiclo-=tomar;
   });
   const cicloActual=Object.entries(cicloMap).map(([producto,cantidad])=>({producto,cantidad}));
-  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,cicloActual,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
+  const pendMap={};
+  detallePendiente.forEach(d=>{pendMap[d.producto]=(pendMap[d.producto]||0)+d.cantidad;});
+  const cicloPendiente=Object.entries(pendMap).map(([producto,cantidad])=>({producto,cantidad}));
+  return{acumulado,bonosGanados,bonosEntregados,bonosPendientes,enCicloActual,cicloActual,cicloPendiente,faltan:promo51.cantidadNecesaria-enCicloActual,pendiente,detalle};
 };
 const EST={activo:{c:GR,l:"Activo"},atencion:{c:AM,l:"Atención"},inactivo:{c:RE,l:"Inactivo"},nuevo:{c:MU,l:"Sin compras"}};
 function PromoCicloResumen({prog}){
-  if(!prog||!prog.cicloActual||prog.cicloActual.length===0)return null;
+  if(!prog)return null;
+  const ent=prog.cicloActual||[],pen=prog.cicloPendiente||[];
+  if(ent.length===0&&pen.length===0)return null;
   return(
     <div style={{marginTop:6}}>
-      <div style={{fontSize:12,color:MU,marginBottom:2}}>Lo que lleva en este ciclo:</div>
+      <div style={{fontSize:12,color:MU,marginBottom:2}}>Lleva {prog.enCicloActual} en este ciclo:</div>
       <ul style={{margin:0,paddingLeft:18,fontSize:13,color:CR,lineHeight:1.5}}>
-        {prog.cicloActual.map(c=><li key={c.producto}>{c.cantidad} {c.producto}</li>)}
+        {ent.map(c=><li key={"e"+c.producto}>{c.cantidad} {c.producto}</li>)}
+        {pen.map(c=><li key={"p"+c.producto} style={{color:AM}}>{c.cantidad} {c.producto} (pedido pendiente de entrega)</li>)}
       </ul>
     </div>
   );
@@ -2475,6 +2481,105 @@ function Btn({children,onClick,variant,disabled,small}){
   const br=variant==="ghost"?`1px solid ${BO}`:variant==="red"?`1px solid ${RE}44`:"none";
   return<button onClick={onClick} disabled={disabled} style={{display:"flex",alignItems:"center",gap:6,padding:pad,borderRadius:10,fontSize:fs,fontWeight:600,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.4:1,background:bg,color:cl,border:br,boxShadow:variant==="ghost"||variant==="red"?"none":"0 2px 8px rgba(23,141,79,0.3)"}}>{children}</button>;
 }
+// ── Remito impreso (A5 / A4 / Ticket 80 mm): HTML con @page propio, se imprime desde un iframe oculto ──
+function imprimirRemito(pedido,cliente,prods,formato){
+  const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const nro=nroRemitoDePedido(pedido);
+  const lineas=pedido.lineas||[];
+  const totalLineas=lineas.reduce((s,l)=>s+(l.monto||0),0);
+  const total=pedido.montoTotal||totalLineas;
+  const ticket=formato==="ticket";
+  const pagina=ticket?"80mm auto":formato==="a5"?"A5":"A4";
+  const margen=ticket?"4mm":formato==="a5"?"10mm":"15mm";
+  const base=ticket?12:formato==="a5"?12:14;
+  const filas=lineas.map(l=>{
+    const prod=prods.find(x=>x.id===l.productoId);
+    const u=prod&&prod.envase==="Lata"?"u":"L";
+    const nom=prod?nombreProdEnvase(prod):l.productoId;
+    return ticket
+      ?`<tr><td colspan="2">${esc(nom)}${l.esBono?" (bonif.)":""}</td></tr><tr><td>${esc(l.cantidad)}${u}${l.descuentoPct>0?` · -${l.descuentoPct}%`:""}</td><td class="r">${esc(fmtARS(l.monto||0))}</td></tr>`
+      :`<tr><td>${esc(nom)}${l.esBono?" (bonificado)":""}</td><td class="r">${esc(l.cantidad)}${u}</td><td class="r">${l.descuentoPct>0?"-"+l.descuentoPct+"%":"—"}</td><td class="r"><b>${esc(fmtARS(l.monto||0))}</b></td></tr>`;
+  }).join("");
+  const montoDesc=pedido.descuentoPct>0?Math.round(totalLineas*pedido.descuentoPct/100):0;
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Remito ${esc(nro)}</title><style>
+@page{size:${pagina};margin:${margen}}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:${base}px;margin:0;${ticket?"width:72mm;":""}}
+h1{font-size:${ticket?16:22}px;margin:0}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E4A2C;padding-bottom:8px;margin-bottom:10px;${ticket?"flex-direction:column;":""}}
+.marca{font-weight:700;color:#0E4A2C;font-size:${ticket?13:16}px}
+.sub{color:#555;font-size:${base-2}px}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th{text-align:left;font-size:${base-3}px;color:#666;text-transform:uppercase;border-bottom:1px solid #999;padding:4px 2px}
+td{padding:${ticket?2:5}px 2px;border-bottom:${ticket?"none":"1px solid #ddd"};vertical-align:top}
+.r{text-align:right}
+.tot{margin-top:10px;text-align:right}
+.tot div{margin:2px 0}
+.big{font-size:${base+4}px;font-weight:700;color:#0E4A2C}
+.firma{margin-top:${ticket?18:40}px;border-top:1px solid #444;width:${ticket?"60%":"45%"};padding-top:3px;font-size:${base-3}px;color:#555}
+.pie{margin-top:12px;text-align:center;color:#888;font-size:${base-3}px}
+</style></head><body>
+<div class="top"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div>
+<div style="text-align:${ticket?"left":"right"}"><h1>REMITO</h1><div>Nº ${esc(nro)}</div></div></div>
+<div><b>${esc(cliente?cliente.nombre:"Cliente")}</b></div>
+${cliente&&cliente.direccion?`<div class="sub">${esc(cliente.direccion)}</div>`:""}
+${cliente&&cliente.telefono?`<div class="sub">Tel: ${esc(cliente.telefono)}</div>`:""}
+<div class="sub" style="margin-top:4px">Entrega: ${esc(fmtDate(pedido.fechaEntrega))}${pedido.horaEntrega?` · ${esc(pedido.horaEntrega)}hs`:""} · ${pedido.pagado?"Pagado":"Cuenta corriente"}</div>
+<table>${ticket?"":"<thead><tr><th>Producto</th><th class=\"r\">Cant.</th><th class=\"r\">Desc.</th><th class=\"r\">Subtotal</th></tr></thead>"}<tbody>${filas}</tbody></table>
+<div class="tot">
+<div>Subtotal: ${esc(fmtARS(totalLineas))}</div>
+${montoDesc?`<div>Descuento pedido (${esc(pedido.descuentoPct)}%): -${esc(fmtARS(montoDesc))}</div>`:""}
+${pedido.incluyeIVA?"<div>IVA (21%) incluido</div>":""}
+<div class="big">TOTAL ${esc(fmtARS(total))}</div></div>
+${pedido.notas?`<div class="sub" style="margin-top:8px"><i>Notas: ${esc(pedido.notas)}</i></div>`:""}
+<div class="firma">Recibí conforme</div>
+<div class="pie">Distribuidora Nómades · Cerveza artesanal</div>
+</body></html>`;
+  const f=document.createElement("iframe");
+  f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  document.body.appendChild(f);
+  const limpiar=()=>setTimeout(()=>{try{document.body.removeChild(f);}catch(e){}},60000);
+  f.onload=()=>{try{f.contentWindow.focus();f.contentWindow.print();}catch(e){alert("No se pudo abrir la impresión: "+e.message);}limpiar();};
+  f.srcdoc=html;
+}
+
+// Pantalla que aparece al entregar un pedido o tocar el ícono de remito: imprimir (A5 / A4 / Ticket) y compartir
+function RemitoOpciones({pedido,cliente,prods,onClose,recienEntregado}){
+  const[generando,setGenerando]=useState(false);
+  if(!pedido)return null;
+  const nro=nroRemitoDePedido(pedido);
+  const total=pedido.montoTotal||(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
+  const resumen=(pedido.lineas||[]).map(l=>{const pr=prods.find(x=>x.id===l.productoId);return`• ${l.cantidad}${pr&&pr.envase==="Lata"?"u":"L"} ${pr?nombreProdEnvase(pr):l.productoId}`;}).join("\n");
+  const texto=`Remito Nº ${nro} — Distribuidora Nómades\n${cliente?cliente.nombre:""}\nEntrega: ${fmtDate(pedido.fechaEntrega)}\n\n${resumen}\n\nTotal: ${fmtARS(total)}`;
+  const wa=cliente&&cliente.telefono?waLink(cliente.telefono,texto):null;
+  const mail=`mailto:${encodeURIComponent((cliente&&cliente.email)||"")}?subject=${encodeURIComponent(`Remito Nº ${nro} — Distribuidora Nómades`)}&body=${encodeURIComponent(texto)}`;
+  const tit={fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"center",margin:"14px 0 6px",fontWeight:700};
+  const bt={flex:1,minHeight:46,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:CR,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,textDecoration:"none"};
+  return(
+    <Modal open={true} onClose={onClose} title={recienEntregado?"Pedido entregado":"Remito"}>
+      <div style={{textAlign:"center"}}>
+        <div style={{width:54,height:54,borderRadius:"50%",border:`3px solid ${GR}`,color:GR,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px",fontSize:28,fontWeight:700}}>✓</div>
+        <div style={{fontSize:20,fontWeight:700,color:CR}}>{recienEntregado?`¡Remito ${nro} listo!`:`Remito ${nro}`}</div>
+        <div style={{fontSize:13,color:MU,marginTop:2}}>{cliente?cliente.nombre:""}</div>
+        <div style={{fontSize:18,fontWeight:700,color:CR,marginTop:8}}>Total: {fmtARS(total)}</div>
+      </div>
+      <div style={tit}>Imprimir</div>
+      <div style={{display:"flex",gap:8}}>
+        <button style={bt} onClick={()=>imprimirRemito(pedido,cliente,prods,"a5")}>🖨️ A5</button>
+        <button style={bt} onClick={()=>imprimirRemito(pedido,cliente,prods,"a4")}>A4</button>
+        <button style={bt} onClick={()=>imprimirRemito(pedido,cliente,prods,"ticket")}>Ticket</button>
+      </div>
+      <div style={tit}>Compartir</div>
+      <div style={{display:"flex",gap:8}}>
+        {wa?<a style={bt} href={wa} target="_blank" rel="noreferrer">💬 WhatsApp</a>:<button style={{...bt,opacity:.5}} disabled title="El cliente no tiene teléfono">💬 WhatsApp</button>}
+        <a style={bt} href={mail}>✉️ Email</a>
+        <button style={bt} disabled={generando} onClick={()=>compartirRemitoPDF(pedido,cliente,prods,setGenerando)}>{generando?"...":"📄 PDF"}</button>
+      </div>
+      <button onClick={onClose} style={{width:"100%",minHeight:46,marginTop:16,borderRadius:10,border:"none",background:G,color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Listo</button>
+    </Modal>
+  );
+}
+
 function Modal({open,onClose,title,children}){
   if(!open)return null;
   const formularioAmplio=/(producto|cliente|proveedor|venta|compra|pago|cobranza|registr|editar|presupuesto)/i.test(title||"");
@@ -3324,6 +3429,97 @@ function PanelCobro({cliente,onUpdate,onDone}){
   );
 }
 
+// ── ECHEQ emitidos a proveedores: se guardan en proveedor.echeqs y alimentan el calendario de Inicio ──
+const MEDIOS_PAGO_PROV=[...MEDIOS_PAGO.filter(m=>m.id!=="Otro"),{id:"ECHEQ",ic:"🧾"},MEDIOS_PAGO.find(m=>m.id==="Otro")];
+function chequesDeProveedores(proveedores){
+  return(proveedores||[]).flatMap(p=>(p.echeqs||[]).map(c=>({...c,proveedorId:p.id,proveedorNombre:p.nombre})));
+}
+function ModuloCheques({proveedores,setProveedores}){
+  const hoy=hoyISO();
+  const[mes,setMes]=useState(hoy.slice(0,7));
+  const[diaSel,setDiaSel]=useState(null);
+  const[abierto,setAbierto]=useState(true);
+  const todos=useMemo(()=>chequesDeProveedores(proveedores),[proveedores]);
+  const aCubrir=todos.filter(c=>c.estado!=="debitado"&&c.estado!=="anulado");
+  if(todos.length===0)return null;
+  const total=aCubrir.reduce((s,c)=>s+(Number(c.monto)||0),0);
+  const vencidos=aCubrir.filter(c=>c.fechaPago<hoy);
+  const proximos=aCubrir.filter(c=>c.fechaPago>=hoy).sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago));
+  const porDia={};
+  aCubrir.forEach(c=>{const o=porDia[c.fechaPago]=porDia[c.fechaPago]||{total:0,items:[]};o.total+=Number(c.monto)||0;o.items.push(c);});
+  const resumenDias=Object.keys(porDia).sort();
+  const cambiarEstado=(c,estado)=>setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).map(x=>x.id===c.id?{...x,estado}:x)}));
+  const borrar=c=>{if(!confirm("¿Eliminar este ECHEQ del calendario? El pago al proveedor no se modifica."))return;setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).filter(x=>x.id!==c.id)}));};
+  const corto=n=>n>=1e6?(Math.round(n/1e5)/10)+"M":n>=1e3?Math.round(n/1e3)+"k":String(Math.round(n));
+  const[y,m]=mes.split("-").map(Number);
+  const primero=new Date(y,m-1,1);
+  const offset=(primero.getDay()+6)%7; // lunes primero
+  const diasMes=new Date(y,m,0).getDate();
+  const celdas=[];for(let i=0;i<offset;i++)celdas.push(null);for(let d=1;d<=diasMes;d++)celdas.push(`${mes}-${String(d).padStart(2,"0")}`);
+  const mover=d=>{const dt=new Date(y,m-1+d,1);setMes(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`);setDiaSel(null);};
+  const totalMes=aCubrir.filter(c=>c.fechaPago.slice(0,7)===mes).reduce((s,c)=>s+(Number(c.monto)||0),0);
+  const lista=diaSel?(porDia[diaSel]?porDia[diaSel].items:[]):[];
+  const fila=c=>(
+    <div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderTop:`1px solid ${BO}`,fontSize:13}}>
+      <div style={{minWidth:0}}>
+        <div style={{color:CR,fontWeight:700}}>{c.proveedorNombre}</div>
+        <div style={{fontSize:12,color:MU}}>{c.banco||"Banco s/d"}{c.numero?` · Nº ${c.numero}`:""} · vence {fmtDateCorta(c.fechaPago)}</div>
+        <div style={{display:"flex",gap:10,marginTop:3}}>
+          <button onClick={()=>cambiarEstado(c,"debitado")} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",padding:0,cursor:"pointer"}}>✓ Marcar debitado</button>
+          <button onClick={()=>borrar(c)} style={{fontSize:12,color:RE,background:"none",border:"none",padding:0,cursor:"pointer"}}>Eliminar</button>
+        </div>
+      </div>
+      <b style={{color:CR,whiteSpace:"nowrap"}}>{fmtARS(Number(c.monto)||0)}</b>
+    </div>
+  );
+  return(
+    <div className="ini-span2" style={{background:CA,border:`1px solid ${vencidos.length?RE+"55":BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
+      <button onClick={()=>setAbierto(a=>!a)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
+        <span style={{fontSize:16,fontWeight:700,color:CR}}>🧾 Cheques a cubrir en el banco</span>
+        <span className="bebas" style={{fontSize:22,color:total>0?AM:MU}}>{fmtARS(total)}</span>
+      </button>
+      {abierto&&(
+        <div style={{padding:"0 16px 14px"}}>
+          <div style={{fontSize:13,color:MU,marginBottom:8}}>{aCubrir.length} ECHEQ pendiente{aCubrir.length!==1?"s":""} de débito{vencidos.length>0&&<span style={{color:RE,fontWeight:700}}> · {vencidos.length} vencido{vencidos.length>1?"s":""} sin marcar</span>}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+            <button onClick={()=>mover(-1)} style={{width:34,height:34,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>‹</button>
+            <div style={{flex:1,textAlign:"center",fontSize:14,fontWeight:700,color:CR,textTransform:"capitalize"}}>{primero.toLocaleDateString("es-AR",{month:"long",year:"numeric"})} · {fmtARS(totalMes)}</div>
+            <button onClick={()=>mover(1)} style={{width:34,height:34,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>›</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3}}>
+            {["L","M","M","J","V","S","D"].map((d,i)=><div key={i} style={{textAlign:"center",fontSize:11,color:MU,fontWeight:700}}>{d}</div>)}
+            {celdas.map((f,i)=>{
+              if(!f)return<div key={i}/>;
+              const o=porDia[f];const esHoy=f===hoy;const sel=f===diaSel;
+              return(
+                <button key={f} onClick={()=>setDiaSel(sel?null:f)} style={{minHeight:42,borderRadius:8,padding:"2px 0",cursor:o?"pointer":"default",border:`1px solid ${sel?G:o?(f<hoy?RE:AM)+"88":esHoy?G+"66":"transparent"}`,background:o?(f<hoy?RE+"14":AM+"1f"):BG,color:CR,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1}}>
+                  <span style={{fontSize:12,fontWeight:esHoy?800:500,color:esHoy?G:CR}}>{Number(f.slice(8))}</span>
+                  {o&&<span style={{fontSize:10,fontWeight:700,color:f<hoy?RE:"#B26A00"}}>{corto(o.total)}</span>}
+                </button>
+              );
+            })}
+          </div>
+          {diaSel&&(
+            <div style={{marginTop:8}}>
+              <div style={{fontSize:13,fontWeight:700,color:CR}}>{fmtDate(diaSel)} · {fmtARS(porDia[diaSel]?porDia[diaSel].total:0)}</div>
+              {lista.length===0?<div style={{fontSize:13,color:MU,padding:"6px 0"}}>Sin cheques este día.</div>:lista.map(fila)}
+            </div>
+          )}
+          <div style={{marginTop:12,fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:700}}>Próximos vencimientos</div>
+          {vencidos.length>0&&<div style={{marginTop:4}}><div style={{fontSize:12,color:RE,fontWeight:700}}>Vencidos</div>{vencidos.sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago)).map(fila)}</div>}
+          {resumenDias.filter(d=>d>=hoy).slice(0,6).map(d=>(
+            <div key={d} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderTop:`1px solid ${BO}`,fontSize:14}}>
+              <span style={{color:CR}}>{fmtDate(d)} <span style={{fontSize:12,color:MU}}>· {porDia[d].items.length} cheque{porDia[d].items.length>1?"s":""}</span></span>
+              <b style={{color:CR}}>{fmtARS(porDia[d].total)}</b>
+            </div>
+          ))}
+          {proximos.length===0&&vencidos.length===0&&<div style={{fontSize:13,color:MU,padding:"6px 0"}}>No hay cheques pendientes de cubrir 🎉</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── PanelPagoProveedor (equivalente a PanelCobro, pero para pagarle a un proveedor) ──
 function PanelPagoProveedor({proveedor,onUpdate,onDone}){
   const saldo=saldoProveedor(proveedor);
@@ -3331,10 +3527,21 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
   const[medioPago,setMedioPago]=useState("Efectivo");
   const[fecha,setFecha]=useState(hoyISO());
   const[nota,setNota]=useState("");
+  const[eq,setEq]=useState({banco:"",numero:"",fechaEmision:hoyISO(),fechaPago:"",beneficiario:proveedor.nombre||"",cuit:""});
+  const setE=k=>e=>setEq(p=>({...p,[k]:e.target.value}));
+  const esEcheq=medioPago==="ECHEQ";
   const montoNum=Number(monto)||0;
   const esParcial=montoNum>0&&montoNum<saldo;
   const confirmar=()=>{
     if(!montoNum||montoNum<=0)return;
+    if(esEcheq){
+      if(!eq.fechaPago){alert("Cargá la fecha de pago (vencimiento) del ECHEQ para que aparezca en el calendario.");return;}
+      const cheque={id:uid(),monto:montoNum,banco:eq.banco.trim(),numero:eq.numero.trim(),fechaEmision:eq.fechaEmision||hoyISO(),fechaPago:eq.fechaPago,beneficiario:eq.beneficiario.trim(),cuit:eq.cuit.trim(),nota:nota.trim(),estado:"emitido"};
+      const pagado=aplicarPagoAProveedor(proveedor,montoNum,{medioPago:"ECHEQ",nota:`ECHEQ${cheque.numero?" Nº "+cheque.numero:""}${cheque.banco?" · "+cheque.banco:""} · vence ${fmtDateCorta(cheque.fechaPago)}${nota?" · "+nota:""}`,fecha:cheque.fechaEmision});
+      onUpdate({...pagado,echeqs:[...(proveedor.echeqs||[]),cheque]});
+      onDone&&onDone();
+      return;
+    }
     onUpdate(aplicarPagoAProveedor(proveedor,montoNum,{medioPago,nota,fecha}));
     onDone&&onDone();
   };
@@ -3348,15 +3555,29 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
           <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo/2)):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo/2))})</button>
         </div>
       </div>
-      <div style={{marginBottom:8}}>
+      {!esEcheq&&<div style={{marginBottom:8}}>
         <Lbl t="Fecha de pago"/>
         <input type="date" value={fecha} max={hoyISO()} onChange={e=>setFecha(e.target.value||hoyISO())}/>
-      </div>
+      </div>}
       <div style={{display:"flex",gap:6,marginBottom:8}}>
-        {MEDIOS_PAGO.map(m=>(
+        {MEDIOS_PAGO_PROV.map(m=>(
           <button key={m.id} onClick={()=>setMedioPago(m.id)} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${medioPago===m.id?G:BO}`,background:medioPago===m.id?G+"18":"none",color:medioPago===m.id?G:MU}}>{m.ic} {m.id}</button>
         ))}
       </div>
+      {esEcheq&&(
+        <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:10,marginBottom:10,display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:CR}}>🧾 Datos del ECHEQ emitido</div>
+          <div><Lbl t="Banco emisor"/><input value={eq.banco} onChange={setE("banco")} placeholder="Ej: Banco Galicia"/></div>
+          <div><Lbl t="N° de cheque"/><input value={eq.numero} onChange={setE("numero")} inputMode="numeric" placeholder="Ej: 00012345"/></div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
+            <div><Lbl t="Fecha de emisión"/><input type="date" value={eq.fechaEmision} onChange={setE("fechaEmision")}/></div>
+            <div><Lbl t="Fecha de pago (vence)"/><input type="date" value={eq.fechaPago} min={eq.fechaEmision||undefined} onChange={setE("fechaPago")}/></div>
+          </div>
+          <div><Lbl t="Beneficiario"/><input value={eq.beneficiario} onChange={setE("beneficiario")}/></div>
+          <div><Lbl t="CUIT del beneficiario (opcional)"/><input value={eq.cuit} onChange={setE("cuit")} inputMode="numeric" placeholder="20-12345678-9"/></div>
+          <div style={{fontSize:12,color:MU}}>Importe del cheque: {montoNum?fmtARS(montoNum):"el monto pagado"}. Va al calendario de Inicio el día del vencimiento.</div>
+        </div>
+      )}
       <div style={{marginBottom:10}}><Lbl t="Nota (opcional)"/><input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ej: transferencia, pagué en el depósito..."/></div>
       {montoNum>0&&(
         <div style={{fontSize:14,color:MU,marginBottom:10}}>
@@ -3907,7 +4128,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
 }
  
 // ── INICIO ────────────────────────────────────────────────────────
-function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,irACobranza}){
+function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,irACobranza,proveedores,setProveedores}){
   const[catalogoAbierto,setCatalogoAbierto]=useState(false);
   const alertas=clientes.filter(c=>["inactivo","atencion"].includes(estadoC(c))).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}).slice(0,4);
   const pedidosHoy=(pedidos||[]).filter(p=>p.estado==="pendiente"&&p.fechaEntrega===hoyISO());
@@ -4027,6 +4248,9 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
           </div>
         )}
       </div>
+
+      {/* Cheques a cubrir (ECHEQ a proveedores) */}
+      <ModuloCheques proveedores={proveedores} setProveedores={setProveedores}/>
 
       {/* Meta semanal */}
       <div className={deuda>0?"":"ini-span2"} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
@@ -5179,6 +5403,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const[descuentoPct,setDescuentoPct]=useState("");
   const[incluyeIVA,setIncluyeIVA]=useState(false);
   const[generandoRemitoId,setGenerandoRemitoId]=useState(null);
+  const[remitoModal,setRemitoModal]=useState(null); // {id,nuevo}
  
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
@@ -5291,6 +5516,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
     setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado",remitoNro:nroRem}:p));
+    setRemitoModal({id:pedidoId,nuevo:true});
   };
  
   const pendientes=pedidos.filter(p=>p.estado==="pendiente").sort((a,b)=>a.fechaEntrega.localeCompare(b.fechaEntrega));
@@ -5337,6 +5563,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      {remitoModal&&(()=>{const pr=pedidos.find(x=>x.id===remitoModal.id);return pr?<RemitoOpciones pedido={pr} cliente={clientes.find(c=>c.id===pr.clienteId)} prods={prods} recienEntregado={remitoModal.nuevo} onClose={()=>setRemitoModal(null)}/>:null;})()}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Pedidos</span>
         <Btn onClick={()=>{resetForm();setShowNew(true);}} small>{I.plus}Nuevo</Btn>
@@ -5426,7 +5653,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>marcarEntregado(p.id)} style={{flex:1,minHeight:44,padding:"9px 0",borderRadius:22,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.check} Marcar entregado</button>
                   <button onClick={()=>abrirEdicion(p)} title="Editar pedido" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"none",color:G,border:`1px solid ${G}44`,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.edit}</button>
-                  <button onClick={()=>compartirRemitoPDF(p,cliente,prods,loading=>setGenerandoRemitoId(loading?p.id:null))} disabled={generandoRemitoId===p.id} title="Remito en PDF" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"none",color:MU,border:`1px solid ${BO}`,fontSize:14,cursor:generandoRemitoId===p.id?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:generandoRemitoId===p.id?0.6:1}}>
+                  <button onClick={()=>setRemitoModal({id:p.id,nuevo:false})} disabled={generandoRemitoId===p.id} title="Remito en PDF" style={{minHeight:44,minWidth:44,padding:"9px 14px",borderRadius:22,background:"none",color:MU,border:`1px solid ${BO}`,fontSize:14,cursor:generandoRemitoId===p.id?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:generandoRemitoId===p.id?0.6:1}}>
                     {generandoRemitoId===p.id?"...":<svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>}
                   </button>
                   {cliente&&cliente.telefono?(
@@ -5459,7 +5686,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                   </div>
                   <div style={{fontSize:13,color:MU,marginTop:2}}>{lineas.map(l=>{const prod=prods.find(x=>x.id===l.productoId);return`${l.cantidad}L ${prod?nombreProdEnvase(prod):l.productoId}`;}).join(" + ")}</div>
                 </div>
-                <button onClick={()=>compartirRemitoPDF(p,cliente,prods,loading=>setGenerandoRemitoId(loading?p.id:null))} disabled={generandoRemitoId===p.id} title="Remito en PDF" style={{padding:8,background:"none",border:"none",cursor:generandoRemitoId===p.id?"not-allowed":"pointer",color:MU,flexShrink:0,opacity:generandoRemitoId===p.id?0.6:1}}>
+                <button onClick={()=>setRemitoModal({id:p.id,nuevo:false})} disabled={generandoRemitoId===p.id} title="Remito en PDF" style={{padding:8,background:"none",border:"none",cursor:generandoRemitoId===p.id?"not-allowed":"pointer",color:MU,flexShrink:0,opacity:generandoRemitoId===p.id?0.6:1}}>
                   {generandoRemitoId===p.id?"...":<svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>}
                 </button>
                 <button onClick={()=>{if(window.confirm("¿Eliminar este registro de pedido entregado? No afecta la venta ya registrada en el cliente."))setPedidos(prev=>prev.filter(x=>x.id!==p.id));}} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
@@ -9670,7 +9897,7 @@ function App(){
         </aside>
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:58,minHeight:"100vh"}} id="mn">
-          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza}/>}
+          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza} proveedores={proveedores} setProveedores={setProveedores}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
