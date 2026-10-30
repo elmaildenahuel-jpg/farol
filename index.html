@@ -4378,7 +4378,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
   const[q,setQ]=useState("");
   const[filtroLocal,setFiltroLocal]=useState("todos");
   const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
-  const[orden,setOrden]=useState("reciente");
+  const[orden,setOrden]=useState("deuda");   // por defecto: mayor deuda primero, cada vez que se entra a Clientes
   const[vistaLista,setVistaLista]=useState(false);
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
@@ -9401,7 +9401,7 @@ function Stock({prods,setProds,pedidos}){
   const[modo,setModo]=useState("todos"); // todos | faltan | sinstock
   const[filtroEnvase,setFiltroEnvase]=useState("");
   const[filtroEstilo,setFiltroEstilo]=useState("");
-  const[orden,setOrden]=useState("faltantes"); // faltantes | mayor | nombre
+  const[orden,setOrden]=useState("mayor"); // mayor | faltantes | nombre
 
   const envasesDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.envase||"PET"))].sort(),[prods]);
   const estilosDisponibles=useMemo(()=>[...new Set(prods.map(p=>p.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[prods]);
@@ -9515,8 +9515,8 @@ function Stock({prods,setProds,pedidos}){
           <div>
             <Lbl t="Orden"/>
             <select value={orden} onChange={e=>setOrden(e.target.value)}>
-              <option value="faltantes">Faltantes primero</option>
               <option value="mayor">Mayor stock</option>
+              <option value="faltantes">Faltantes primero</option>
               <option value="nombre">Nombre A–Z</option>
             </select>
           </div>
