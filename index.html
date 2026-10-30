@@ -2585,19 +2585,19 @@ function ModalFechaCobro({datos,onClose}){
   const[fecha,setFecha]=useState(hoyISO());
   if(!datos)return null;
   return(
-    <Modal open={true} onClose={onClose} title="Registrar cobro">
+    <Modal open={true} onClose={onClose} title={datos.modalTitulo||"Registrar cobro"}>
       <div style={{fontSize:15,color:CR,fontWeight:700,marginBottom:2}}>{datos.titulo}</div>
       <div className="bebas" style={{fontSize:26,color:GR,marginBottom:10}}>{fmtARS(datos.monto)}</div>
-      <Lbl t="Fecha de cobro"/>
+      <Lbl t={datos.fechaLabel||"Fecha de cobro"}/>
       <input type="date" value={fecha} max={hoyISO()} onChange={e=>setFecha(e.target.value||hoyISO())}/>
       <div style={{display:"flex",gap:6,marginTop:8}}>
         <button onClick={()=>setFecha(hoyISO())} style={{fontSize:13,fontWeight:700,padding:"6px 12px",borderRadius:8,background:BG,color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Hoy</button>
         <button onClick={()=>{const d=new Date();d.setDate(d.getDate()-1);setFecha(d.toISOString().slice(0,10));}} style={{fontSize:13,fontWeight:700,padding:"6px 12px",borderRadius:8,background:BG,color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Ayer</button>
       </div>
-      <div style={{fontSize:12,color:MU,marginTop:8}}>Se registra en efectivo. Para otro medio o un pago parcial usá "Registrar pago".</div>
+      <div style={{fontSize:12,color:MU,marginTop:8}}>Se registra en efectivo. Para otro medio o un pago parcial usá "{datos.accionAlt||"Registrar pago"}".</div>
       <div style={{display:"flex",gap:8,marginTop:14}}>
         <button onClick={onClose} style={{flex:1,minHeight:44,borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:15,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
-        <button onClick={()=>{datos.confirmar(fecha||hoyISO());onClose();}} style={{flex:2,minHeight:44,borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Confirmar cobro</button>
+        <button onClick={()=>{datos.confirmar(fecha||hoyISO());onClose();}} style={{flex:2,minHeight:44,borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer"}}>{datos.boton||"✓ Confirmar cobro"}</button>
       </div>
     </Modal>
   );
@@ -3453,15 +3453,22 @@ function PanelCobro({cliente,onUpdate,onDone}){
 
 // ── ECHEQ emitidos a proveedores: se guardan en proveedor.echeqs y alimentan el calendario de Inicio ──
 const MEDIOS_PAGO_PROV=[...MEDIOS_PAGO.filter(m=>m.id!=="Otro"),{id:"ECHEQ",ic:"🧾"},MEDIOS_PAGO.find(m=>m.id==="Otro")];
+function deshacerPagoEcheqProveedor(proveedor,echeqId){
+  const desm=x=>{if(x.echeqId!==echeqId)return x;const{echeqId:_e,medioPago:_m,...rest}=x;return{...rest,pagado:false,fechaPago:null,nota:""};};
+  return{...proveedor,compras:(proveedor.compras||[]).map(desm),saldosAnteriores:(proveedor.saldosAnteriores||[]).map(desm),echeqs:(proveedor.echeqs||[]).filter(e=>e.id!==echeqId)};
+}
 function chequesDeProveedores(proveedores){
   return(proveedores||[]).flatMap(p=>(p.echeqs||[]).map(c=>({...c,proveedorId:p.id,proveedorNombre:p.nombre})));
 }
-function ModuloCheques({proveedores,setProveedores}){
+function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimientosPago}){
   const hoy=hoyISO();
   const[mes,setMes]=useState(hoy.slice(0,7));
   const[diaSel,setDiaSel]=useState(null);
   const[abierto,setAbierto]=useState(true);
-  const todos=useMemo(()=>chequesDeProveedores(proveedores),[proveedores]);
+  const todos=useMemo(()=>[
+    ...chequesDeProveedores(proveedores).map(c=>({...c,origen:"prov"})),
+    ...(movimientosPago||[]).filter(m=>m.tipo==="pago"&&m.echeq&&m.echeq.fechaPago).map(m=>({id:m.id,origen:"mov",proveedorNombre:m.entidadNombre,monto:Number(m.echeq.importe)||Number(m.importe)||0,banco:m.echeq.bancoEmisor,numero:m.echeq.numero,fechaPago:m.echeq.fechaPago,estado:m.echeq.estado||"emitido"})),
+  ],[proveedores,movimientosPago]);
   const aCubrir=todos.filter(c=>c.estado!=="debitado"&&c.estado!=="anulado");
   if(todos.length===0)return null;
   const total=aCubrir.reduce((s,c)=>s+(Number(c.monto)||0),0);
@@ -3470,8 +3477,11 @@ function ModuloCheques({proveedores,setProveedores}){
   const porDia={};
   aCubrir.forEach(c=>{const o=porDia[c.fechaPago]=porDia[c.fechaPago]||{total:0,items:[]};o.total+=Number(c.monto)||0;o.items.push(c);});
   const resumenDias=Object.keys(porDia).sort();
-  const cambiarEstado=(c,estado)=>setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).map(x=>x.id===c.id?{...x,estado}:x)}));
-  const borrar=c=>{if(!confirm("¿Eliminar este ECHEQ del calendario? El pago al proveedor no se modifica."))return;setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).filter(x=>x.id!==c.id)}));};
+  const cambiarEstado=(c,estado)=>{
+    if(c.origen==="mov"){setMovimientosPago&&setMovimientosPago(prev=>(prev||[]).map(m=>m.id===c.id?{...m,echeq:{...m.echeq,estado}}:m));return;}
+    setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).map(x=>x.id===c.id?{...x,estado}:x)}));
+  };
+  const borrar=c=>{if(!confirm("¿Quitar este ECHEQ del calendario? El pago al proveedor no se modifica."))return;if(c.origen==="mov"){cambiarEstado(c,"anulado");return;}setProveedores(prev=>prev.map(p=>p.id!==c.proveedorId?p:{...p,echeqs:(p.echeqs||[]).filter(x=>x.id!==c.id)}));};
   const corto=n=>n>=1e6?(Math.round(n/1e5)/10)+"M":n>=1e3?Math.round(n/1e3)+"k":String(Math.round(n));
   const[y,m]=mes.split("-").map(Number);
   const primero=new Date(y,m-1,1);
@@ -3488,7 +3498,7 @@ function ModuloCheques({proveedores,setProveedores}){
         <div style={{fontSize:12,color:MU}}>{c.banco||"Banco s/d"}{c.numero?` · Nº ${c.numero}`:""} · vence {fmtDateCorta(c.fechaPago)}</div>
         <div style={{display:"flex",gap:10,marginTop:3}}>
           <button onClick={()=>cambiarEstado(c,"debitado")} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",padding:0,cursor:"pointer"}}>✓ Marcar debitado</button>
-          <button onClick={()=>borrar(c)} style={{fontSize:12,color:RE,background:"none",border:"none",padding:0,cursor:"pointer"}}>Eliminar</button>
+          <button onClick={()=>borrar(c)} style={{fontSize:12,color:RE,background:"none",border:"none",padding:0,cursor:"pointer"}}>Quitar</button>
         </div>
       </div>
       <b style={{color:CR,whiteSpace:"nowrap"}}>{fmtARS(Number(c.monto)||0)}</b>
@@ -3560,7 +3570,9 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
       if(!eq.fechaPago){alert("Cargá la fecha de pago (vencimiento) del ECHEQ para que aparezca en el calendario.");return;}
       const cheque={id:uid(),monto:montoNum,banco:eq.banco.trim(),numero:eq.numero.trim(),fechaEmision:eq.fechaEmision||hoyISO(),fechaPago:eq.fechaPago,beneficiario:eq.beneficiario.trim(),cuit:eq.cuit.trim(),nota:nota.trim(),estado:"emitido"};
       const pagado=aplicarPagoAProveedor(proveedor,montoNum,{medioPago:"ECHEQ",nota:`ECHEQ${cheque.numero?" Nº "+cheque.numero:""}${cheque.banco?" · "+cheque.banco:""} · vence ${fmtDateCorta(cheque.fechaPago)}${nota?" · "+nota:""}`,fecha:cheque.fechaEmision});
-      onUpdate({...pagado,echeqs:[...(proveedor.echeqs||[]),cheque]});
+      const yaPagado=new Map([...(proveedor.compras||[]),...(proveedor.saldosAnteriores||[])].map(c=>[c.id,!!c.pagado]));
+      const vincular=c=>(c.pagado&&c.medioPago==="ECHEQ"&&!c.echeqId&&yaPagado.get(c.id)!==true)?{...c,echeqId:cheque.id}:c;
+      onUpdate({...pagado,compras:(pagado.compras||[]).map(vincular),saldosAnteriores:(pagado.saldosAnteriores||[]).map(vincular),echeqs:[...(proveedor.echeqs||[]),cheque]});
       onDone&&onDone();
       return;
     }
@@ -3690,10 +3702,11 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   const eliminar=x=>{if(!confirm(`¿Eliminar este saldo anterior de ${fmtARS(x.monto)}?`))return;actualizar(saldos.filter(y=>y.id!==x.id));};
   const marcar=x=>{
     if(!esProveedor){setPedirCobro({titulo:x.descripcion||"Saldo anterior",monto:Number(x.monto)||0,confirmar:f=>onUpdate(cobrarSaldoCliente(entidad,x.id,f))});return;}   // en clientes queda como un cobro propio
-    actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:hoyISO(),medioPago:"Efectivo"}:y));
+    setPedirCobro({titulo:x.descripcion||"Saldo anterior",monto:Number(x.monto)||0,modalTitulo:"Registrar pago",fechaLabel:"Fecha de pago",boton:"✓ Confirmar pago",confirmar:f=>actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:f||hoyISO(),medioPago:"Efectivo"}:y))});
   };
   const deshacer=x=>{
     if(!esProveedor&&x.cobroId){if(confirm("Este saldo se cobró dentro de un pago. Se deshace el pago completo y todo lo que cubrió vuelve a deuda. ¿Continuar?"))onUpdate(deshacerCobroCliente(entidad,x.cobroId));return;}
+    if(esProveedor&&x.echeqId){if(confirm("Este pago se hizo con un ECHEQ. Al deshacerlo se quita el cheque del calendario y vuelven a deuda todo lo que cubría. ¿Continuar?"))onUpdate(deshacerPagoEcheqProveedor(entidad,x.echeqId));return;}
     actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:false,[campoFecha]:null}:y));
   };
   return(
@@ -4154,7 +4167,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
 }
  
 // ── INICIO ────────────────────────────────────────────────────────
-function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,irACobranza,proveedores,setProveedores}){
+function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,irACobranza,proveedores,setProveedores,movimientosPago,setMovimientosPago}){
   const[catalogoAbierto,setCatalogoAbierto]=useState(false);
   const alertas=clientes.filter(c=>["inactivo","atencion"].includes(estadoC(c))).sort((a,b)=>{const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);}).slice(0,4);
   const pedidosHoy=(pedidos||[]).filter(p=>p.estado==="pendiente"&&p.fechaEntrega===hoyISO());
@@ -4276,7 +4289,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
       </div>
 
       {/* Cheques a cubrir (ECHEQ a proveedores) */}
-      <ModuloCheques proveedores={proveedores} setProveedores={setProveedores}/>
+      <ModuloCheques proveedores={proveedores} setProveedores={setProveedores} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/>
 
       {/* Meta semanal */}
       <div className={deuda>0?"":"ini-span2"} style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
@@ -4366,6 +4379,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
   const[filtroLocal,setFiltroLocal]=useState("todos");
   const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
   const[orden,setOrden]=useState("reciente");
+  const[vistaLista,setVistaLista]=useState(false);
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
   const[cobrandoId,setCobrandoId]=useState(null);
@@ -4409,7 +4423,10 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Clientes</span>
-        <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={()=>setVistaLista(v=>!v)} small variant={vistaLista?"green":"ghost"}>📋{vistaLista?"Tarjetas":"Lista"}</Btn>
+          <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
+        </div>
       </div>
 
       {totales.conDeuda>0&&(
@@ -4445,7 +4462,28 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
       </div>
       {filtroDeuda&&<CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>}
 
-      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>:filtered.map(c=>{const e=EST[estadoC(c)];const ls=lastSale(c);const inf=infoDeuda[c.id];const deuda=inf.deuda;return(
+      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>:<>
+      {vistaLista?(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(0,1fr) auto",gap:8,padding:"8px 14px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+            <span>Cliente</span><span style={{textAlign:"right"}}>Deuda</span><span style={{width:58,textAlign:"center"}}>Cobrar</span>
+          </div>
+          {filtered.map(c=>{const inf=infoDeuda[c.id];const deuda=inf.deuda;return(
+            <div key={c.id} style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(0,1fr) auto",gap:8,alignItems:"center",padding:"9px 14px",borderTop:`1px solid ${BO}`,background:inf.vencido>0?"#C628280a":"transparent"}}>
+              <button onClick={()=>setSel(c.id)} style={{background:"none",border:"none",padding:0,textAlign:"left",cursor:"pointer",minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
+                <div style={{fontSize:12,color:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.zona||c.rubro||""}{inf.vencido>0?<span style={{color:"#C62828",fontWeight:700}}> · vencido {inf.diasMax}d</span>:null}</div>
+              </button>
+              <div style={{textAlign:"right",fontSize:15,fontWeight:700,color:deuda>0?(inf.vencido>0?"#C62828":"#E08070"):MU,whiteSpace:"nowrap"}}>{deuda>0?fmtARS(deuda):"—"}</div>
+              {deuda>0?<button onClick={()=>setCobrandoId(c.id)} aria-label={`Cobrar a ${c.nombre}`} style={{width:58,height:34,borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,fontSize:13,fontWeight:700,cursor:"pointer"}}>Cobrar</button>:<span style={{width:58}}/>}
+            </div>
+          );})}
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,padding:"10px 14px",borderTop:`2px solid ${BO}`,background:BG,fontSize:14,fontWeight:700,color:CR}}>
+            <span>{filtered.length} cliente{filtered.length!==1?"s":""}</span>
+            <span style={{color:"#C24545"}}>Total deuda: {fmtARS(filtered.reduce((t,c)=>t+infoDeuda[c.id].deuda,0))}</span>
+          </div>
+        </div>
+      ):filtered.map(c=>{const e=EST[estadoC(c)];const ls=lastSale(c);const inf=infoDeuda[c.id];const deuda=inf.deuda;return(
         <div key={c.id} className="card-desk" style={{display:"flex",alignItems:"stretch",background:CA,border:`1px solid ${inf.vencido>0?"#C6282866":BO}`,borderRadius:18,marginBottom:8,overflow:"hidden"}}>
           <button onClick={()=>setSel(c.id)} style={{display:"flex",alignItems:"center",gap:12,background:"none",border:"none",padding:"12px 16px",cursor:"pointer",textAlign:"left",flex:1,minWidth:0}}>
             <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(c.nombre)}</div>
@@ -4465,6 +4503,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
           {deuda>0&&<button onClick={()=>setCobrandoId(c.id)} aria-label={`Cobrar a ${c.nombre}`} style={{flexShrink:0,width:74,background:GR+"22",color:GR,border:"none",borderLeft:`1px solid ${GR}33`,fontSize:14,fontWeight:700,cursor:"pointer"}}>Cobrar</button>}
         </div>
       );})}
+      </>}
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo cliente">
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
@@ -4489,6 +4528,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
  
 // ── CuentaCorrienteProveedor ────────────────────────────────────────
 function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
+  const[pedirPago,setPedirPago]=useState(null);
   const[showHistorial,setShowHistorial]=useState(false);
   const[showPago,setShowPago]=useState(false);
   const[abiertos,setAbiertos]=useState(()=>new Set());
@@ -4505,9 +4545,17 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
   const saldo=saldoProveedor(proveedor);
 
   // Pago rápido de una compra puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
-  const marcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:hoyISO(),medioPago:"Efectivo"}:c)});
-  const marcarGrupoPagado=ids=>{const set=new Set(ids);onUpdate({...proveedor,compras:proveedor.compras.map(c=>set.has(c.id)&&!c.pagado?{...c,pagado:true,fechaPago:hoyISO(),medioPago:"Efectivo"}:c)});};
-  const desmarcarPagada=id=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:false,fechaPago:null}:c)});
+  const marcarPagada=(id,fecha)=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo"}:c)});
+  const marcarGrupoPagado=(ids,fecha)=>{const set=new Set(ids);onUpdate({...proveedor,compras:proveedor.compras.map(c=>set.has(c.id)&&!c.pagado?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo"}:c)});};
+  const desmarcarPagada=id=>{
+    const c=(proveedor.compras||[]).find(x=>x.id===id);
+    if(c&&c.echeqId){
+      if(!confirm("Este pago se hizo con un ECHEQ. Al deshacerlo se quita el cheque del calendario y vuelven a deuda todas las compras que cubría. ¿Continuar?"))return;
+      onUpdate(deshacerPagoEcheqProveedor(proveedor,c.echeqId));
+      return;
+    }
+    onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:false,fechaPago:null}:c)});
+  };
   const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):id;};
 
   return(
@@ -4519,6 +4567,7 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
 
+      <ModalFechaCobro datos={pedirPago} onClose={()=>setPedirPago(null)}/>
       <BloqueSaldosAnteriores entidad={proveedor} onUpdate={onUpdate} esProveedor/>
 
       {saldo>0&&(
@@ -4536,7 +4585,7 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
                     </button>
                     <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                       <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(g.total)}</span>
-                      <button onClick={()=>marcarGrupoPagado(g.rows.map(r=>r.id))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
+                      <button onClick={()=>setPedirPago({titulo:`${etiquetaComp(g.tipo,g.numero)} · ${fmtDate(g.fecha)}`,monto:g.total,modalTitulo:"Registrar pago",fechaLabel:"Fecha de pago",boton:"✓ Confirmar pago",accionAlt:"Registrar pago",confirmar:f=>marcarGrupoPagado(g.rows.map(r=>r.id),f)})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
                     </div>
                   </div>
                   {abierto&&(
@@ -5524,7 +5573,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
  
   const marcarEntregado=(pedidoId)=>{
     const ped=pedidos.find(p=>p.id===pedidoId);
-    if(!ped)return;
+    if(!ped||ped.estado==="entregado")return;
     const factor=ped.factorAjuste||1;
     const nroRem=ped.remitoNro||proximoRemito(pedidos,clientes);   // cada pedido = un remito correlativo; las ventas lo guardan
     // Registrar una venta por cada línea del pedido, aplicando proporcionalmente el descuento/IVA del pedido
@@ -5541,7 +5590,11 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       });
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
-    setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado",remitoNro:nroRem}:p));
+    // Descuenta del stock lo entregado (latas en unidades, el resto en litros), incluidas las líneas bonificadas; nunca baja de 0
+    const salida={};
+    (ped.lineas||[]).forEach(l=>{if(l.productoId)salida[l.productoId]=(salida[l.productoId]||0)+(Number(l.cantidad)||0);});
+    setProds(prev=>prev.map(x=>salida[x.id]?{...x,stock:Math.max(0,Math.round(((Number(x.stock)||0)-salida[x.id])*100)/100)}:x));
+    setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado",remitoNro:nroRem,stockDescontado:true}:p));
     setRemitoModal({id:pedidoId,nuevo:true});
   };
  
@@ -6394,18 +6447,34 @@ function CajaBalance({todas,proveedores,gastos}){
   const[ref,setRef]=useState(hoyISO());
   const[incPersonales,setIncPersonales]=useState(false);
   const[verMov,setVerMov]=useState(false);
+  const[criterio,setCriterio]=useState("operacion"); // operacion | caja
   const f0=n=>fmtARS(Math.round(Number(n)||0));
   const movs=useMemo(()=>{
     const arr=[];
-    todas.forEach(v=>arr.push({tipo:"haber",fecha:v.fecha||"",monto:v.monto||0,ganancia:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta · ${v.clienteNombre}`,hecho:!!v.pagado,cat:"venta"}));
-    (proveedores||[]).forEach(p=>(p.compras||[]).forEach(c=>arr.push({tipo:"debe",fecha:c.fecha||"",monto:c.monto||0,concepto:`Compra · ${p.nombre}`,hecho:!!c.pagado,cat:"compra"})));
+    const caja=criterio==="caja";
+    const hoyC=hoyISO();
+    const echeqPorId={};(proveedores||[]).forEach(p=>(p.echeqs||[]).forEach(e=>{echeqPorId[e.id]=e;}));
+    todas.forEach(v=>{
+      const ganancia=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+      if(!caja){arr.push({tipo:"haber",fecha:v.fecha||"",monto:v.monto||0,ganancia,concepto:`Venta · ${v.clienteNombre}`,hecho:!!v.pagado,cat:"venta"});return;}
+      if(!v.pagado)return;
+      const f=(v.echeq&&v.echeq.fechaPago)||v.fechaCobro||v.fecha||"";
+      arr.push({tipo:"haber",fecha:f,monto:v.monto||0,ganancia,concepto:`Cobro · ${v.clienteNombre}`,hecho:f<=hoyC,cat:"venta"});
+    });
+    (proveedores||[]).forEach(p=>(p.compras||[]).forEach(c=>{
+      if(!caja){arr.push({tipo:"debe",fecha:c.fecha||"",monto:c.monto||0,concepto:`Compra · ${p.nombre}`,hecho:!!c.pagado,cat:"compra"});return;}
+      if(!c.pagado)return;
+      const eq=(c.echeqId&&echeqPorId[c.echeqId])||c.echeq||null;
+      const f=(eq&&eq.fechaPago)||c.fechaPago||c.fecha||"";
+      arr.push({tipo:"debe",fecha:f,monto:c.monto||0,concepto:`Pago compra · ${p.nombre}${eq?" (ECHEQ)":""}`,hecho:f<=hoyC,cat:"compra"});
+    }));
     (gastos||[]).forEach(g=>{
       if(g.tipo==="personal"&&!incPersonales)return;
       const cat=(typeof GASTO_CATEGORIAS!=="undefined"&&GASTO_CATEGORIAS.find(c=>c.key===g.categoria))||null;
       arr.push({tipo:"debe",fecha:g.fecha||"",monto:g.monto||0,concepto:`Gasto · ${cat?cat.label:(g.categoria||"")}${g.descripcion?` — ${g.descripcion}`:""}`,hecho:true,cat:"gasto"});
     });
     return arr.filter(m=>m.fecha);
-  },[todas,proveedores,gastos,incPersonales]);
+  },[todas,proveedores,gastos,incPersonales,criterio]);
 
   const clave=periodo==="dia"?ref.slice(0,10):periodo==="mes"?ref.slice(0,7):periodo==="anio"?ref.slice(0,4):"";
   const largo=clave.length;
@@ -6447,6 +6516,12 @@ function CajaBalance({todas,proveedores,gastos}){
       <div style={{display:"flex",gap:6,marginBottom:10}}>
         <Chip k="dia" l="Día"/><Chip k="mes" l="Mes"/><Chip k="anio" l="Año"/><Chip k="todo" l="Todo"/>
       </div>
+      <div style={{display:"flex",gap:6,marginBottom:10}}>
+        {[{k:"operacion",l:"Por fecha de operación"},{k:"caja",l:"Por fecha de caja"}].map(o=>(
+          <button key={o.k} onClick={()=>setCriterio(o.k)} style={{flex:1,padding:"6px 4px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",border:`1px solid ${criterio===o.k?G:BO}`,background:criterio===o.k?G+"18":"none",color:criterio===o.k?G:MU}}>{o.l}</button>
+        ))}
+      </div>
+      <div style={{fontSize:12,color:MU,marginBottom:10}}>{criterio==="caja"?"Cuenta solo lo cobrado y pagado, en la fecha en que se cobró o pagó (los ECHEQ, en su fecha de vencimiento).":"Cuenta cada venta, compra y gasto en la fecha en que se hizo, aunque no se haya cobrado o pagado."}</div>
       {periodo!=="todo"&&(
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
           <button onClick={()=>mover(-1)} style={flecha}>‹</button>
@@ -6476,7 +6551,7 @@ function CajaBalance({todas,proveedores,gastos}){
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🧾 Gastos{incPersonales?" (con personales)":" del negocio"}</span><b>{f0(gastosT)}</b></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>📈 Ventas facturadas</span><b>{f0(haber)}</b></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>💰 Rentabilidad de ventas (comisión)</span><b style={{color:G}}>{f0(ganancia)} · {rentPct}%</b></div>
-        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo realizado (cobrado − pagado)</span><b style={{color:colSaldo(haberCobrado-debePagado)}}>{f0(haberCobrado-debePagado)}</b></div>
+        {criterio==="operacion"&&<div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo realizado (cobrado − pagado)</span><b style={{color:colSaldo(haberCobrado-debePagado)}}>{f0(haberCobrado-debePagado)}</b></div>}
       </div>
       <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:MU,marginTop:10,cursor:"pointer"}}>
         <input type="checkbox" checked={incPersonales} onChange={e=>setIncPersonales(e.target.checked)} style={{width:16,height:16}}/>Incluir gastos personales
@@ -6506,7 +6581,7 @@ function CajaBalance({todas,proveedores,gastos}){
             <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"7px 0",borderTop:`1px solid ${BO}`,fontSize:13}}>
               <div style={{minWidth:0}}>
                 <div style={{color:CR,overflow:"hidden",textOverflow:"ellipsis"}}>{m.concepto}</div>
-                <div style={{fontSize:11,color:MU}}>{fmtDateCorta(m.fecha)} · {m.tipo==="haber"?(m.hecho?"cobrado":"por cobrar"):(m.cat==="compra"?(m.hecho?"pagada":"por pagar"):"pagado")}{m.cat==="venta"&&m.ganancia>0?` · ganancia ${f0(m.ganancia)}`:""}</div>
+                <div style={{fontSize:11,color:MU}}>{fmtDateCorta(m.fecha)} · {m.tipo==="haber"?(m.hecho?"cobrado":(criterio==="caja"?"a acreditar":"por cobrar")):(m.cat==="compra"?(m.hecho?"pagada":(criterio==="caja"?"a debitar":"por pagar")):"pagado")}{m.cat==="venta"&&m.ganancia>0?` · ganancia ${f0(m.ganancia)}`:""}</div>
               </div>
               <b style={{color:m.tipo==="haber"?G:RE,whiteSpace:"nowrap"}}>{m.tipo==="haber"?"+":"−"}{f0(m.monto)}</b>
             </div>
@@ -8513,7 +8588,118 @@ function GestorCategorias({categorias,setCategorias,prods,setProds}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos}){
+// ── Sistema de backup: copias locales automáticas (IndexedDB), historial, restauración segura ──
+const BK_DB="nomades_backups_v1";
+function bkAbrir(){
+  return new Promise((res,rej)=>{
+    if(typeof indexedDB==="undefined"){rej(new Error("Este navegador no permite guardar copias locales."));return;}
+    const r=indexedDB.open(BK_DB,1);
+    r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore("meta",{keyPath:"id"});d.createObjectStore("data",{keyPath:"id"});};
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>rej(r.error);
+  });
+}
+const bkReq=rq=>new Promise((res,rej)=>{rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});
+function armarBackup(e){
+  return{
+    version:2,exportadoEn:new Date().toISOString(),
+    clientes:e.clientes,prospectos:e.prospectos,pedidos:e.pedidos,prods:e.prods,speeches:e.speeches,notas:e.notas,gastos:e.gastos,comisiones:e.comisiones,proveedores:e.proveedores,
+    talonarios:e.talonarios,movimientosPago:e.movimientosPago,
+    config:{metaSemanal:e.metaSemanal,diasMora:e.diasMora,promo51:e.promo51,envasesExtra:e.envasesExtra,categorias:e.categorias,impuestos:e.impuestos}
+  };
+}
+function resumenBackup(d){
+  const n=x=>Array.isArray(x)?x.length:0;
+  const ventas=n(d.clientes)?d.clientes.reduce((s,c)=>s+n(c.ventas),0):0;
+  return{clientes:n(d.clientes),comercios:n(d.prospectos),pedidos:n(d.pedidos),productos:n(d.prods),ventas,gastos:n(d.gastos),proveedores:n(d.proveedores),compras:n(d.proveedores)?d.proveedores.reduce((s,p)=>s+n(p.compras),0):0,pagos:n(d.movimientosPago),notas:n(d.notas)};
+}
+const textoResumen=r=>[`${r.clientes} clientes`,`${r.ventas} ventas`,`${r.pedidos} pedidos`,`${r.productos} productos`,`${r.proveedores} proveedores`,`${r.compras} compras`,`${r.gastos} gastos`].join(" · ");
+async function bkGuardar(data,motivo){
+  const db=await bkAbrir();
+  const json=JSON.stringify(data);
+  const id=new Date().toISOString();
+  const meta={id,dia:id.slice(0,10),motivo,bytes:json.length,resumen:resumenBackup(data)};
+  const tx=db.transaction(["meta","data"],"readwrite");
+  tx.objectStore("meta").put(meta);tx.objectStore("data").put({id,json});
+  await new Promise((res,rej)=>{tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+  // Poda: se conservan las últimas 14 copias automáticas; las manuales y las previas a restaurar no se borran solas (máx. 10)
+  const todas=(await bkListar()).sort((a,b)=>b.id.localeCompare(a.id));
+  const sobran=[...todas.filter(m=>m.motivo==="Automático").slice(14),...todas.filter(m=>m.motivo!=="Automático").slice(10)];
+  for(const m of sobran)await bkBorrar(m.id);
+  return meta;
+}
+async function bkListar(){const db=await bkAbrir();return bkReq(db.transaction("meta").objectStore("meta").getAll());}
+async function bkLeer(id){const db=await bkAbrir();const r=await bkReq(db.transaction("data").objectStore("data").get(id));return r?JSON.parse(r.json):null;}
+async function bkBorrar(id){const db=await bkAbrir();const tx=db.transaction(["meta","data"],"readwrite");tx.objectStore("meta").delete(id);tx.objectStore("data").delete(id);await new Promise(res=>{tx.oncomplete=res;tx.onerror=res;});}
+function bkDescargarOCompartir(data,nombre,texto){
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json;charset=utf-8;"});
+  return(async()=>{
+    if(navigator.share&&navigator.canShare){
+      try{
+        const file=new File([blob],nombre,{type:"application/json"});
+        if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:"Backup Distribuidora Nómades",text:texto||"Backup de la app"});return;}
+      }catch(e){if(e&&e.name==="AbortError")return;}
+    }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=nombre;document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  })();
+}
+// Valida que un backup tenga forma de backup de esta app antes de tocar nada
+function validarBackup(d){
+  if(!d||typeof d!=="object"||Array.isArray(d))return"El archivo no tiene el formato esperado.";
+  const claves=["clientes","prospectos","pedidos","prods","proveedores","gastos","notas"];
+  if(!claves.some(k=>Array.isArray(d[k])))return"No encontré datos de la app en este archivo.";
+  for(const k of claves){if(d[k]!==undefined&&!Array.isArray(d[k]))return`El campo "${k}" está dañado (se esperaba una lista).`;}
+  return null;
+}
+
+function HistorialBackups({getBackup,aplicarBackup}){
+  const[lista,setLista]=useState(null);
+  const[error,setError]=useState("");
+  const[ocupado,setOcupado]=useState(false);
+  const cargar=async()=>{try{setLista((await bkListar()).sort((a,b)=>b.id.localeCompare(a.id)));setError("");}catch(e){setError(e.message||String(e));setLista([]);}};
+  useEffect(()=>{cargar();},[]);
+  const fmt=id=>{const d=new Date(id);return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});};
+  const copiaAhora=async()=>{setOcupado(true);try{await bkGuardar(getBackup(),"Manual");await cargar();}catch(e){alert("No se pudo guardar la copia: "+(e.message||e));}finally{setOcupado(false);}};
+  const enviar=async m=>{const d=await bkLeer(m.id);if(!d){alert("No se encontró esa copia.");return;}await bkDescargarOCompartir(d,`backup_nomades_${m.dia}.json`,"Backup de la app — "+textoResumen(m.resumen));};
+  const restaurar=async m=>{
+    const d=await bkLeer(m.id);if(!d){alert("No se encontró esa copia.");return;}
+    const err=validarBackup(d);if(err){alert(err);return;}
+    if(!confirm(`Vas a volver al estado del ${fmt(m.id)}:\n${textoResumen(m.resumen)}\n\nSe REEMPLAZAN los datos actuales (antes se guarda una copia de seguridad del estado de ahora). ¿Continuar?`))return;
+    try{await bkGuardar(getBackup(),"Antes de restaurar");}catch(e){if(!confirm("No pude guardar la copia previa. ¿Restaurar de todos modos?"))return;}
+    aplicarBackup(d);await cargar();alert("✓ Copia restaurada.");
+  };
+  const borrar=async m=>{if(!confirm("¿Borrar esta copia?"))return;await bkBorrar(m.id);await cargar();};
+  const btn={fontSize:12,fontWeight:700,padding:"5px 9px",borderRadius:7,border:`1px solid ${BO}`,background:BG,color:MU,cursor:"pointer"};
+  return(
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginTop:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:4}}>
+        <div style={{fontSize:15,fontWeight:700,color:CR}}>Copias automáticas en este dispositivo</div>
+        <button onClick={copiaAhora} disabled={ocupado} style={{...btn,color:G,borderColor:G+"66"}}>{ocupado?"...":"+ Copia ahora"}</button>
+      </div>
+      <div style={{fontSize:12,color:MU,marginBottom:8,lineHeight:1.5}}>La app guarda sola una copia por día cuando la abrís (se conservan las últimas 14). Sirven para volver atrás si se borra o se carga algo mal. Viven en este dispositivo: para tener una copia afuera, usá "Enviar" y mandala a Drive o WhatsApp.</div>
+      {error&&<div style={{fontSize:12,color:RE,marginBottom:6}}>{error}</div>}
+      {lista===null&&<div style={{fontSize:13,color:MU}}>Cargando…</div>}
+      {lista&&lista.length===0&&!error&&<div style={{fontSize:13,color:MU}}>Todavía no hay copias. Se crea la primera automáticamente hoy.</div>}
+      {(lista||[]).map(m=>(
+        <div key={m.id} style={{padding:"8px 0",borderTop:`1px solid ${BO}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13,color:CR}}>
+            <b>{fmt(m.id)}</b><span style={{color:MU,fontSize:12}}>{m.motivo} · {Math.max(1,Math.round(m.bytes/1024))} KB</span>
+          </div>
+          <div style={{fontSize:12,color:MU,margin:"2px 0 6px"}}>{textoResumen(m.resumen)}</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button style={btn} onClick={()=>enviar(m)}>↗ Enviar (Drive / WhatsApp)</button>
+            <button style={{...btn,color:AM}} onClick={()=>restaurar(m)}>↺ Restaurar</button>
+            <button style={{...btn,color:RE}} onClick={()=>borrar(m)}>Borrar</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,getBackup,aplicarBackup}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -8593,32 +8779,9 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   };
  
   const exportarTodo=async()=>{
-    const data=JSON.stringify({
-      version:1,exportadoEn:new Date().toISOString(),
-      clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,
-      config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos}
-    },null,2);
-    const fileName=`backup_nomades_${hoyISO()}.json`;
-    const blob=new Blob([data],{type:"application/json;charset=utf-8;"});
-    let compartido=false;
-    if(navigator.share&&navigator.canShare){
-      try{
-        const file=new File([blob],fileName,{type:"application/json"});
-        if(navigator.canShare({files:[file]})){
-          await navigator.share({files:[file],title:"Backup Distribuidora Nómades",text:"Backup completo de la app"});
-          compartido=true;
-        }
-      }catch(e){if(e&&e.name==="AbortError")compartido=true;}
-    }
-    if(!compartido){
-      const url=URL.createObjectURL(blob);
-      const nuevaVentana=window.open(url,"_blank");
-      if(!nuevaVentana){
-        const a=document.createElement("a");a.href=url;a.download=fileName;a.target="_blank";
-        document.body.appendChild(a);a.click();document.body.removeChild(a);
-      }
-      setTimeout(()=>URL.revokeObjectURL(url),60000);
-    }
+    const data=getBackup();
+    await bkDescargarOCompartir(data,`backup_nomades_${hoyISO()}.json`,"Backup completo de la app — "+textoResumen(resumenBackup(data)));
+    try{await bkGuardar(data,"Manual");}catch(e){}
   };
  
   const fileInputRef=React.useRef(null);
@@ -8628,41 +8791,19 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     if(!archivo)return;
     setRestaurando(true);
     const reader=new FileReader();
-    reader.onload=ev=>{
+    reader.onload=async ev=>{
       try{
         const data=JSON.parse(ev.target.result);
-        if(!data||typeof data!=="object")throw new Error("El archivo no tiene el formato esperado.");
-        const resumen=[
-          data.clientes?`${data.clientes.length} clientes`:null,
-          data.prospectos?`${data.prospectos.length} comercios`:null,
-          data.pedidos?`${data.pedidos.length} pedidos`:null,
-          data.prods?`${data.prods.length} productos`:null,
-          data.notas?`${data.notas.length} notas`:null,
-          data.gastos?`${data.gastos.length} gastos`:null,
-          data.comisiones?`${data.comisiones.length} liquidaciones de comisión`:null,
-          data.proveedores?`${data.proveedores.length} proveedores`:null,
-        ].filter(Boolean).join(", ");
-        if(!confirm(`Este backup tiene: ${resumen||"(sin datos reconocibles)"}.\n\nEsto va a REEMPLAZAR todos los datos actuales de la app en este dispositivo (y se sincroniza a la nube). Esta acción no se puede deshacer.\n\n¿Continuar?`))return;
-        if(Array.isArray(data.clientes))setClientes(data.clientes);
-        if(Array.isArray(data.prospectos))setProspectos(data.prospectos);
-        if(Array.isArray(data.pedidos))setPedidos(data.pedidos);
-        if(Array.isArray(data.prods)&&data.prods.length>0)setProds(data.prods);
-        if(setSpeeches&&Array.isArray(data.speeches))setSpeeches(data.speeches);
-        if(setNotas&&Array.isArray(data.notas))setNotas(data.notas);
-        if(setGastos&&Array.isArray(data.gastos))setGastos(data.gastos);
-        if(setComisiones&&Array.isArray(data.comisiones))setComisiones(data.comisiones);
-        if(setProveedores&&Array.isArray(data.proveedores))setProveedores(data.proveedores);
-        if(data.config){
-          if(typeof data.config.metaSemanal==="number")setMetaSemanal(data.config.metaSemanal);
-          if(typeof data.config.diasMora==="number")setDiasMora(data.config.diasMora);
-          if(data.config.promo51&&typeof data.config.promo51==="object")setPromo51(prev=>({...prev,...data.config.promo51}));
-          if(setEnvasesExtra&&Array.isArray(data.config.envasesExtra))setEnvasesExtra(data.config.envasesExtra);
-          if(setCategorias&&Array.isArray(data.config.categorias))setCategorias(data.config.categorias);
-          if(setImpuestos&&Array.isArray(data.config.impuestos))setImpuestos(data.config.impuestos);
-        }
-        alert("✓ Backup restaurado correctamente.");
+        const errVal=validarBackup(data);
+        if(errVal)throw new Error(errVal);
+        const r=resumenBackup(data);
+        const fechaB=data.exportadoEn?new Date(data.exportadoEn).toLocaleString("es-AR"):"fecha desconocida";
+        if(!confirm(`Backup del ${fechaB}:\n${textoResumen(r)}\n\nEsto REEMPLAZA los datos actuales de la app (y se sincroniza a la nube). Antes se guarda automáticamente una copia del estado de ahora para poder volver atrás.\n\n¿Continuar?`))return;
+        try{await bkGuardar(getBackup(),"Antes de restaurar");}catch(err){if(!confirm("No pude guardar la copia previa del estado actual. ¿Restaurar de todos modos?"))return;}
+        aplicarBackup(data);
+        alert("✓ Backup restaurado correctamente. Si algo no es lo que esperabas, en 'Copias automáticas' tenés la copia de antes de restaurar.");
       }catch(err){
-        alert("No se pudo leer el backup:\n\n"+(err&&err.message?err.message:String(err))+"\n\nVerificá que sea un archivo JSON exportado desde esta misma app.");
+        alert("No se pudo leer el backup:\n\n"+(err&&err.message?err.message:String(err))+"\n\nVerificá que sea un archivo JSON exportado desde esta misma app. No se modificó ningún dato.");
       }finally{
         setRestaurando(false);
         if(fileInputRef.current)fileInputRef.current.value="";
@@ -8776,7 +8917,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           {/* Backup completo */}
           <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px"}}>
             <div style={{fontSize:15,fontWeight:700,color:CR}}>Backup completo</div>
-            <div style={{fontSize:13,color:MU,marginTop:2,marginBottom:10}}>Clientes, comercios, pedidos, productos, speeches y configuración — todo en un solo archivo JSON.</div>
+            <div style={{fontSize:13,color:MU,marginTop:2,marginBottom:10}}>Clientes, ventas, pedidos, productos, proveedores y compras, pagos, talonarios, gastos, notas y configuración — todo en un solo archivo JSON.</div>
             <div style={{display:"flex",gap:8}}>
               <button onClick={exportarTodo} style={{flex:1,padding:"10px 14px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                 ↓ Descargar backup
@@ -8786,8 +8927,9 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
               </button>
               <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={restaurarBackup} style={{display:"none"}}/>
             </div>
-            <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 Recomendación: descargá un backup una vez por semana y guardalo en Google Drive o mandátelo por WhatsApp a vos mismo — así tenés una copia fuera de la app por si hay algún problema.</div>
+            <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 "Descargar backup" abre el menú de tu teléfono: elegí Drive o WhatsApp para guardarlo fuera de la app. Tus datos además se sincronizan en la nube.</div>
           </div>
+          <HistorialBackups getBackup={getBackup} aplicarBackup={aplicarBackup}/>
         </div>
       </div>
  
@@ -9888,6 +10030,32 @@ function App(){
   },[notas]);
  
   // Sincronización Firebase — todos los datos en la nube
+  const getBackup=()=>armarBackup({clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,talonarios,movimientosPago,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos});
+  const aplicarBackup=data=>{
+    if(Array.isArray(data.clientes))setClientes(data.clientes);
+    if(Array.isArray(data.prospectos))setProspectos(data.prospectos);
+    if(Array.isArray(data.pedidos))setPedidos(data.pedidos);
+    if(Array.isArray(data.prods)&&data.prods.length>0)setProds(data.prods);
+    if(Array.isArray(data.speeches))setSpeeches(data.speeches);
+    if(Array.isArray(data.notas))setNotas(data.notas);
+    if(Array.isArray(data.gastos))setGastos(data.gastos);
+    if(Array.isArray(data.comisiones))setComisiones(data.comisiones);
+    if(Array.isArray(data.proveedores))setProveedores(data.proveedores);
+    const tal=Array.isArray(data.talonarios)?data.talonarios:(data.config&&Array.isArray(data.config.talonarios)?data.config.talonarios:null);
+    if(tal)setTalonarios(tal);
+    const mov=Array.isArray(data.movimientosPago)?data.movimientosPago:(data.config&&Array.isArray(data.config.movimientosPago)?data.config.movimientosPago:null);
+    if(mov)setMovimientosPago(mov);
+    const c=data.config;
+    if(c){
+      if(typeof c.metaSemanal==="number")setMetaSemanal(c.metaSemanal);
+      if(typeof c.diasMora==="number")setDiasMora(c.diasMora);
+      if(c.promo51&&typeof c.promo51==="object")setPromo51(prev=>({...prev,...c.promo51}));
+      if(Array.isArray(c.envasesExtra))setEnvasesExtra(c.envasesExtra);
+      if(Array.isArray(c.categorias))setCategorias(c.categorias);
+      if(Array.isArray(c.impuestos))setImpuestos(c.impuestos);
+    }
+  };
+  const getBackupRef=React.useRef(getBackup);getBackupRef.current=getBackup;
   const{status:syncStatus,errorMsg:syncError}=useFirebaseSync(
     clientes,setClientes,
     prospectos,setProspectos,
@@ -9907,6 +10075,27 @@ function App(){
     talonarios,setTalonarios,
     movimientosPago,setMovimientosPago
   );
+
+  // Copia automática diaria (una por día, la primera vez que la app está abierta y ya cargó los datos de la nube)
+  const syncRef=React.useRef(syncStatus);syncRef.current=syncStatus;
+  useEffect(()=>{
+    let cancelado=false;
+    const intentar=async()=>{
+      if(cancelado||syncRef.current==="connecting"||syncRef.current==="error")return;
+      try{
+        const hoy=hoyISO();
+        const lista=await bkListar();
+        if(lista.some(m=>m.motivo==="Automático"&&m.dia===hoy))return;
+        const d=getBackupRef.current();
+        const r=resumenBackup(d);
+        if(r.clientes+r.productos+r.pedidos+r.proveedores===0)return; // no guardar copias vacías
+        await bkGuardar(d,"Automático");
+      }catch(e){}
+    };
+    const t1=setTimeout(intentar,15000);
+    const t2=setInterval(intentar,30*60*1000);
+    return()=>{cancelado=true;clearTimeout(t1);clearInterval(t2);};
+  },[]);
 
   // Una sola vez, cuando ya cargaron los datos de la nube: numera los pedidos viejos y vincula sus ventas a su remito
   useEffect(()=>{
@@ -9956,7 +10145,7 @@ function App(){
         </aside>
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:58,minHeight:"100vh"}} id="mn">
-          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza} proveedores={proveedores} setProveedores={setProveedores}/>}
+          {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza} proveedores={proveedores} setProveedores={setProveedores} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/>}
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
@@ -9978,7 +10167,7 @@ function App(){
           {tab==="pagoscobranzas"&&<PagosCobranzas clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
           {tab==="talonarios"&&<Talonarios talonarios={talonarios} setTalonarios={setTalonarios}/> }
           {tab==="reporteiva"&&<ReporteIVA clientes={clientes} proveedores={proveedores}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos} getBackup={getBackup} aplicarBackup={aplicarBackup}/>}
         </main>
       </div>
     </div>
