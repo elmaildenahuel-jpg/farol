@@ -2267,26 +2267,26 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
 }
 
 // Cobro rápido de UNA venta (hoy, en efectivo): también queda como un cobro propio en el historial.
-function cobrarVentaCliente(cliente,ventaId){
+function cobrarVentaCliente(cliente,ventaId,fechaElegida){
   const v=(cliente.ventas||[]).find(x=>x.id===ventaId);
   if(!v||v.pagado)return cliente;
-  const fecha=hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(v.monto)||0,medioPago,nota:""};
+  const fecha=fechaElegida||hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(v.monto)||0,medioPago,nota:""};
   return{...cliente,ventas:cliente.ventas.map(x=>x.id===ventaId?{...x,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:x),cobros:[...(cliente.cobros||[]),cobro]};
 }
 // Cobro rápido de VARIAS ventas a la vez (p. ej. todo un remito): queda como un único pago en el historial.
-function cobrarVentasCliente(cliente,ventaIds,nota){
+function cobrarVentasCliente(cliente,ventaIds,nota,fechaElegida){
   const ids=new Set(ventaIds);
   const filas=(cliente.ventas||[]).filter(x=>ids.has(x.id)&&!x.pagado);
   if(!filas.length)return cliente;
-  const fecha=hoyISO(),medioPago="Efectivo",monto=Math.round(filas.reduce((a,x)=>a+(Number(x.monto)||0),0)*100)/100;
+  const fecha=fechaElegida||hoyISO(),medioPago="Efectivo",monto=Math.round(filas.reduce((a,x)=>a+(Number(x.monto)||0),0)*100)/100;
   const cobro={id:uid(),fecha,monto,medioPago,nota:nota||""};
   return{...cliente,ventas:cliente.ventas.map(x=>ids.has(x.id)&&!x.pagado?{...x,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:x),cobros:[...(cliente.cobros||[]),cobro]};
 }
 // Misma idea para un saldo anterior (cobro rápido desde el bloque de saldos)
-function cobrarSaldoCliente(cliente,saldoId){
+function cobrarSaldoCliente(cliente,saldoId,fechaElegida){
   const x=(cliente.saldosAnteriores||[]).find(y=>y.id===saldoId);
   if(!x||x.pagado)return cliente;
-  const fecha=hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(x.monto)||0,medioPago,nota:x.descripcion||""};
+  const fecha=fechaElegida||hoyISO(),medioPago="Efectivo",cobro={id:uid(),fecha,monto:Number(x.monto)||0,medioPago,nota:x.descripcion||""};
   return{...cliente,saldosAnteriores:cliente.saldosAnteriores.map(y=>y.id===saldoId?{...y,pagado:true,fechaCobro:fecha,medioPago,cobroId:cobro.id}:y),cobros:[...(cliente.cobros||[]),cobro]};
 }
 // Deshace un cobro completo: vuelve a deuda todo lo que cubrió y recompone las ventas/saldos que se habían partido.
@@ -2580,6 +2580,28 @@ function RemitoOpciones({pedido,cliente,prods,onClose,recienEntregado}){
   );
 }
 
+// Pide la fecha de cobro antes de aplicar un cobro rápido (por defecto hoy)
+function ModalFechaCobro({datos,onClose}){
+  const[fecha,setFecha]=useState(hoyISO());
+  if(!datos)return null;
+  return(
+    <Modal open={true} onClose={onClose} title="Registrar cobro">
+      <div style={{fontSize:15,color:CR,fontWeight:700,marginBottom:2}}>{datos.titulo}</div>
+      <div className="bebas" style={{fontSize:26,color:GR,marginBottom:10}}>{fmtARS(datos.monto)}</div>
+      <Lbl t="Fecha de cobro"/>
+      <input type="date" value={fecha} max={hoyISO()} onChange={e=>setFecha(e.target.value||hoyISO())}/>
+      <div style={{display:"flex",gap:6,marginTop:8}}>
+        <button onClick={()=>setFecha(hoyISO())} style={{fontSize:13,fontWeight:700,padding:"6px 12px",borderRadius:8,background:BG,color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Hoy</button>
+        <button onClick={()=>{const d=new Date();d.setDate(d.getDate()-1);setFecha(d.toISOString().slice(0,10));}} style={{fontSize:13,fontWeight:700,padding:"6px 12px",borderRadius:8,background:BG,color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Ayer</button>
+      </div>
+      <div style={{fontSize:12,color:MU,marginTop:8}}>Se registra en efectivo. Para otro medio o un pago parcial usá "Registrar pago".</div>
+      <div style={{display:"flex",gap:8,marginTop:14}}>
+        <button onClick={onClose} style={{flex:1,minHeight:44,borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:15,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+        <button onClick={()=>{datos.confirmar(fecha||hoyISO());onClose();}} style={{flex:2,minHeight:44,borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer"}}>✓ Confirmar cobro</button>
+      </div>
+    </Modal>
+  );
+}
 function Modal({open,onClose,title,children}){
   if(!open)return null;
   const formularioAmplio=/(producto|cliente|proveedor|venta|compra|pago|cobranza|registr|editar|presupuesto)/i.test(title||"");
@@ -3641,6 +3663,7 @@ function FormAjusteSaldo({actual,esProveedor,onSave,onCancel}){
 
 // Lista editable de saldos anteriores + botón para cargar uno nuevo. Sirve para clientes (se cobran) y proveedores (se pagan).
 function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
+  const[pedirCobro,setPedirCobro]=useState(null);
   const campoFecha=esProveedor?"fechaPago":"fechaCobro";
   const verbo=esProveedor?"Pagado":"Cobrado";
   const[mostrarForm,setMostrarForm]=useState(false);
@@ -3666,7 +3689,7 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   };
   const eliminar=x=>{if(!confirm(`¿Eliminar este saldo anterior de ${fmtARS(x.monto)}?`))return;actualizar(saldos.filter(y=>y.id!==x.id));};
   const marcar=x=>{
-    if(!esProveedor){onUpdate(cobrarSaldoCliente(entidad,x.id));return;}   // en clientes queda como un cobro propio
+    if(!esProveedor){setPedirCobro({titulo:x.descripcion||"Saldo anterior",monto:Number(x.monto)||0,confirmar:f=>onUpdate(cobrarSaldoCliente(entidad,x.id,f))});return;}   // en clientes queda como un cobro propio
     actualizar(saldos.map(y=>y.id===x.id?{...y,pagado:true,[campoFecha]:hoyISO(),medioPago:"Efectivo"}:y));
   };
   const deshacer=x=>{
@@ -3675,6 +3698,7 @@ function BloqueSaldosAnteriores({entidad,onUpdate,diasMora,esProveedor}){
   };
   return(
     <div style={{marginTop:6,marginBottom:12}}>
+      <ModalFechaCobro datos={pedirCobro} onClose={()=>setPedirCobro(null)}/>
       {pend.length>0&&(
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
           {pend.map(x=>{
@@ -3889,6 +3913,7 @@ function MovimientosCards({cliente,prods,pedidos}){
 
 // Cuenta corriente ÚNICA del cliente (se abre desde la ficha, tanto desde Clientes como desde "Cobrar")
 function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
+  const[pedirCobro,setPedirCobro]=useState(null);
   const[showMovs,setShowMovs]=useState(false);
   const[verTodos,setVerTodos]=useState(false);
   const[showHistorial,setShowHistorial]=useState(false);
@@ -3933,6 +3958,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
 
       <BloqueSaldosAnteriores entidad={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
 
+      <ModalFechaCobro datos={pedirCobro} onClose={()=>setPedirCobro(null)}/>
       {saldo>0&&(
         <>
           {hayVencidas&&(
@@ -3957,7 +3983,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
                   </button>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                     <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(total)}</span>
-                    <button onClick={()=>onUpdate(cobrarVentasCliente(cliente,g.filas.map(x=>x.id),`Remito ${fmtRemito(g.remitoNro)}`))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
+                    <button onClick={()=>setPedirCobro({titulo:`Remito ${fmtRemito(g.remitoNro)}`,monto:total,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,g.filas.map(x=>x.id),`Remito ${fmtRemito(g.remitoNro)}`,f))})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
                   </div>
                 </div>
                 {abierto&&(
@@ -3982,7 +4008,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(v.monto)}</span>
-                  <button onClick={()=>onUpdate(cobrarVentaCliente(cliente,v.id))} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
+                  <button onClick={()=>setPedirCobro({titulo:`Venta del ${fmtDate(v.fecha)}`,monto:Number(v.monto)||0,confirmar:f=>onUpdate(cobrarVentaCliente(cliente,v.id,f))})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
                 </div>
               </div>
             );})}
@@ -5520,7 +5546,20 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   };
  
   const pendientes=pedidos.filter(p=>p.estado==="pendiente").sort((a,b)=>a.fechaEntrega.localeCompare(b.fechaEntrega));
-  const entregados=pedidos.filter(p=>p.estado==="entregado").sort((a,b)=>b.fechaEntrega.localeCompare(a.fechaEntrega)).slice(0,10);
+  const entregadosTodos=pedidos.filter(p=>p.estado==="entregado").sort((a,b)=>b.fechaEntrega.localeCompare(a.fechaEntrega));
+  const[histAbierto,setHistAbierto]=useState(false);
+  const[hCliente,setHCliente]=useState("");
+  const[hDesde,setHDesde]=useState("");
+  const[hHasta,setHHasta]=useState("");
+  const[hLimite,setHLimite]=useState(30);
+  const hayFiltroHist=!!(hCliente.trim()||hDesde||hHasta);
+  const entregadosFiltrados=entregadosTodos.filter(p=>{
+    if(hDesde&&p.fechaEntrega<hDesde)return false;
+    if(hHasta&&p.fechaEntrega>hHasta)return false;
+    if(hCliente.trim()){const c=clientes.find(x=>x.id===p.clienteId);if(!c||!c.nombre.toLowerCase().includes(hCliente.trim().toLowerCase()))return false;}
+    return true;
+  });
+  const entregados=(histAbierto||hayFiltroHist)?entregadosFiltrados.slice(0,hLimite):entregadosFiltrados.slice(0,10);
 
   const[seleccionRuta,setSeleccionRuta]=useState(()=>new Set());
   const toggleRuta=id=>setSeleccionRuta(prev=>{const next=new Set(prev);next.has(id)?next.delete(id):next.add(id);return next;});
@@ -5671,7 +5710,24 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
  
       {entregados.length>0&&(
         <div>
-          <div style={{fontSize:14,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>Últimas entregas</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
+            <div style={{fontSize:14,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.08em"}}>{histAbierto||hayFiltroHist?"Historial de entregas":"Últimas entregas"}</div>
+            <button onClick={()=>{setHistAbierto(a=>!a);if(histAbierto){setHCliente("");setHDesde("");setHHasta("");}setHLimite(30);}} style={{fontSize:13,fontWeight:700,color:G,background:"none",border:"none",cursor:"pointer",padding:0}}>{histAbierto?"Ver solo las últimas":`Ver historial completo (${entregadosTodos.length})`}</button>
+          </div>
+          {histAbierto&&(
+            <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:12,marginBottom:10}}>
+              <input value={hCliente} onChange={e=>{setHCliente(e.target.value);setHLimite(30);}} placeholder="🔎 Buscar por cliente..." style={{marginBottom:8}}/>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
+                <div><Lbl t="Desde"/><input type="date" value={hDesde} onChange={e=>{setHDesde(e.target.value);setHLimite(30);}}/></div>
+                <div><Lbl t="Hasta"/><input type="date" value={hHasta} onChange={e=>{setHHasta(e.target.value);setHLimite(30);}}/></div>
+              </div>
+              <div style={{fontSize:13,color:MU,marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>{entregadosFiltrados.length} pedido{entregadosFiltrados.length!==1?"s":""} · {fmtARS(entregadosFiltrados.reduce((t,x)=>t+(x.montoTotal||0),0))}</span>
+                {hayFiltroHist&&<button onClick={()=>{setHCliente("");setHDesde("");setHHasta("");}} style={{fontSize:13,fontWeight:700,color:MU,background:"none",border:"none",cursor:"pointer",textDecoration:"underline",padding:0}}>Limpiar filtros</button>}
+              </div>
+            </div>
+          )}
+          {histAbierto&&entregados.length===0&&<div style={{textAlign:"center",color:MU,fontSize:14,padding:"16px 0"}}>No hay entregas con esos filtros.</div>}
           {entregados.map(p=>{
             const cliente=clientes.find(c=>c.id===p.clienteId);
             const nombreCliente=cliente?cliente.nombre:"—";
@@ -5693,6 +5749,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
               </div>
             );
           })}
+          {(histAbierto||hayFiltroHist)&&entregadosFiltrados.length>hLimite&&<button onClick={()=>setHLimite(l=>l+30)} style={{width:"100%",minHeight:44,borderRadius:12,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:14,fontWeight:700,cursor:"pointer"}}>Ver más ({entregadosFiltrados.length-hLimite} restantes)</button>}
         </div>
       )}
  
@@ -9430,6 +9487,7 @@ function FilaStock({f,unidad,onCommit,onAjustar,movil,primera}){
 }
 
 function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
+  const[pedirCobro,setPedirCobro]=useState(null);
   const ctxDesc=useMemo(()=>ctxDescuentos(prods,pedidos),[prods,pedidos]);
   const[expandido,setExpandido]=useState(null);
   const[filtro,setFiltro]=useState("todos"); // todos | vencidos
@@ -9446,11 +9504,12 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
   const conDeuda=filtro==="vencidos"?clientesVencidos:todasConDeuda;
 
   // Cobro rápido de una venta puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
-  const marcarPagada=(clienteId,ventaId)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:hoyISO(),medioPago:"Efectivo"}:v)}));
+  const marcarPagada=(clienteId,ventaId,fecha)=>setClientes(prev=>prev.map(c=>c.id!==clienteId?c:{...c,ventas:c.ventas.map(v=>v.id===ventaId?{...v,pagado:true,fechaCobro:fecha||hoyISO(),medioPago:"Efectivo"}:v)}));
   const actualizarCliente=u=>setClientes(prev=>prev.map(c=>c.id===u.id?u:c));
 
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <ModalFechaCobro datos={pedirCobro} onClose={()=>setPedirCobro(null)}/>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Cuentas corrientes</span>
       <p style={{fontSize:14,color:MU,marginBottom:16}}>{todasConDeuda.length} cliente{todasConDeuda.length!==1?"s":""} con saldo pendiente</p>
 
@@ -9497,7 +9556,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
                       <div style={{fontSize:14,color:vencida?"#C62828":MU,fontWeight:vencida?700:400}}>{fmtDate(v.fecha)} · {v.cantidad}L{vencida?` · vencido ${dias}d`:""}</div>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</span>
-                        <button onClick={()=>marcarPagada(cliente.id,v.id)} style={{padding:"5px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>Cobrado</button>
+                        <button onClick={()=>setPedirCobro({titulo:`${cliente.nombre} · ${fmtDate(v.fecha)}`,monto:Number(v.monto)||0,confirmar:f=>marcarPagada(cliente.id,v.id,f)})} style={{padding:"5px 10px",borderRadius:8,background:G,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>Cobrado</button>
                       </div>
                     </div>
                     <ChipBeneficio d={desgloseVenta(v,cliente.id,ctxDesc)}/>
