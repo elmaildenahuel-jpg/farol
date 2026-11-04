@@ -482,7 +482,8 @@ const GASTO_CATEGORIAS=[
   {key:"varios_per",label:"Varios / otros (personal)",icon:"🧾",tipo:"personal"},
 ];
 const catsGasto=()=>(typeof window!=="undefined"&&Array.isArray(window.__catGasto)&&window.__catGasto.length)?window.__catGasto:GASTO_CATEGORIAS;
-const catGasto=key=>{const l=catsGasto();return l.find(c=>c.key===key)||GASTO_CATEGORIAS.find(c=>c.key===key)||{key:key||"otro",label:key||"Sin categoría",icon:"🧾",tipo:"negocio"};};
+const etiquetaCat=key=>{const c=catGasto(key);if(c.padre){const p=catGasto(c.padre);return `${p.label} › ${c.label}`;}return c.label;};
+const catGasto=key=>{const l=catsGasto();const h=l.find(c=>c.key===key);if(h&&h.padre){const pp=l.find(c=>c.key===h.padre);return pp?{...h,icon:pp.icon}:h;}return h||GASTO_CATEGORIAS.find(c=>c.key===key)||{key:key||"otro",label:key||"Sin categoría",icon:"🧾",tipo:"negocio"};};
  
 // ── Config Google Calendar ────────────────────────────────────────
 // El Client ID se guarda en localStorage para no hardcodear credenciales.
@@ -2548,7 +2549,7 @@ td{padding:${ticket?2:5}px 2px;border-bottom:${ticket?"none":"1px solid #ddd"};v
 .firma{margin-top:${ticket?18:40}px;border-top:1px solid #444;width:${ticket?"60%":"45%"};padding-top:3px;font-size:${base-3}px;color:#555}
 .pie{margin-top:12px;text-align:center;color:#888;font-size:${base-3}px}
 </style></head><body>
-<div class="top"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div>
+<div class="top"><div style="display:flex;align-items:center;gap:10px"><img src="${LOGO_NOMADES}" alt="" style="height:${ticket?44:formato==='a5'?52:64}px;width:auto;display:block"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div></div>
 <div style="text-align:${ticket?"left":"right"}"><h1>REMITO</h1><div>Nº ${esc(nro)}</div></div></div>
 <div><b>${esc(cliente?cliente.nombre:"Cliente")}</b></div>
 ${cliente&&cliente.direccion?`<div class="sub">${esc(cliente.direccion)}</div>`:""}
@@ -2680,7 +2681,7 @@ td{padding:${ticket?2:5}px 2px;border-bottom:${ticket?"none":"1px solid #ddd"};v
 .firma{margin-top:${ticket?18:40}px;border-top:1px solid #444;width:${ticket?"60%":"45%"};padding-top:3px;font-size:${base-3}px;color:#555}
 .pie{margin-top:12px;text-align:center;color:#888;font-size:${base-3}px}
 </style></head><body>
-<div class="top"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div>
+<div class="top"><div style="display:flex;align-items:center;gap:10px"><img src="${LOGO_NOMADES}" alt="" style="height:${ticket?44:formato==='a5'?52:64}px;width:auto;display:block"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div></div>
 <div style="text-align:${ticket?"left":"right"}"><h1>COMPROBANTE INTERNO<br>DE COMPRA</h1></div></div>
 <div><b>${esc(proveedor.nombre||"Proveedor")}</b></div>
 ${proveedor.razonSocial&&proveedor.razonSocial!==proveedor.nombre?`<div class="sub">${esc(proveedor.razonSocial)}</div>`:""}
@@ -3975,7 +3976,7 @@ function MovimientosCards({cliente,prods,pedidos}){
   return(
     <div className="ec-card" style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden"}}>
       <div style={{background:GDK,color:"#fff",padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
-        <span style={{fontSize:13,fontWeight:700,letterSpacing:"0.08em"}}>ESTADO DE CUENTA</span>
+        <span style={{display:"flex",alignItems:"center",gap:8}}><span style={{background:"#fff",borderRadius:6,padding:"2px 5px",display:"flex"}}><img className="logo-nomades" src={LOGO_NOMADES} alt="Nómades" style={{height:26,width:"auto",display:"block"}}/></span><span style={{fontSize:13,fontWeight:700,letterSpacing:"0.08em"}}>ESTADO DE CUENTA</span></span>
         <span style={{fontSize:12,opacity:0.85}}>Al {hoyTxt}</span>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,padding:10}}>
@@ -5297,6 +5298,19 @@ function AsistenteIA({clientes,pedidos,prods}){
 }
 
 // ── GASTOS ────────────────────────────────────────────────────────
+function SelectCategoriaGasto({tipo,value,onChange}){
+  const todas=catsGasto();
+  const actual=todas.find(c=>c.key===value);
+  const padreKey=actual?(actual.padre||actual.key):"";
+  const padres=todas.filter(c=>c.tipo===tipo&&!c.padre);
+  const subs=todas.filter(c=>c.padre===padreKey);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <div><Lbl t="Categoría"/><select value={padreKey} onChange={e=>onChange(e.target.value)}>{padres.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>
+      {subs.length>0&&<div><Lbl t="Subcategoría (opcional)"/><select value={actual&&actual.padre?actual.key:""} onChange={e=>onChange(e.target.value||padreKey)}><option value="">Sin subcategoría</option>{subs.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>}
+    </div>
+  );
+}
 function FormGasto({initial,onSave,onCancel,onDelete}){
   const[f,setF]=useState({
     fecha:initial.fecha||hoyISO(),
@@ -5315,7 +5329,7 @@ function FormGasto({initial,onSave,onCancel,onDelete}){
   };
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div><Lbl t="Categoría"/><select value={f.categoria} onChange={s("categoria")}>{categoriasDelTipo.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>
+      <SelectCategoriaGasto tipo={f.tipo} value={f.categoria} onChange={v=>setF(p=>({...p,categoria:v}))}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
         <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
@@ -5404,7 +5418,7 @@ function Gastos({gastos:gastosTodos,setGastos}){
             return(
               <div key={key} style={{marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR,marginBottom:3}}>
-                  <span>{cat.icon} {cat.label}</span>
+                  <span>{cat.icon} {etiquetaCat(key)}</span>
                   <span style={{fontWeight:700}}>{fmtARS(monto)}</span>
                 </div>
                 <div style={{height:6,borderRadius:3,background:BO,overflow:"hidden"}}>
@@ -5425,7 +5439,7 @@ function Gastos({gastos:gastosTodos,setGastos}){
             <div style={{width:38,height:38,borderRadius:10,background:g.tipo==="negocio"?GLT:AM+"1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{cat.icon}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.descripcion||cat.label}</div>
-              <div style={{fontSize:12,color:MU,marginTop:1}}>{cat.label} · {fmtDate(g.fecha)}</div>
+              <div style={{fontSize:12,color:MU,marginTop:1}}>{etiquetaCat(g.categoria)} · {fmtDate(g.fecha)}</div>
             </div>
             <div style={{fontSize:15,fontWeight:700,color:CR,flexShrink:0}}>{fmtARS(g.monto)}</div>
           </button>
@@ -6606,7 +6620,7 @@ function CajaBalance({todas,proveedores,gastos}){
     (gastos||[]).forEach(g=>{
       if(g.tipo==="personal")return;
       const cat=catGasto(g.categoria);
-      arr.push({tipo:"debe",fecha:g.fecha||"",monto:g.monto||0,concepto:`Gasto · ${cat?cat.label:(g.categoria||"")}${g.descripcion?` — ${g.descripcion}`:""}`,hecho:true,cat:"gasto"});
+      arr.push({tipo:"debe",fecha:g.fecha||"",monto:g.monto||0,concepto:`Gasto · ${etiquetaCat(g.categoria)}${g.descripcion?` — ${g.descripcion}`:""}`,hecho:true,cat:"gasto"});
     });
     return arr.filter(m=>m.fecha);
   },[todas,proveedores,gastos,criterio]);
@@ -8659,7 +8673,7 @@ function FormGastoPersonal({initial,onSave,onCancel,onDelete,onDeleteFuturas}){
   const cats=catsGasto().filter(c=>c.tipo==="personal");
   const[f,setF]=useState({
     fecha:initial.fecha||hoyISO(),
-    categoria:initial.categoria||(cats[0]?cats[0].key:"varios_per"),
+    categoria:initial.categoria||(cats.find(c=>!c.padre)||{key:"varios_per"}).key,
     monto:initial.monto?String(initial.monto):"",
     descripcion:initial.descripcion||"",
     medioPago:initial.medioPago||"",
@@ -8689,7 +8703,7 @@ function FormGastoPersonal({initial,onSave,onCancel,onDelete,onDeleteFuturas}){
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {nuevo&&<div style={{display:"flex",gap:6}}>{chip("unico","Pago único")}{chip("cuotas","En cuotas")}{chip("fijo","Mensual fijo")}</div>}
-      <div><Lbl t="Categoría"/><select value={f.categoria} onChange={s("categoria")}>{cats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>
+      <SelectCategoriaGasto tipo="personal" value={f.categoria} onChange={v=>setF(p=>({...p,categoria:v}))}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t={nuevo&&f.modo!=="unico"?"Fecha del 1.er pago":"Fecha"}/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
         <div><Lbl t={nuevo&&f.modo!=="unico"?"Importe de cada pago":"Monto ARS"}/><input type="number" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
@@ -8720,8 +8734,8 @@ function FormGastoPersonal({initial,onSave,onCancel,onDelete,onDeleteFuturas}){
 
 function imprimirResumenPersonal(d){
   const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-  const filasCat=d.porCategoria.map(([k,m])=>{const c=catGasto(k);return`<tr><td>${esc(c.icon)} ${esc(c.label)}</td><td class="r">${esc(fmtARS(m))}</td><td class="r">${d.total>0?Math.round(m/d.total*100):0}%</td></tr>`;}).join("");
-  const filasDet=d.lista.map(g=>{const c=catGasto(g.categoria);return`<tr><td>${esc(fmtDateCorta(g.fecha))}</td><td>${esc(g.descripcion||c.label)}<div class="s">${esc(c.label)}</div></td><td>${gastoPagado(g)?"Pagado":"A pagar"}</td><td class="r">${esc(fmtARS(g.monto))}</td></tr>`;}).join("");
+  const filasCat=d.porCategoria.map(([k,m,subs])=>{const c=catGasto(k);return`<tr><td><b>${esc(c.icon)} ${esc(c.label)}</b></td><td class="r"><b>${esc(fmtARS(m))}</b></td><td class="r">${d.total>0?Math.round(m/d.total*100):0}%</td></tr>`+(subs.some(x=>x[0]!=="_directo")?subs.map(([sk,sm])=>`<tr><td class="s" style="padding-left:16px">${sk==="_directo"?"Sin subcategoría":esc(catGasto(sk).label)}</td><td class="r s">${esc(fmtARS(sm))}</td><td></td></tr>`).join(""):"");}).join("");
+  const filasDet=d.lista.map(g=>{const c=catGasto(g.categoria);return`<tr><td>${esc(fmtDateCorta(g.fecha))}</td><td>${esc(g.descripcion||c.label)}<div class="s">${esc(etiquetaCat(g.categoria))}</div></td><td>${gastoPagado(g)?"Pagado":"A pagar"}</td><td class="r">${esc(fmtARS(g.monto))}</td></tr>`;}).join("");
   const filasProx=d.proximos.map(g=>{const c=catGasto(g.categoria);return`<tr><td>${esc(fmtDateCorta(g.fecha))}</td><td>${esc(g.descripcion||c.label)}</td><td class="r">${esc(fmtARS(g.monto))}</td></tr>`;}).join("");
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>Resumen ${esc(d.mesLabel)}</title><style>
 @page{size:A4;margin:15mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px;margin:0}
@@ -8756,7 +8770,7 @@ function GastosPersonales({gastos,setGastos}){
   const mesAnt=(()=>{const[y,m]=mes.split("-").map(Number);const t=new Date(y,m-2,1);return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`;})();
   const totalAnt=suma(personales.filter(g=>(g.fecha||"").slice(0,7)===mesAnt));
   const variacion=totalAnt>0?Math.round((total-totalAnt)/totalAnt*100):null;
-  const porCategoria=useMemo(()=>{const m={};delMes.forEach(g=>{m[g.categoria]=(m[g.categoria]||0)+(Number(g.monto)||0);});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[delMes]);
+  const porCategoria=useMemo(()=>{const m={};delMes.forEach(g=>{const c=catGasto(g.categoria);const k=c.padre||c.key;const e=(m[k]=m[k]||{total:0,subs:{}});const v=Number(g.monto)||0;e.total+=v;if(c.padre)e.subs[c.key]=(e.subs[c.key]||0)+v;else e.subs["_directo"]=(e.subs["_directo"]||0)+v;});return Object.entries(m).map(([k,e])=>[k,e.total,Object.entries(e.subs).sort((a,b)=>b[1]-a[1])]).sort((a,b)=>b[1]-a[1]);},[delMes]);
   const ultimos=useMemo(()=>{
     const out=[];const[y,m]=mes.split("-").map(Number);
     for(let i=5;i>=0;i--){const t=new Date(y,m-1-i,1);const k=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`;out.push({k,lbl:t.toLocaleDateString("es-AR",{month:"short"}),monto:suma(personales.filter(g=>(g.fecha||"").slice(0,7)===k))});}
@@ -8782,7 +8796,7 @@ function GastosPersonales({gastos,setGastos}){
   };
   const marcar=(g,pagado)=>setGastos(prev=>prev.map(x=>x.id===g.id?{...x,pagado,fechaPago:pagado?hoyISO():null}:x));
   const exportarCSV=()=>{
-    const filas=delMes.slice().reverse().map(g=>[g.fecha,`"${catGasto(g.categoria).label}"`,`"${(g.descripcion||"").replace(/"/g,'""')}"`,g.monto,gastoPagado(g)?"Pagado":"A pagar",g.cuota?`${g.cuota.n}/${g.cuota.total}`:"",g.medioPago||""].join(","));
+    const filas=delMes.slice().reverse().map(g=>[g.fecha,`"${etiquetaCat(g.categoria)}"`,`"${(g.descripcion||"").replace(/"/g,'""')}"`,g.monto,gastoPagado(g)?"Pagado":"A pagar",g.cuota?`${g.cuota.n}/${g.cuota.total}`:"",g.medioPago||""].join(","));
     const csv="﻿Fecha,Categoría,Descripción,Monto ARS,Estado,Cuota,Medio de pago\n"+filas.join("\n")+`\n,,Total del mes,${total},,,\n`;
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8;"}));a.download=`gastos_personales_${mes}.csv`;a.click();
   };
@@ -8794,7 +8808,7 @@ function GastosPersonales({gastos,setGastos}){
           <div style={{width:36,height:36,borderRadius:10,background:AM+"1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{c.icon}</div>
           <div style={{minWidth:0}}>
             <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.descripcion||c.label}</div>
-            <div style={{fontSize:12,color:venc?RE:MU,fontWeight:venc?700:400}}>{c.label} · {fmtDate(g.fecha)}{!pag?(venc?" · vencido":" · a pagar"):""}</div>
+            <div style={{fontSize:12,color:venc?RE:MU,fontWeight:venc?700:400}}>{etiquetaCat(g.categoria)} · {fmtDate(g.fecha)}{!pag?(venc?" · vencido":" · a pagar"):""}</div>
           </div>
         </button>
         <div style={{textAlign:"right",flexShrink:0}}>
@@ -8863,10 +8877,13 @@ function GastosPersonales({gastos,setGastos}){
       {porCategoria.length>0&&(
         <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Por categoría</div>
-          {porCategoria.map(([k,m])=>{const c=catGasto(k);const pct=total>0?Math.round(m/total*100):0;return(
-            <div key={k} style={{marginBottom:8}}>
+          {porCategoria.map(([k,m,subs])=>{const c=catGasto(k);const pct=total>0?Math.round(m/total*100):0;const conSubs=subs.some(x=>x[0]!=="_directo");return(
+            <div key={k} style={{marginBottom:10}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR,marginBottom:3}}><span>{c.icon} {c.label}</span><span style={{fontWeight:700}}>{fmtARS(m)} · {pct}%</span></div>
               <div style={{height:6,borderRadius:3,background:BO,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:AM,borderRadius:3}}/></div>
+              {conSubs&&<div style={{margin:"5px 0 0 12px",borderLeft:`2px solid ${BO}`,paddingLeft:8}}>
+                {subs.map(([sk,sm])=>(<div key={sk} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:MU,padding:"1px 0"}}><span>{sk==="_directo"?"Sin subcategoría":catGasto(sk).label}</span><span>{fmtARS(sm)}</span></div>))}
+              </div>}
             </div>
           );})}
         </div>
@@ -8891,37 +8908,62 @@ function GestorCategoriasGasto({categoriasGasto,setCategoriasGasto,gastos}){
   const[tipo,setTipo]=useState("personal");
   const[icono,setIcono]=useState("");
   const[nombre,setNombre]=useState("");
-  const lista=(categoriasGasto||[]).filter(c=>c.tipo===tipo);
+  const[subNombre,setSubNombre]=useState({});
+  const todas=categoriasGasto||[];
+  const padres=todas.filter(c=>c.tipo===tipo&&!c.padre);
   const usos=useMemo(()=>{const m={};(gastos||[]).forEach(g=>{m[g.categoria]=(m[g.categoria]||0)+1;});return m;},[gastos]);
   const cambiar=(key,patch)=>setCategoriasGasto(prev=>prev.map(c=>c.key===key?{...c,...patch}:c));
   const quitar=c=>{
+    const hijas=todas.filter(x=>x.padre===c.key);
+    if(hijas.length){alert(`"${c.label}" tiene ${hijas.length} subcategoría${hijas.length>1?"s":""}. Borrá primero las subcategorías.`);return;}
     if(usos[c.key]){alert(`Hay ${usos[c.key]} gasto${usos[c.key]>1?"s":""} con la categoría "${c.label}". Cambiales la categoría antes de borrarla.`);return;}
-    if(lista.length<=1){alert("Tiene que quedar al menos una categoría.");return;}
-    if(!confirm(`¿Borrar la categoría "${c.label}"?`))return;
+    if(!c.padre&&padres.length<=1){alert("Tiene que quedar al menos una categoría.");return;}
+    if(!confirm(`¿Borrar "${c.label}"?`))return;
     setCategoriasGasto(prev=>prev.filter(x=>x.key!==c.key));
   };
   const agregar=()=>{
     const n=nombre.trim();if(!n)return;
-    if(lista.some(c=>c.label.toLowerCase()===n.toLowerCase())){alert("Ya existe una categoría con ese nombre.");return;}
+    if(padres.some(c=>c.label.toLowerCase()===n.toLowerCase())){alert("Ya existe una categoría con ese nombre.");return;}
     setCategoriasGasto(prev=>[...prev,{key:"cat_"+uid(),label:n,icon:icono.trim()||"🧾",tipo}]);setNombre("");setIcono("");
   };
+  const agregarSub=padre=>{
+    const n=(subNombre[padre.key]||"").trim();if(!n)return;
+    if(todas.some(c=>c.padre===padre.key&&c.label.toLowerCase()===n.toLowerCase())){alert("Ya existe esa subcategoría.");return;}
+    setCategoriasGasto(prev=>[...prev,{key:"cat_"+uid(),label:n,icon:"•",tipo:padre.tipo,padre:padre.key}]);
+    setSubNombre(p=>({...p,[padre.key]:""}));
+  };
+  const btnX=(c)=><button onClick={()=>quitar(c)} aria-label="Borrar" style={{width:36,height:36,borderRadius:8,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{I.trash}</button>;
   return(
     <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
       <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:2}}>Categorías de gastos</div>
-      <div style={{fontSize:13,color:MU,marginBottom:10}}>Editá nombre e ícono, agregá las tuyas o borrá las que no uses. Los gastos ya cargados conservan su categoría.</div>
+      <div style={{fontSize:13,color:MU,marginBottom:10}}>Editá nombre e ícono, agregá las tuyas y armá subcategorías (por ejemplo, una vivienda con ABL, Luz, Gas, Agua, Expensas e Internet). Los gastos ya cargados conservan su categoría.</div>
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         {[{k:"personal",l:"🏠 Personal"},{k:"negocio",l:"🏢 Negocio"}].map(t=>(
           <button key={t.k} onClick={()=>setTipo(t.k)} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${tipo===t.k?G:BO}`,background:tipo===t.k?G:"transparent",color:tipo===t.k?"#fff":MU}}>{t.l}</button>
         ))}
       </div>
-      {lista.map(c=>(
-        <div key={c.key} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-          <input value={c.icon} onChange={e=>cambiar(c.key,{icon:e.target.value})} style={{width:54,textAlign:"center",padding:"8px 4px"}} maxLength={4}/>
-          <input value={c.label} onChange={e=>cambiar(c.key,{label:e.target.value})} style={{flex:1,minWidth:0}}/>
-          <span style={{fontSize:11,color:MU,width:34,textAlign:"right"}}>{usos[c.key]?`${usos[c.key]} uso${usos[c.key]>1?"s":""}`:""}</span>
-          <button onClick={()=>quitar(c)} aria-label="Borrar categoría" style={{width:36,height:36,borderRadius:8,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{I.trash}</button>
+      {padres.map(c=>{const hijas=todas.filter(x=>x.padre===c.key);return(
+        <div key={c.key} style={{border:`1px solid ${BO}`,borderRadius:12,padding:8,marginBottom:8,background:BG}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <input value={c.icon} onChange={e=>cambiar(c.key,{icon:e.target.value})} style={{width:54,textAlign:"center",padding:"8px 4px"}} maxLength={4}/>
+            <input value={c.label} onChange={e=>cambiar(c.key,{label:e.target.value})} style={{flex:1,minWidth:0,fontWeight:700}}/>
+            <span style={{fontSize:11,color:MU,width:34,textAlign:"right"}}>{usos[c.key]?`${usos[c.key]} uso${usos[c.key]>1?"s":""}`:""}</span>
+            {btnX(c)}
+          </div>
+          {hijas.map(h=>(
+            <div key={h.key} style={{display:"flex",alignItems:"center",gap:6,marginTop:6,marginLeft:18}}>
+              <span style={{color:MU}}>↳</span>
+              <input value={h.label} onChange={e=>cambiar(h.key,{label:e.target.value})} style={{flex:1,minWidth:0}}/>
+              <span style={{fontSize:11,color:MU,width:34,textAlign:"right"}}>{usos[h.key]?`${usos[h.key]} uso${usos[h.key]>1?"s":""}`:""}</span>
+              {btnX(h)}
+            </div>
+          ))}
+          <div style={{display:"flex",gap:6,marginTop:8,marginLeft:18}}>
+            <input value={subNombre[c.key]||""} onChange={e=>setSubNombre(p=>({...p,[c.key]:e.target.value}))} placeholder="Nueva subcategoría" style={{flex:1,minWidth:0}} onKeyDown={e=>{if(e.key==="Enter")agregarSub(c);}}/>
+            <Btn variant="ghost" onClick={()=>agregarSub(c)} disabled={!(subNombre[c.key]||"").trim()}>{I.plus}Sub</Btn>
+          </div>
         </div>
-      ))}
+      );})}
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px dashed ${BO}`}}>
         <input value={icono} onChange={e=>setIcono(e.target.value)} placeholder="🧾" style={{width:54,textAlign:"center",padding:"8px 4px"}} maxLength={4}/>
         <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Nueva categoría" style={{flex:1,minWidth:0}} onKeyDown={e=>{if(e.key==="Enter")agregar();}}/>
@@ -10373,7 +10415,7 @@ function App(){
   const[filtroClientes,setFiltroClientes]=useState("todos");
   const irACobranza=()=>{setFiltroClientes("deuda");setTab("clientes");};
   const[showMore,setShowMore]=useState(false);
-  const[menusAbiertos,setMenusAbiertos]=useState({ventas:true,compras:true,inventario:false,gestion:false,herramientas:false,personal:false});
+  const[menusAbiertos,setMenusAbiertos]=useState({ventas:true,compras:true,inventario:false,gestion:false,herramientas:false});
   const renderGrupoMenu=(id,label,keys)=>{
     const items=keys.map(k=>TABS.find(t=>t.key===k)).filter(Boolean);
     const activo=items.some(t=>t.key===tab);
@@ -10557,8 +10599,7 @@ function App(){
             {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cuentascorrientes","ventas"])}
             {renderGrupoMenu("compras","COMPRAS",["proveedores","compras"])}
             {renderGrupoMenu("inventario","INVENTARIO",["productos","stock"])}
-            {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
-            {renderGrupoMenu("personal","PERSONAL",["personal"])}
+            {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","personal","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
             {renderGrupoMenu("herramientas","HERRAMIENTAS",["maps","difusion","speeches","notas","asistente"])}
             {TABS.filter(t=>t.key==="config").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",marginTop:5,borderRadius:10,fontSize:14,fontWeight:tab===item.key?750:650,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label==="Config"?"Configuración":item.label}</button>)}
           </nav>
