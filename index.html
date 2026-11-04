@@ -481,7 +481,8 @@ const GASTO_CATEGORIAS=[
   {key:"servicios_per",label:"Servicios personales",icon:"💡",tipo:"personal"},
   {key:"varios_per",label:"Varios / otros (personal)",icon:"🧾",tipo:"personal"},
 ];
-const catGasto=key=>GASTO_CATEGORIAS.find(c=>c.key===key)||GASTO_CATEGORIAS[GASTO_CATEGORIAS.length-1];
+const catsGasto=()=>(typeof window!=="undefined"&&Array.isArray(window.__catGasto)&&window.__catGasto.length)?window.__catGasto:GASTO_CATEGORIAS;
+const catGasto=key=>{const l=catsGasto();return l.find(c=>c.key===key)||GASTO_CATEGORIAS.find(c=>c.key===key)||{key:key||"otro",label:key||"Sin categoría",icon:"🧾",tipo:"negocio"};};
  
 // ── Config Google Calendar ────────────────────────────────────────
 // El Client ID se guarda en localStorage para no hardcodear credenciales.
@@ -819,6 +820,15 @@ function nroRemitoDePedido(pedido){
   return pedido.remitoNro?fmtRemito(pedido.remitoNro):((pedido.id||"").replace(/\D/g,"").slice(-6)||String(Date.now()).slice(-6));
 }
 
+// Saldo de cuenta corriente del cliente para mostrar en el remito: anterior + este remito (si queda a cuenta) = saldo total
+function saldoRemito(pedido,cliente){
+  if(!cliente)return null;
+  const actual=saldoCliente(cliente);
+  const total=pedido.montoTotal||(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
+  const enCC=pedido.pagado?0:total;
+  if(pedido.estado==="entregado")return{anterior:Math.max(0,actual-enCC),remito:enCC,total:actual};
+  return{anterior:actual,remito:enCC,total:actual+enCC};
+}
 // ── Remito PDF (para compartir por WhatsApp) ─────────────────────
 function construirRemitoPDF(pedido,cliente,prods){
   const{jsPDF}=window.jspdf;
@@ -935,6 +945,24 @@ function construirRemitoPDF(pedido,cliente,prods){
   doc.setTextColor(14,74,44);
   doc.text("TOTAL",pageW-marginX-45,y,{align:"right"});
   doc.text(fmtARS(pedido.montoTotal||totalLineas),pageW-marginX,y,{align:"right"});
+
+  // Saldo de cuenta corriente
+  const sr=saldoRemito(pedido,cliente);
+  if(sr){
+    y+=11;
+    doc.setFont("helvetica","normal");doc.setFontSize(10.5);doc.setTextColor(86,91,96);
+    doc.text("Saldo anterior",pageW-marginX-45,y,{align:"right"});
+    doc.text(fmtARS(sr.anterior),pageW-marginX,y,{align:"right"});
+    if(sr.remito>0){
+      y+=6.5;
+      doc.text("Este remito (cuenta corriente)",pageW-marginX-45,y,{align:"right"});
+      doc.text(fmtARS(sr.remito),pageW-marginX,y,{align:"right"});
+    }
+    y+=7.5;
+    doc.setFont("helvetica","bold");doc.setFontSize(12);doc.setTextColor(sr.total>0?196:14,sr.total>0?40:74,sr.total>0?40:44);
+    doc.text("SALDO TOTAL",pageW-marginX-45,y,{align:"right"});
+    doc.text(fmtARS(sr.total),pageW-marginX,y,{align:"right"});
+  }
 
   if(pedido.notas){
     y+=12;
@@ -2501,6 +2529,7 @@ function imprimirRemito(pedido,cliente,prods,formato){
       :`<tr><td>${esc(nom)}${l.esBono?" (bonificado)":""}</td><td class="r">${esc(l.cantidad)}${u}</td><td class="r">${l.descuentoPct>0?"-"+l.descuentoPct+"%":"—"}</td><td class="r"><b>${esc(fmtARS(l.monto||0))}</b></td></tr>`;
   }).join("");
   const montoDesc=pedido.descuentoPct>0?Math.round(totalLineas*pedido.descuentoPct/100):0;
+  const sr=saldoRemito(pedido,cliente);
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>Remito ${esc(nro)}</title><style>
 @page{size:${pagina};margin:${margen}}
 *{box-sizing:border-box}
@@ -2531,6 +2560,7 @@ ${cliente&&cliente.telefono?`<div class="sub">Tel: ${esc(cliente.telefono)}</div
 ${montoDesc?`<div>Descuento pedido (${esc(pedido.descuentoPct)}%): -${esc(fmtARS(montoDesc))}</div>`:""}
 ${pedido.incluyeIVA?"<div>IVA (21%) incluido</div>":""}
 <div class="big">TOTAL ${esc(fmtARS(total))}</div></div>
+${sr?`<div class="tot" style="border-top:1px dashed #999;padding-top:6px"><div>Saldo anterior: ${esc(fmtARS(sr.anterior))}</div>${sr.remito>0?`<div>Este remito (cuenta corriente): ${esc(fmtARS(sr.remito))}</div>`:""}<div style="font-weight:700;color:${sr.total>0?"#B22":"#0E4A2C"}">SALDO TOTAL: ${esc(fmtARS(sr.total))}</div></div>`:""}
 ${pedido.notas?`<div class="sub" style="margin-top:8px"><i>Notas: ${esc(pedido.notas)}</i></div>`:""}
 <div class="firma">Recibí conforme</div>
 <div class="pie">Distribuidora Nómades · Cerveza artesanal</div>
@@ -2550,7 +2580,8 @@ function RemitoOpciones({pedido,cliente,prods,onClose,recienEntregado}){
   const nro=nroRemitoDePedido(pedido);
   const total=pedido.montoTotal||(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
   const resumen=(pedido.lineas||[]).map(l=>{const pr=prods.find(x=>x.id===l.productoId);return`• ${l.cantidad}${pr&&pr.envase==="Lata"?"u":"L"} ${pr?nombreProdEnvase(pr):l.productoId}`;}).join("\n");
-  const texto=`Remito Nº ${nro} — Distribuidora Nómades\n${cliente?cliente.nombre:""}\nEntrega: ${fmtDate(pedido.fechaEntrega)}\n\n${resumen}\n\nTotal: ${fmtARS(total)}`;
+  const srTxt=saldoRemito(pedido,cliente);
+  const texto=`Remito Nº ${nro} — Distribuidora Nómades\n${cliente?cliente.nombre:""}\nEntrega: ${fmtDate(pedido.fechaEntrega)}\n\n${resumen}\n\nTotal: ${fmtARS(total)}${srTxt?`\nSaldo anterior: ${fmtARS(srTxt.anterior)}\nSaldo total: ${fmtARS(srTxt.total)}`:""}`;
   const wa=cliente&&cliente.telefono?waLink(cliente.telefono,texto):null;
   const mail=`mailto:${encodeURIComponent((cliente&&cliente.email)||"")}?subject=${encodeURIComponent(`Remito Nº ${nro} — Distribuidora Nómades`)}&body=${encodeURIComponent(texto)}`;
   const tit={fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"center",margin:"14px 0 6px",fontWeight:700};
@@ -2599,6 +2630,95 @@ function ModalFechaCobro({datos,onClose}){
         <button onClick={onClose} style={{flex:1,minHeight:44,borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:15,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
         <button onClick={()=>{datos.confirmar(fecha||hoyISO());onClose();}} style={{flex:2,minHeight:44,borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer"}}>{datos.boton||"✓ Confirmar cobro"}</button>
       </div>
+    </Modal>
+  );
+}
+// ── Comprobante interno de compra (para archivar): imprime lo cargado en el remito/factura del proveedor ──
+function imprimirCompraInterna(proveedor,g,prods,formato){
+  const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const ticket=formato==="ticket";
+  const pagina=ticket?"80mm auto":formato==="a5"?"A5":"A4";
+  const margen=ticket?"4mm":formato==="a5"?"10mm":"15mm";
+  const base=ticket?12:formato==="a5"?12:14;
+  const esF=g.tipo==="factura";
+  const etiqueta=esF?"Factura":g.tipo==="remito"?"Remito":"Compra";
+  const estado=g.estado==="pagado"?"Pagado":g.estado==="parcial"?"Pago parcial":"Pendiente de pago";
+  const filas=g.rows.map(r=>{
+    const pr=(prods||[]).find(x=>x.id===r.producto);
+    const u=pr&&pr.envase==="Lata"?"u":"L";
+    const nom=pr?nombreProdEnvase(pr):r.producto;
+    const desc=r.descuentoPct>0?`-${r.descuentoPct}%`:(r.descuentoMonto>0?`-${fmtARS(r.descuentoMonto)}`:"—");
+    const neto=fmtARS(Number(r.montoNeto??r.monto)||0);
+    return ticket
+      ?`<tr><td colspan="2">${esc(nom)}</td></tr><tr><td>${esc(r.cantidad)}${u}${r.precioUnit?` × ${esc(fmtARS2(r.precioUnit))}`:""}</td><td class="r">${esc(neto)}</td></tr>`
+      :`<tr><td>${esc(nom)}</td><td class="r">${esc(r.cantidad)}${u}</td><td class="r">${r.precioUnit?esc(fmtARS2(r.precioUnit)):"—"}</td><td class="r">${esc(desc)}</td><td class="r"><b>${esc(neto)}</b></td></tr>`;
+  }).join("");
+  const lineasTot=[];
+  if(esF){
+    lineasTot.push(`Neto: ${fmtARS(g.neto)}`);
+    lineasTot.push(`IVA${g.ivaPct!=null?` (${g.ivaPct}%)`:""}: ${fmtARS(g.iva)}`);
+    (g.otros||[]).forEach(x=>lineasTot.push(`${x.nombre}${x.pct!=null?` (${x.pct}%)`:""}: ${fmtARS(x.monto)}`));
+  }else if(g.gastos>0){
+    lineasTot.push(`Productos: ${fmtARS(g.neto)}`);
+    lineasTot.push(`${g.gastoConcepto}: ${fmtARS(g.gastos)}`);
+  }
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Compra ${esc(etiqueta)} ${esc(g.numero||"")}</title><style>
+@page{size:${pagina};margin:${margen}}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:${base}px;margin:0;${ticket?"width:72mm;":""}}
+h1{font-size:${ticket?15:20}px;margin:0}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E4A2C;padding-bottom:8px;margin-bottom:10px;${ticket?"flex-direction:column;":""}}
+.marca{font-weight:700;color:#0E4A2C;font-size:${ticket?13:16}px}
+.sub{color:#555;font-size:${base-2}px}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th{text-align:left;font-size:${base-3}px;color:#666;text-transform:uppercase;border-bottom:1px solid #999;padding:4px 2px}
+td{padding:${ticket?2:5}px 2px;border-bottom:${ticket?"none":"1px solid #ddd"};vertical-align:top}
+.r{text-align:right}
+.tot{margin-top:10px;text-align:right}
+.tot div{margin:2px 0}
+.big{font-size:${base+4}px;font-weight:700;color:#0E4A2C}
+.firma{margin-top:${ticket?18:40}px;border-top:1px solid #444;width:${ticket?"60%":"45%"};padding-top:3px;font-size:${base-3}px;color:#555}
+.pie{margin-top:12px;text-align:center;color:#888;font-size:${base-3}px}
+</style></head><body>
+<div class="top"><div><div class="marca">Distribuidora Nómades</div><div class="sub">Distribución de cerveza artesanal</div></div>
+<div style="text-align:${ticket?"left":"right"}"><h1>COMPROBANTE INTERNO<br>DE COMPRA</h1></div></div>
+<div><b>${esc(proveedor.nombre||"Proveedor")}</b></div>
+${proveedor.razonSocial&&proveedor.razonSocial!==proveedor.nombre?`<div class="sub">${esc(proveedor.razonSocial)}</div>`:""}
+${proveedor.cuit?`<div class="sub">CUIT: ${esc(proveedor.cuit)}</div>`:""}
+<div class="sub" style="margin-top:4px">${esc(etiqueta)}${g.numero?` Nº ${esc(g.numero)}`:""} · Fecha: ${esc(fmtDate(g.fecha))} · ${esc(estado)}</div>
+<table>${ticket?"":"<thead><tr><th>Producto</th><th class=\"r\">Cant.</th><th class=\"r\">Precio</th><th class=\"r\">Desc.</th><th class=\"r\">Neto</th></tr></thead>"}<tbody>${filas}</tbody></table>
+<div class="tot">${lineasTot.map(l=>`<div>${esc(l)}</div>`).join("")}
+<div class="big">TOTAL ${esc(fmtARS(g.total))}</div></div>
+<div class="sub" style="margin-top:8px">Mercadería ingresada al stock.</div>
+<div class="firma">Recibió / controló</div>
+<div class="pie">Documento interno de control · no válido como factura</div>
+</body></html>`;
+  const f=document.createElement("iframe");
+  f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  document.body.appendChild(f);
+  f.onload=()=>{try{f.contentWindow.focus();f.contentWindow.print();}catch(e){alert("No se pudo abrir la impresión: "+e.message);}setTimeout(()=>{try{document.body.removeChild(f);}catch(e){}},60000);};
+  f.srcdoc=html;
+}
+function CompraImpresionModal({datos,onClose}){
+  if(!datos)return null;
+  const{proveedor,grupo,prods,nuevo}=datos;
+  const etiqueta=grupo.tipo==="factura"?"Factura":grupo.tipo==="remito"?"Remito":"Compra";
+  const bt={flex:1,minHeight:46,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:CR,fontSize:15,fontWeight:700,cursor:"pointer"};
+  return(
+    <Modal open={true} onClose={onClose} title={nuevo?"Compra registrada":"Comprobante interno"}>
+      <div style={{textAlign:"center"}}>
+        {nuevo&&<div style={{width:54,height:54,borderRadius:"50%",border:`3px solid ${GR}`,color:GR,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px",fontSize:28,fontWeight:700}}>✓</div>}
+        <div style={{fontSize:18,fontWeight:700,color:CR}}>{etiqueta}{grupo.numero?` Nº ${grupo.numero}`:""}</div>
+        <div style={{fontSize:13,color:MU,marginTop:2}}>{proveedor.nombre} · {fmtDate(grupo.fecha)}</div>
+        <div style={{fontSize:18,fontWeight:700,color:CR,marginTop:8}}>Total: {fmtARS(grupo.total)}</div>
+      </div>
+      <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"center",margin:"14px 0 6px",fontWeight:700}}>Imprimir comprobante interno</div>
+      <div style={{display:"flex",gap:8}}>
+        <button style={bt} onClick={()=>imprimirCompraInterna(proveedor,grupo,prods,"a5")}>🖨️ A5</button>
+        <button style={bt} onClick={()=>imprimirCompraInterna(proveedor,grupo,prods,"a4")}>A4</button>
+        <button style={bt} onClick={()=>imprimirCompraInterna(proveedor,grupo,prods,"ticket")}>Ticket</button>
+      </div>
+      <button onClick={onClose} style={{width:"100%",minHeight:46,marginTop:16,borderRadius:10,border:"none",background:G,color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Listo</button>
     </Modal>
   );
 }
@@ -3030,6 +3150,7 @@ function agruparCompras(compras){
       iva:rows.reduce((s,r)=>s+(Number(r.ivaMonto)||0),0),
       otros:Array.isArray(first.compImpuestos)?first.compImpuestos:(rows.reduce((s,r)=>s+(Number(r.otrosImpuestos)||0),0)>0?[{id:"manual",nombre:"Otros impuestos",pct:null,monto:redondear2(rows.reduce((s,r)=>s+(Number(r.otrosImpuestos)||0),0))}]:[]),
       ivaPct:first.ivaPct,
+      gastos:redondear2(rows.reduce((s,r)=>s+(Number(r.gastosExtra)||0),0)),gastoConcepto:first.gastosExtraConcepto||"Gastos extra",
       estado:pagadas===rows.length?"pagado":pagadas===0?"pendiente":"parcial",
     };
   }).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
@@ -3043,11 +3164,15 @@ function filasDeComprobante(comp,comprobanteId,previas){
   const ivaTot=esF?redondear2(comp.lineas.reduce((s,l,i)=>s+netos[i]*(Number(l.ivaPct)||0)/100,0)):0;
   const otrosTot=esF?redondear2((comp.impuestos||[]).reduce((s,x)=>s+(Number(x.monto)||0),0)):0;
   const ivas=comp.lineas.map((l,i)=>esF?redondear2(netos[i]*(Number(l.ivaPct)||0)/100):0),otros=prorratear(otrosTot,netos);
+  // Gastos extra (p. ej. transporte) de un remito: se suman a lo que se le debe al proveedor, prorrateados entre los productos
+  const gastoTot=!esF&&comp.gastoExtra?redondear2(Number(comp.gastoExtra.monto)||0):0;
+  const gastos=prorratear(gastoTot,netos);
   return comp.lineas.map((l,i)=>{
     const prev=l.rowId?(previas||[]).find(r=>r.id===l.rowId):null;
     const fila={
       id:(prev&&prev.id)||uid(),comprobanteId,fecha:comp.fecha,producto:l.producto,cantidad:Number(l.cantidad),
-      monto:redondear2(netos[i]+ivas[i]+otros[i]),montoNeto:netos[i],
+      monto:redondear2(netos[i]+ivas[i]+otros[i]+(gastos[i]||0)),montoNeto:netos[i],
+      ...(gastoTot>0?{gastosExtra:gastos[i]||0,gastosExtraConcepto:(comp.gastoExtra.concepto||"Gastos extra").trim()}:{}),
       precioUnit:Number(l.precioUnit)||0,descuentoMonto:calc[i].desc,descuentoPct:l.descTipo==='pct'&&Number(l.descValor)>0?Number(l.descValor):null,
       tipoComprobante:comp.tipoComprobante,numeroComprobante:comp.numeroComprobante||"",
       ivaPct:esF?(Number(l.ivaPct)||0):null,ivaMonto:ivas[i],otrosImpuestos:otros[i],compImpuestos:esF?(comp.impuestos||[]):[],
@@ -3064,7 +3189,7 @@ function filasDeComprobante(comp,comprobanteId,previas){
 }
 // Estado inicial del formulario: vacío, o reconstruido desde las filas de un comprobante existente
 function estadoInicialComprobante(rows,impuestos){
-  if(!rows||!rows.length)return{fecha:hoyISO(),tipo:"remito",numero:"",ivaPct:"21",pagado:false,lineas:[nuevaLineaCompra()],impSel:{},manual:"",huerfanos:[]};
+  if(!rows||!rows.length)return{fecha:hoyISO(),tipo:"remito",numero:"",ivaPct:"21",pagado:false,lineas:[nuevaLineaCompra()],impSel:{},manual:"",huerfanos:[],gastoConcepto:"Transporte",gastoMonto:""};
   const first=rows[0];
   const impSel={},huerfanos=[];let manual="";
   if(Array.isArray(first.compImpuestos)){
@@ -3089,6 +3214,7 @@ function estadoInicialComprobante(rows,impuestos){
       return{id:uid(),rowId:r.id,producto:r.producto,cantidad:String(r.cantidad??""),precio:String(precio),descTipo:esPct||!(desc>0)?"pct":"monto",descValor:esPct?String(r.descuentoPct):(desc>0?String(desc):"")};
     }),
     impSel,manual,huerfanos,
+    gastoConcepto:first.gastosExtraConcepto||"Transporte",gastoMonto:(()=>{const g=redondear2(rows.reduce((a,r)=>a+(Number(r.gastosExtra)||0),0));return g>0?String(g):"";})(),
   };
 }
 
@@ -3177,7 +3303,8 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
     ...((Number(f.manual)||0)>0?[{id:"manual",nombre:"Otros (monto manual)",pct:null,monto:redondear2(Number(f.manual))}]:[]),
   ]:[];
   const otrosTotal=impAplicados.reduce((s,x)=>s+x.monto,0);
-  const total=redondear2(totalNeto+ivaMonto+otrosTotal);
+  const gastoExtraMonto=!esFactura?redondear2(Number(f.gastoMonto)||0):0;
+  const total=redondear2(totalNeto+ivaMonto+otrosTotal+gastoExtraMonto);
 
   const tocada=l=>l.producto||l.cantidad||l.precio;
   const completa=l=>l.producto&&Number(l.cantidad)>0&&Number(l.precio)>0;
@@ -3191,6 +3318,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
     onSave({
       fecha:f.fecha,tipoComprobante:f.tipo,numeroComprobante:f.numero.trim(),
       ivaPct:esFactura?(Number(f.ivaPct)||0):null,impuestos:impAplicados,pagado:f.pagado,
+      gastoExtra:gastoExtraMonto>0?{concepto:(f.gastoConcepto||"").trim()||"Gastos extra",monto:gastoExtraMonto}:null,
       lineas:lineasOk.map(l=>({rowId:l.rowId,producto:l.producto,cantidad:Number(l.cantidad),precioUnit:Number(l.precio),descTipo:l.descTipo,descValor:Number(l.descValor)||0,ivaPct:esFactura&&proveedorIvaCondicion!=="monotributo"&&proveedorIvaCondicion!=="exento"?ivaProductoPct(prodDe(l.producto)):0})),
     });
   };
@@ -3317,8 +3445,25 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
         </div>
       )}
 
+      {!esFactura&&(
+        <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:12}}>
+          <Lbl t="Gastos extra del remito (opcional)"/>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.2fr) minmax(0,1fr)",gap:8}}>
+            <input value={f.gastoConcepto} onChange={e=>setF(p=>({...p,gastoConcepto:e.target.value}))} placeholder="Concepto (ej: Transporte)"/>
+            <input type="number" inputMode="decimal" step="0.01" min="0" value={f.gastoMonto} onChange={e=>setF(p=>({...p,gastoMonto:e.target.value}))} placeholder="Importe ARS"/>
+          </div>
+          <div style={{fontSize:12,color:MU,marginTop:6}}>Se suma al total que le debés al proveedor (se reparte entre los productos del remito) y entra en el costo en Rentabilidad. No cambia el precio por litro cargado.</div>
+        </div>
+      )}
+
       {totalNeto>0&&(
         <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 12px",fontSize:14,color:MU,display:"flex",flexDirection:"column",gap:2}}>
+          {!esFactura&&gastoExtraMonto>0&&(
+            <>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>Productos</span><span>{fmtARS(totalNeto)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>{(f.gastoConcepto||"").trim()||"Gastos extra"}</span><span>{fmtARS(gastoExtraMonto)}</span></div>
+            </>
+          )}
           {esFactura&&(
             <>
               <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(totalNeto)}</span></div>
@@ -4655,7 +4800,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
   const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
   if(edit)return<FormProveedor initial={proveedor} marcasDisponibles={marcasDisponibles} existingProviders={proveedoresActuales} onCancel={()=>setEdit(false)} onSave={f=>{const c=normalizarCUIT(f.cuit);const dup=(window.__nomadesProveedoresActuales||[]).some(p=>p.id!==proveedor.id&&normalizarCUIT(p.cuit)===c);if(dup){alert("Ya existe otro proveedor con ese CUIT.");return;}onUpdate({...proveedor,...f});setEdit(false);}}/>;
 
-  // Stock: cada compra suma al stock del producto; editar ajusta por la diferencia; eliminar revierte (sin bajar de 0).
+  // Stock: cada compra suma al stock del producto; editar ajusta por la diferencia; eliminar revierte (el stock puede quedar en negativo).
   const deltaDe=(filas,signo,acum)=>{const d=acum||{};filas.forEach(r=>{d[r.producto]=(d[r.producto]||0)+signo*(Number(r.cantidad)||0);});return d;};
   const ajustarStock=(delta,piso)=>setProds(prev=>prev.map(p=>delta[p.id]?{...p,stock:piso?Math.max(0,(Number(p.stock)||0)+delta[p.id]):(Number(p.stock)||0)+delta[p.id]}:p));
 
@@ -4666,6 +4811,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
     ajustarStock(deltaDe(filas,1),false);
     setProds(prev=>prev.map(p=>{const r=[...filas].reverse().find(x=>x.producto===p.id);return r?{...p,precioCompra:(Number(r.cantidad)>0?Number(r.montoNeto||0)/Number(r.cantidad):0)||Number(r.precioUnit)||Number(p.precioCompra)||0}:p;}));
     setCForm(false);
+    setImpComp({proveedor,grupo:agruparCompras(filas)[0],prods,nuevo:true});
   };
   // Editar comprobante: reemplaza sus filas (conservando ids y pagos) y ajusta el stock por la diferencia.
   const guardarEdicion=(grupo,comp)=>{
@@ -4681,13 +4827,15 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
     if(!grupo)return;
     const ids=new Set(grupo.rows.map(r=>r.id));
     onUpdate({...proveedor,compras:(proveedor.compras||[]).filter(c=>!ids.has(c.id))});
-    ajustarStock(deltaDe(grupo.rows,-1),true);
+    ajustarStock(deltaDe(grupo.rows,-1),false);
     setBorrandoKey(null);
   };
   const grupoBorrando=grupos.find(g=>g.key===borrandoKey);
+  const[impComp,setImpComp]=useState(null);
 
   return(
     <div>
+      <CompraImpresionModal datos={impComp} onClose={()=>setImpComp(null)}/>
       <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",marginBottom:16}}>
         <div style={{display:"flex",gap:4}}>
           <button onClick={()=>setEdit(true)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
@@ -4733,6 +4881,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
                   <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(g.total)}</div>
                   <div style={{fontSize:13,fontWeight:600,color:colorEstado}}>{textoEstado}</div>
                 </div>
+                <button onClick={()=>setImpComp({proveedor,grupo:g,prods,nuevo:false})} aria-label="Imprimir comprobante interno" title="Imprimir comprobante interno" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0,fontSize:16}}>🖨️</button>
                 <button onClick={()=>setEditandoKey(g.key)} aria-label="Editar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
                 <button onClick={()=>setBorrandoKey(g.key)} aria-label="Eliminar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
               </div>
@@ -4743,10 +4892,13 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
                 return(
                   <div key={r.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
                     <span style={{color:CR,minWidth:0}}>{p?nombreProdEnvase(p):r.producto} <span style={{color:MU}}>· {r.cantidad}{p&&p.envase==="Lata"?"u":"L"}{r.precioUnit?` × ${fmtARS2(r.precioUnit)}`:""}{r.descuentoMonto>0?` · desc. ${r.descuentoPct!=null?`${r.descuentoPct}%`:fmtARS(r.descuentoMonto)}`:""}</span></span>
-                    <span style={{color:MU,flexShrink:0}}>{fmtARS(esF?(r.montoNeto??r.monto):r.monto)}</span>
+                    <span style={{color:MU,flexShrink:0}}>{fmtARS(r.montoNeto??r.monto)}</span>
                   </div>
                 );
               })}
+              {!esF&&g.gastos>0&&(
+                <div style={{marginTop:4,paddingTop:6,borderTop:`1px dashed ${BO}`,fontSize:13,color:MU,display:"flex",justifyContent:"space-between"}}><span>{g.gastoConcepto}</span><span>{fmtARS(g.gastos)}</span></div>
+              )}
               {esF&&(
                 <div style={{marginTop:4,paddingTop:6,borderTop:`1px dashed ${BO}`,fontSize:13,color:MU,display:"flex",flexDirection:"column",gap:2}}>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(g.neto)}</span></div>
@@ -4787,6 +4939,7 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
   const[compraNuevaId,setCompraNuevaId]=useState(null);
+  const[impresionCompra,setImpresionCompra]=useState(null);
   const filtered=useMemo(()=>(proveedores||[]).filter(p=>{const t=q.toLowerCase();return!t||(p.nombre||"").toLowerCase().includes(t);}).sort((a,b)=>{
     if(orden==="deuda")return saldoProveedor(b)-saldoProveedor(a);
     return(a.nombre||"").localeCompare(b.nombre||"");
@@ -4794,9 +4947,10 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
   const selObj=(proveedores||[]).find(p=>p.id===sel);
   const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
   const proveedorCompra=(proveedores||[]).find(p=>p.id===compraNuevaId);
-  if(proveedorCompra)return <RegistroCompraPagina proveedor={proveedorCompra} prods={prods} setProds={setProds} impuestos={impuestos} onCancel={()=>setCompraNuevaId(null)} onSave={comp=>{const filas=filasDeComprobante(comp,uid(),[]);setProveedores(prev=>prev.map(p=>p.id===proveedorCompra.id?{...p,compras:[...(p.compras||[]),...filas]}:p));const cantidades={};filas.forEach(r=>{cantidades[r.producto]=(cantidades[r.producto]||0)+(Number(r.cantidad)||0);});setProds(prev=>prev.map(p=>{const fila=[...filas].reverse().find(r=>r.producto===p.id);return cantidades[p.id]?{...p,stock:(Number(p.stock)||0)+cantidades[p.id],precioCompra:Math.max(0,(Number(fila?.cantidad)>0?Number(fila?.montoNeto||0)/Number(fila?.cantidad):0)||Number(fila?.precioUnit)||Number(p.precioCompra)||0)}:p;}));setCompraNuevaId(null);}}/>;
+  if(proveedorCompra)return <RegistroCompraPagina proveedor={proveedorCompra} prods={prods} setProds={setProds} impuestos={impuestos} onCancel={()=>setCompraNuevaId(null)} onSave={comp=>{const filas=filasDeComprobante(comp,uid(),[]);setProveedores(prev=>prev.map(p=>p.id===proveedorCompra.id?{...p,compras:[...(p.compras||[]),...filas]}:p));const cantidades={};filas.forEach(r=>{cantidades[r.producto]=(cantidades[r.producto]||0)+(Number(r.cantidad)||0);});setProds(prev=>prev.map(p=>{const fila=[...filas].reverse().find(r=>r.producto===p.id);return cantidades[p.id]?{...p,stock:(Number(p.stock)||0)+cantidades[p.id],precioCompra:Math.max(0,(Number(fila?.cantidad)>0?Number(fila?.montoNeto||0)/Number(fila?.cantidad):0)||Number(fila?.precioUnit)||Number(p.precioCompra)||0)}:p;}));setCompraNuevaId(null);setImpresionCompra({proveedor:proveedorCompra,grupo:agruparCompras(filas)[0],prods,nuevo:true});}}/>;
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <CompraImpresionModal datos={impresionCompra} onClose={()=>setImpresionCompra(null)}/>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Proveedores</span>
         <Btn onClick={()=>setShowNew(true)} small>{I.plus}Nuevo</Btn>
@@ -5153,19 +5307,14 @@ function FormGasto({initial,onSave,onCancel,onDelete}){
     medioPago:initial.medioPago||"",
   });
   const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const categoriasDelTipo=GASTO_CATEGORIAS.filter(c=>c.tipo===f.tipo);
-  const cambiarTipo=tipo=>setF(p=>({...p,tipo,categoria:GASTO_CATEGORIAS.find(c=>c.tipo===tipo).key}));
+  const categoriasDelTipo=catsGasto().filter(c=>c.tipo===f.tipo);
+  const cambiarTipo=tipo=>setF(p=>({...p,tipo,categoria:(catsGasto().find(c=>c.tipo===tipo)||{key:"varios_neg"}).key}));
   const guardar=()=>{
     if(!f.monto||Number(f.monto)<=0)return;
     onSave({...f,monto:Number(f.monto)});
   };
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{display:"flex",gap:8}}>
-        {[{k:"negocio",l:"🏢 Negocio"},{k:"personal",l:"🏠 Personal"}].map(t=>(
-          <button key={t.k} onClick={()=>cambiarTipo(t.k)} style={{flex:1,padding:"10px 0",borderRadius:10,fontSize:15,fontWeight:700,cursor:"pointer",border:`1px solid ${f.tipo===t.k?G:BO}`,background:f.tipo===t.k?G:"transparent",color:f.tipo===t.k?"#fff":MU}}>{t.l}</button>
-        ))}
-      </div>
       <div><Lbl t="Categoría"/><select value={f.categoria} onChange={s("categoria")}>{categoriasDelTipo.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
@@ -5190,10 +5339,10 @@ function FormGasto({initial,onSave,onCancel,onDelete}){
     </div>
   );
 }
-function Gastos({gastos,setGastos}){
+function Gastos({gastos:gastosTodos,setGastos}){
+  const gastos=useMemo(()=>(gastosTodos||[]).filter(g=>g.tipo!=="personal"),[gastosTodos]);
   const[modalOpen,setModalOpen]=useState(false);
   const[editing,setEditing]=useState(null);
-  const[filtroTipo,setFiltroTipo]=useState("todos");
   const[filtroMes,setFiltroMes]=useState(hoyISO().slice(0,7));
 
   const nuevoGasto=()=>{setEditing({});setModalOpen(true);};
@@ -5217,11 +5366,9 @@ function Gastos({gastos,setGastos}){
 
   const delMes=useMemo(()=>(gastos||[]).filter(g=>(g.fecha||"").slice(0,7)===filtroMes),[gastos,filtroMes]);
   const totalNegocioMes=delMes.filter(g=>g.tipo==="negocio").reduce((s,g)=>s+g.monto,0);
-  const totalPersonalMes=delMes.filter(g=>g.tipo==="personal").reduce((s,g)=>s+g.monto,0);
 
   const filtrados=useMemo(()=>[...delMes]
-    .filter(g=>filtroTipo==="todos"||g.tipo===filtroTipo)
-    .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)||new Date(b.creadoEn||0)-new Date(a.creadoEn||0)),[delMes,filtroTipo]);
+        .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)||new Date(b.creadoEn||0)-new Date(a.creadoEn||0)),[delMes]);
 
   const porCategoria=useMemo(()=>{
     const map={};
@@ -5237,26 +5384,15 @@ function Gastos({gastos,setGastos}){
         <span className="bebas" style={{fontSize:30,color:CR}}>Gastos</span>
         <Btn variant="green" small onClick={nuevoGasto}>{I.plus}Nuevo</Btn>
       </div>
-      <p style={{fontSize:14,color:MU,marginBottom:14}}>Gastos del negocio y personales, para ver el margen real.</p>
+      <p style={{fontSize:14,color:MU,marginBottom:14}}>Gastos del negocio, para ver el margen real. Los personales están en su propia sección.</p>
 
       <input type="month" value={filtroMes} onChange={e=>setFiltroMes(e.target.value)} style={{marginBottom:12,textTransform:"capitalize"}}/>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:14}}>
-        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>🏢 Negocio</div>
-          <div className="bebas" style={{fontSize:20,color:CR}}>{fmtARS(totalNegocioMes)}</div>
-        </div>
-        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>🏠 Personal</div>
-          <div className="bebas" style={{fontSize:20,color:CR}}>{fmtARS(totalPersonalMes)}</div>
-        </div>
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>🏢 Total del negocio</div>
+        <div className="bebas" style={{fontSize:22,color:CR}}>{fmtARS(totalNegocioMes)}</div>
       </div>
 
-      <div style={{display:"flex",gap:8,marginBottom:14,overflowX:"auto",paddingBottom:4}}>
-        {[{k:"todos",l:"Todos"},{k:"negocio",l:"🏢 Negocio"},{k:"personal",l:"🏠 Personal"}].map(t=>(
-          <button key={t.k} onClick={()=>setFiltroTipo(t.k)} style={{whiteSpace:"nowrap",padding:"6px 14px",borderRadius:20,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtroTipo===t.k?G:BO}`,background:filtroTipo===t.k?G:"transparent",color:filtroTipo===t.k?"#fff":MU}}>{t.l}</button>
-        ))}
-      </div>
 
       {porCategoria.length>0&&(
         <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:16}}>
@@ -5590,10 +5726,10 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       });
       return{...c,ventas:[...c.ventas,...nuevasVentas]};
     }));
-    // Descuenta del stock lo entregado (latas en unidades, el resto en litros), incluidas las líneas bonificadas; nunca baja de 0
+    // Descuenta del stock lo entregado (latas en unidades, el resto en litros), incluidas las líneas bonificadas; puede quedar en negativo
     const salida={};
     (ped.lineas||[]).forEach(l=>{if(l.productoId)salida[l.productoId]=(salida[l.productoId]||0)+(Number(l.cantidad)||0);});
-    setProds(prev=>prev.map(x=>salida[x.id]?{...x,stock:Math.max(0,Math.round(((Number(x.stock)||0)-salida[x.id])*100)/100)}:x));
+    setProds(prev=>prev.map(x=>salida[x.id]?{...x,stock:Math.round(((Number(x.stock)||0)-salida[x.id])*100)/100}:x));
     setPedidos(prev=>prev.map(p=>p.id===pedidoId?{...p,estado:"entregado",remitoNro:nroRem,stockDescontado:true}:p));
     setRemitoModal({id:pedidoId,nuevo:true});
   };
@@ -6445,7 +6581,6 @@ function Speeches({speeches,setSpeeches}){
 function CajaBalance({todas,proveedores,gastos}){
   const[periodo,setPeriodo]=useState("mes"); // dia | mes | anio | todo
   const[ref,setRef]=useState(hoyISO());
-  const[incPersonales,setIncPersonales]=useState(false);
   const[verMov,setVerMov]=useState(false);
   const[criterio,setCriterio]=useState("operacion"); // operacion | caja
   const f0=n=>fmtARS(Math.round(Number(n)||0));
@@ -6469,12 +6604,12 @@ function CajaBalance({todas,proveedores,gastos}){
       arr.push({tipo:"debe",fecha:f,monto:c.monto||0,concepto:`Pago compra · ${p.nombre}${eq?" (ECHEQ)":""}`,hecho:f<=hoyC,cat:"compra"});
     }));
     (gastos||[]).forEach(g=>{
-      if(g.tipo==="personal"&&!incPersonales)return;
-      const cat=(typeof GASTO_CATEGORIAS!=="undefined"&&GASTO_CATEGORIAS.find(c=>c.key===g.categoria))||null;
+      if(g.tipo==="personal")return;
+      const cat=catGasto(g.categoria);
       arr.push({tipo:"debe",fecha:g.fecha||"",monto:g.monto||0,concepto:`Gasto · ${cat?cat.label:(g.categoria||"")}${g.descripcion?` — ${g.descripcion}`:""}`,hecho:true,cat:"gasto"});
     });
     return arr.filter(m=>m.fecha);
-  },[todas,proveedores,gastos,incPersonales,criterio]);
+  },[todas,proveedores,gastos,criterio]);
 
   const clave=periodo==="dia"?ref.slice(0,10):periodo==="mes"?ref.slice(0,7):periodo==="anio"?ref.slice(0,4):"";
   const largo=clave.length;
@@ -6548,14 +6683,11 @@ function CajaBalance({todas,proveedores,gastos}){
       </div>
       <div style={{fontSize:13,color:CR,lineHeight:1.7,borderTop:`1px solid ${BO}`,paddingTop:8}}>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🛒 Compras a proveedores</span><b>{f0(compras)}</b></div>
-        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🧾 Gastos{incPersonales?" (con personales)":" del negocio"}</span><b>{f0(gastosT)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>🧾 Gastos del negocio</span><b>{f0(gastosT)}</b></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>📈 Ventas facturadas</span><b>{f0(haber)}</b></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>💰 Rentabilidad de ventas (comisión)</span><b style={{color:G}}>{f0(ganancia)} · {rentPct}%</b></div>
         {criterio==="operacion"&&<div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo realizado (cobrado − pagado)</span><b style={{color:colSaldo(haberCobrado-debePagado)}}>{f0(haberCobrado-debePagado)}</b></div>}
       </div>
-      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:MU,marginTop:10,cursor:"pointer"}}>
-        <input type="checkbox" checked={incPersonales} onChange={e=>setIncPersonales(e.target.checked)} style={{width:16,height:16}}/>Incluir gastos personales
-      </label>
       {periodo!=="dia"&&filas.length>0&&(
         <div style={{marginTop:12,border:`1px solid ${BO}`,borderRadius:12,overflow:"hidden"}}>
           <div style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1fr 1fr",gap:6,padding:"7px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase"}}>
@@ -8512,6 +8644,293 @@ function GestorImpuestos({impuestos,setImpuestos}){
 }
 
 // ── Gestor de categorías de producto (Configuración) ────────────────────────────────
+// ── GASTOS PERSONALES: separados del negocio (no entran en el balance de Caja), con resumen mensual y pagos a futuro / cuotas ──
+const fmtMesLargo=k=>{const[y,m]=k.split("-");return new Date(Number(y),Number(m)-1,1).toLocaleDateString("es-AR",{month:"long",year:"numeric"});};
+function fechaMasMeses(iso,n){
+  const[y,m,d]=iso.split("-").map(Number);
+  const t=new Date(y,m-1+n,1);
+  const ult=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(Math.min(d,ult)).padStart(2,"0")}`;
+}
+const gastoPagado=g=>g.pagado!==false;
+
+function FormGastoPersonal({initial,onSave,onCancel,onDelete,onDeleteFuturas}){
+  const nuevo=!initial.id;
+  const cats=catsGasto().filter(c=>c.tipo==="personal");
+  const[f,setF]=useState({
+    fecha:initial.fecha||hoyISO(),
+    categoria:initial.categoria||(cats[0]?cats[0].key:"varios_per"),
+    monto:initial.monto?String(initial.monto):"",
+    descripcion:initial.descripcion||"",
+    medioPago:initial.medioPago||"",
+    pagado:initial.id?gastoPagado(initial):true,
+    modo:"unico",cuotas:"3",
+  });
+  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const montoNum=Number(f.monto)||0;
+  const nCuotas=Math.max(2,Math.min(60,Math.round(Number(f.cuotas)||0)));
+  const total=f.modo==="unico"?montoNum:montoNum*nCuotas;
+  const guardar=()=>{
+    if(montoNum<=0)return;
+    const base={tipo:"personal",categoria:f.categoria,descripcion:f.descripcion.trim(),medioPago:f.medioPago};
+    if(!nuevo){onSave([{...base,fecha:f.fecha,monto:montoNum,pagado:f.pagado,...(f.pagado&&!gastoPagado(initial)?{fechaPago:hoyISO()}:{})}]);return;}
+    if(f.modo==="unico"){onSave([{...base,fecha:f.fecha,monto:montoNum,pagado:f.fecha<=hoyISO()?true:false}]);return;}
+    const grupoId=uid();
+    const lista=[];
+    for(let i=0;i<nCuotas;i++){
+      const fecha=fechaMasMeses(f.fecha,i);
+      lista.push({...base,fecha,monto:montoNum,pagado:fecha<=hoyISO(),
+        descripcion:`${f.descripcion.trim()||(f.modo==="cuotas"?"Cuota":"Pago mensual")} (${f.modo==="cuotas"?"cuota":"mes"} ${i+1}/${nCuotas})`,
+        cuota:{grupoId,n:i+1,total:nCuotas,tipo:f.modo}});
+    }
+    onSave(lista);
+  };
+  const chip=(k,t)=>(<button key={k} onClick={()=>setF(p=>({...p,modo:k}))} style={{flex:1,padding:"9px 4px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${f.modo===k?G:BO}`,background:f.modo===k?G:"transparent",color:f.modo===k?"#fff":MU}}>{t}</button>);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {nuevo&&<div style={{display:"flex",gap:6}}>{chip("unico","Pago único")}{chip("cuotas","En cuotas")}{chip("fijo","Mensual fijo")}</div>}
+      <div><Lbl t="Categoría"/><select value={f.categoria} onChange={s("categoria")}>{cats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</select></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+        <div><Lbl t={nuevo&&f.modo!=="unico"?"Fecha del 1.er pago":"Fecha"}/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
+        <div><Lbl t={nuevo&&f.modo!=="unico"?"Importe de cada pago":"Monto ARS"}/><input type="number" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
+      </div>
+      {nuevo&&f.modo!=="unico"&&(
+        <div>
+          <Lbl t={f.modo==="cuotas"?"Cantidad de cuotas":"Cantidad de meses"}/>
+          <input type="number" inputMode="numeric" min="2" max="60" value={f.cuotas} onChange={s("cuotas")}/>
+          <div style={{fontSize:12,color:MU,marginTop:6}}>Se cargan {nCuotas} pagos, uno por mes{montoNum>0?` · total ${fmtARS(total)}`:""}. Los de fechas futuras quedan como "A pagar" y aparecen en Próximos pagos.</div>
+        </div>
+      )}
+      <div><Lbl t="Descripción (opcional)"/><input value={f.descripcion} onChange={s("descripcion")} placeholder="Ej: Heladera, tarjeta Visa, alquiler"/></div>
+      <div>
+        <Lbl t="Medio de pago (opcional)"/>
+        <select value={f.medioPago} onChange={s("medioPago")}><option value="">Sin especificar</option><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option><option value="debito">Débito automático</option></select>
+      </div>
+      {!nuevo&&<label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,color:CR,cursor:"pointer"}}><input type="checkbox" checked={f.pagado} onChange={e=>setF(p=>({...p,pagado:e.target.checked}))} style={{width:18,height:18}}/>Ya está pagado</label>}
+      {!nuevo&&initial.cuota&&onDeleteFuturas&&<button onClick={onDeleteFuturas} style={{padding:"9px 0",borderRadius:10,background:RE+"11",border:`1px solid ${RE}33`,color:RE,fontSize:13,fontWeight:700,cursor:"pointer"}}>Eliminar todas las cuotas pendientes de este plan</button>}
+      <div style={{display:"flex",gap:8,paddingTop:4,alignItems:"center"}}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        {onDelete&&<button onClick={onDelete} title="Eliminar" style={{width:42,height:42,borderRadius:10,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{I.trash}</button>}
+        <div style={{flex:1}}/>
+        <Btn variant="green" onClick={guardar} disabled={montoNum<=0}>Guardar</Btn>
+      </div>
+    </div>
+  );
+}
+
+function imprimirResumenPersonal(d){
+  const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const filasCat=d.porCategoria.map(([k,m])=>{const c=catGasto(k);return`<tr><td>${esc(c.icon)} ${esc(c.label)}</td><td class="r">${esc(fmtARS(m))}</td><td class="r">${d.total>0?Math.round(m/d.total*100):0}%</td></tr>`;}).join("");
+  const filasDet=d.lista.map(g=>{const c=catGasto(g.categoria);return`<tr><td>${esc(fmtDateCorta(g.fecha))}</td><td>${esc(g.descripcion||c.label)}<div class="s">${esc(c.label)}</div></td><td>${gastoPagado(g)?"Pagado":"A pagar"}</td><td class="r">${esc(fmtARS(g.monto))}</td></tr>`;}).join("");
+  const filasProx=d.proximos.map(g=>{const c=catGasto(g.categoria);return`<tr><td>${esc(fmtDateCorta(g.fecha))}</td><td>${esc(g.descripcion||c.label)}</td><td class="r">${esc(fmtARS(g.monto))}</td></tr>`;}).join("");
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Resumen ${esc(d.mesLabel)}</title><style>
+@page{size:A4;margin:15mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px;margin:0}
+h1{font-size:22px;margin:0 0 2px;color:#0E4A2C}h2{font-size:14px;margin:18px 0 6px;color:#0E4A2C;border-bottom:1px solid #999;padding-bottom:3px}
+.s{color:#666;font-size:11px}table{width:100%;border-collapse:collapse}td,th{padding:4px 3px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}th{font-size:11px;color:#666;text-transform:uppercase}.r{text-align:right}
+.cards{display:flex;gap:10px;margin-top:10px}.card{flex:1;border:1px solid #ccc;border-radius:8px;padding:8px 10px}.card b{display:block;font-size:17px;margin-top:2px}
+</style></head><body>
+<h1>Resumen de gastos personales</h1><div class="s" style="text-transform:capitalize">${esc(d.mesLabel)} · generado el ${esc(fmtDate(hoyISO()))}</div>
+<div class="cards"><div class="card">Total del mes<b>${esc(fmtARS(d.total))}</b></div><div class="card">Pagado<b>${esc(fmtARS(d.gastado))}</b></div><div class="card">A pagar<b>${esc(fmtARS(d.aPagar))}</b></div></div>
+<h2>Por categoría</h2><table><tbody>${filasCat||"<tr><td>Sin gastos</td></tr>"}</tbody></table>
+<h2>Detalle del mes</h2><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Estado</th><th class="r">Monto</th></tr></thead><tbody>${filasDet||"<tr><td colspan='4'>Sin movimientos</td></tr>"}</tbody></table>
+${filasProx?`<h2>Próximos pagos pendientes</h2><table><tbody>${filasProx}</tbody></table>`:""}
+</body></html>`;
+  const f=document.createElement("iframe");
+  f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  document.body.appendChild(f);
+  f.onload=()=>{try{f.contentWindow.focus();f.contentWindow.print();}catch(e){alert("No se pudo abrir la impresión: "+e.message);}setTimeout(()=>{try{document.body.removeChild(f);}catch(e){}},60000);};
+  f.srcdoc=html;
+}
+
+function GastosPersonales({gastos,setGastos}){
+  const hoy=hoyISO();
+  const[mes,setMes]=useState(hoy.slice(0,7));
+  const[modal,setModal]=useState(null);
+  const personales=useMemo(()=>(gastos||[]).filter(g=>g.tipo==="personal"),[gastos]);
+  const mover=d=>{const[y,m]=mes.split("-").map(Number);const t=new Date(y,m-1+d,1);setMes(`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`);};
+  const delMes=useMemo(()=>personales.filter(g=>(g.fecha||"").slice(0,7)===mes).sort((a,b)=>b.fecha.localeCompare(a.fecha)),[personales,mes]);
+  const suma=arr=>arr.reduce((s,g)=>s+(Number(g.monto)||0),0);
+  const gastado=suma(delMes.filter(gastoPagado));
+  const aPagar=suma(delMes.filter(g=>!gastoPagado(g)));
+  const total=gastado+aPagar;
+  const mesAnt=(()=>{const[y,m]=mes.split("-").map(Number);const t=new Date(y,m-2,1);return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`;})();
+  const totalAnt=suma(personales.filter(g=>(g.fecha||"").slice(0,7)===mesAnt));
+  const variacion=totalAnt>0?Math.round((total-totalAnt)/totalAnt*100):null;
+  const porCategoria=useMemo(()=>{const m={};delMes.forEach(g=>{m[g.categoria]=(m[g.categoria]||0)+(Number(g.monto)||0);});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[delMes]);
+  const ultimos=useMemo(()=>{
+    const out=[];const[y,m]=mes.split("-").map(Number);
+    for(let i=5;i>=0;i--){const t=new Date(y,m-1-i,1);const k=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`;out.push({k,lbl:t.toLocaleDateString("es-AR",{month:"short"}),monto:suma(personales.filter(g=>(g.fecha||"").slice(0,7)===k))});}
+    return out;
+  },[personales,mes]);
+  const maxUlt=Math.max(1,...ultimos.map(x=>x.monto));
+  const proximos=useMemo(()=>personales.filter(g=>!gastoPagado(g)).sort((a,b)=>a.fecha.localeCompare(b.fecha)),[personales]);
+  const proxPorMes=useMemo(()=>{const m={};proximos.forEach(g=>{const k=g.fecha.slice(0,7);(m[k]=m[k]||{k,total:0,items:[]});m[k].total+=Number(g.monto)||0;m[k].items.push(g);});return Object.values(m).sort((a,b)=>a.k.localeCompare(b.k));},[proximos]);
+  const vencidos=proximos.filter(g=>g.fecha<hoy);
+  const[verProx,setVerProx]=useState(true);
+
+  const guardar=lista=>{
+    if(modal&&modal.id){setGastos(prev=>prev.map(g=>g.id===modal.id?{...g,...lista[0]}:g));}
+    else{const ahora=new Date().toISOString();setGastos(prev=>[...lista.map(x=>({id:uid(),...x,creadoEn:ahora})),...(prev||[])]);if(lista.length>1&&lista[0].fecha)setMes(lista[0].fecha.slice(0,7));}
+    setModal(null);
+  };
+  const eliminar=()=>{if(!modal||!modal.id)return;if(!confirm("¿Eliminar este gasto?"))return;setGastos(prev=>prev.filter(g=>g.id!==modal.id));setModal(null);};
+  const eliminarFuturas=()=>{
+    if(!modal||!modal.cuota)return;
+    const n=personales.filter(g=>g.cuota&&g.cuota.grupoId===modal.cuota.grupoId&&!gastoPagado(g)).length;
+    if(!confirm(`¿Eliminar las ${n} cuotas pendientes de este plan? Las ya pagadas se conservan.`))return;
+    setGastos(prev=>prev.filter(g=>!(g.cuota&&g.cuota.grupoId===modal.cuota.grupoId&&!gastoPagado(g))));setModal(null);
+  };
+  const marcar=(g,pagado)=>setGastos(prev=>prev.map(x=>x.id===g.id?{...x,pagado,fechaPago:pagado?hoyISO():null}:x));
+  const exportarCSV=()=>{
+    const filas=delMes.slice().reverse().map(g=>[g.fecha,`"${catGasto(g.categoria).label}"`,`"${(g.descripcion||"").replace(/"/g,'""')}"`,g.monto,gastoPagado(g)?"Pagado":"A pagar",g.cuota?`${g.cuota.n}/${g.cuota.total}`:"",g.medioPago||""].join(","));
+    const csv="﻿Fecha,Categoría,Descripción,Monto ARS,Estado,Cuota,Medio de pago\n"+filas.join("\n")+`\n,,Total del mes,${total},,,\n`;
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8;"}));a.download=`gastos_personales_${mes}.csv`;a.click();
+  };
+  const fila=(g,conAccion)=>{
+    const c=catGasto(g.categoria);const pag=gastoPagado(g);const venc=!pag&&g.fecha<hoy;
+    return(
+      <div key={g.id} style={{display:"flex",alignItems:"center",gap:10,background:CA,border:`1px solid ${venc?RE+"55":BO}`,borderRadius:14,padding:"10px 12px",marginBottom:8}}>
+        <button onClick={()=>setModal(g)} style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:0,background:"none",border:"none",padding:0,textAlign:"left",cursor:"pointer"}}>
+          <div style={{width:36,height:36,borderRadius:10,background:AM+"1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{c.icon}</div>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.descripcion||c.label}</div>
+            <div style={{fontSize:12,color:venc?RE:MU,fontWeight:venc?700:400}}>{c.label} · {fmtDate(g.fecha)}{!pag?(venc?" · vencido":" · a pagar"):""}</div>
+          </div>
+        </button>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div style={{fontSize:15,fontWeight:700,color:pag?CR:AM}}>{fmtARS(g.monto)}</div>
+          {conAccion&&(pag?<button onClick={()=>marcar(g,false)} style={{fontSize:11,color:MU,background:"none",border:"none",padding:0,cursor:"pointer",textDecoration:"underline"}}>marcar pendiente</button>
+            :<button onClick={()=>marcar(g,true)} style={{fontSize:12,fontWeight:700,color:GR,background:GR+"18",border:`1px solid ${GR}44`,borderRadius:7,padding:"3px 8px",cursor:"pointer",marginTop:2}}>✓ Pagado</button>)}
+        </div>
+      </div>
+    );
+  };
+  return(
+    <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4}}>
+        <span className="bebas" style={{fontSize:30,color:CR}}>Gastos personales</span>
+        <Btn variant="green" small onClick={()=>setModal({})}>{I.plus}Nuevo</Btn>
+      </div>
+      <p style={{fontSize:14,color:MU,marginBottom:14}}>Tu control personal: separado de los gastos y del balance del negocio.</p>
+
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <button onClick={()=>mover(-1)} style={{width:38,height:38,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>‹</button>
+        <div style={{flex:1,textAlign:"center",fontSize:16,fontWeight:700,color:CR,textTransform:"capitalize"}}>{fmtMesLargo(mes)}</div>
+        <button onClick={()=>mover(1)} style={{width:38,height:38,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>›</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,marginBottom:10}}>
+        {[{t:"Total del mes",v:total,c:CR},{t:"Pagado",v:gastado,c:GR},{t:"A pagar",v:aPagar,c:aPagar>0?AM:MU}].map(x=>(
+          <div key={x.t} style={{background:CA,border:`1px solid ${BO}`,borderRadius:14,padding:"10px 10px"}}>
+            <div style={{fontSize:11,color:MU,textTransform:"uppercase",letterSpacing:"0.05em"}}>{x.t}</div>
+            <div className="bebas" style={{fontSize:18,color:x.c}}>{fmtARS(x.v)}</div>
+          </div>
+        ))}
+      </div>
+      {variacion!==null&&<div style={{fontSize:13,color:MU,marginBottom:12}}>{variacion>0?"▲":variacion<0?"▼":"="} {Math.abs(variacion)}% vs. {fmtMesLargo(mesAnt)} ({fmtARS(totalAnt)})</div>}
+
+      <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Últimos 6 meses</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:6,height:70}}>
+          {ultimos.map(x=>(
+            <div key={x.k} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,height:"100%",justifyContent:"flex-end"}}>
+              <div style={{width:"100%",height:`${Math.max(3,Math.round(x.monto/maxUlt*100))}%`,background:x.k===mes?AM:AM+"66",borderRadius:4}}/>
+              <span style={{fontSize:10,color:x.k===mes?CR:MU,textTransform:"capitalize"}}>{x.lbl}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {proximos.length>0&&(
+        <div style={{background:CA,border:`1px solid ${vencidos.length?RE+"55":BO}`,borderRadius:14,marginBottom:14,overflow:"hidden"}}>
+          <button onClick={()=>setVerProx(v=>!v)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"12px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
+            <span style={{fontSize:15,fontWeight:700,color:CR}}>📅 Próximos pagos · {fmtARS(suma(proximos))}</span>
+            <span style={{fontSize:12,color:vencidos.length?RE:MU,fontWeight:vencidos.length?700:400}}>{vencidos.length?`${vencidos.length} vencido${vencidos.length>1?"s":""}`:`${proximos.length} pendientes`}</span>
+          </button>
+          {verProx&&(
+            <div style={{padding:"0 14px 12px"}}>
+              {proxPorMes.map(m=>(
+                <div key={m.k} style={{marginTop:6}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.05em",margin:"6px 0"}}><span style={{textTransform:"capitalize"}}>{fmtMesLargo(m.k)}</span><span>{fmtARS(m.total)}</span></div>
+                  {m.items.map(g=>fila(g,true))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {porCategoria.length>0&&(
+        <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Por categoría</div>
+          {porCategoria.map(([k,m])=>{const c=catGasto(k);const pct=total>0?Math.round(m/total*100):0;return(
+            <div key={k} style={{marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR,marginBottom:3}}><span>{c.icon} {c.label}</span><span style={{fontWeight:700}}>{fmtARS(m)} · {pct}%</span></div>
+              <div style={{height:6,borderRadius:3,background:BO,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:AM,borderRadius:3}}/></div>
+            </div>
+          );})}
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <Btn variant="ghost" small onClick={()=>imprimirResumenPersonal({mesLabel:fmtMesLargo(mes),total,gastado,aPagar,porCategoria,lista:delMes.slice().reverse(),proximos})}>🖨️ Resumen del mes</Btn>
+        <Btn variant="ghost" small onClick={exportarCSV}>↓ CSV</Btn>
+      </div>
+
+      {delMes.length===0?<p style={{color:MU,fontSize:16,textAlign:"center",padding:"30px 16px"}}>Sin gastos personales en {fmtMesLargo(mes)}.</p>:delMes.map(g=>fila(g,!gastoPagado(g)||!!g.cuota))}
+
+      <Modal open={!!modal} onClose={()=>setModal(null)} title={modal&&modal.id?"Editar gasto personal":"Nuevo gasto personal"}>
+        {modal&&<FormGastoPersonal initial={modal} onSave={guardar} onCancel={()=>setModal(null)} onDelete={modal.id?eliminar:null} onDeleteFuturas={modal.cuota?eliminarFuturas:null}/>}
+      </Modal>
+    </div>
+  );
+}
+
+// ── Configuración: categorías de gastos (negocio y personal) editables ──
+function GestorCategoriasGasto({categoriasGasto,setCategoriasGasto,gastos}){
+  const[tipo,setTipo]=useState("personal");
+  const[icono,setIcono]=useState("");
+  const[nombre,setNombre]=useState("");
+  const lista=(categoriasGasto||[]).filter(c=>c.tipo===tipo);
+  const usos=useMemo(()=>{const m={};(gastos||[]).forEach(g=>{m[g.categoria]=(m[g.categoria]||0)+1;});return m;},[gastos]);
+  const cambiar=(key,patch)=>setCategoriasGasto(prev=>prev.map(c=>c.key===key?{...c,...patch}:c));
+  const quitar=c=>{
+    if(usos[c.key]){alert(`Hay ${usos[c.key]} gasto${usos[c.key]>1?"s":""} con la categoría "${c.label}". Cambiales la categoría antes de borrarla.`);return;}
+    if(lista.length<=1){alert("Tiene que quedar al menos una categoría.");return;}
+    if(!confirm(`¿Borrar la categoría "${c.label}"?`))return;
+    setCategoriasGasto(prev=>prev.filter(x=>x.key!==c.key));
+  };
+  const agregar=()=>{
+    const n=nombre.trim();if(!n)return;
+    if(lista.some(c=>c.label.toLowerCase()===n.toLowerCase())){alert("Ya existe una categoría con ese nombre.");return;}
+    setCategoriasGasto(prev=>[...prev,{key:"cat_"+uid(),label:n,icon:icono.trim()||"🧾",tipo}]);setNombre("");setIcono("");
+  };
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:16,marginBottom:16}}>
+      <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:2}}>Categorías de gastos</div>
+      <div style={{fontSize:13,color:MU,marginBottom:10}}>Editá nombre e ícono, agregá las tuyas o borrá las que no uses. Los gastos ya cargados conservan su categoría.</div>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        {[{k:"personal",l:"🏠 Personal"},{k:"negocio",l:"🏢 Negocio"}].map(t=>(
+          <button key={t.k} onClick={()=>setTipo(t.k)} style={{flex:1,padding:"8px 0",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${tipo===t.k?G:BO}`,background:tipo===t.k?G:"transparent",color:tipo===t.k?"#fff":MU}}>{t.l}</button>
+        ))}
+      </div>
+      {lista.map(c=>(
+        <div key={c.key} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+          <input value={c.icon} onChange={e=>cambiar(c.key,{icon:e.target.value})} style={{width:54,textAlign:"center",padding:"8px 4px"}} maxLength={4}/>
+          <input value={c.label} onChange={e=>cambiar(c.key,{label:e.target.value})} style={{flex:1,minWidth:0}}/>
+          <span style={{fontSize:11,color:MU,width:34,textAlign:"right"}}>{usos[c.key]?`${usos[c.key]} uso${usos[c.key]>1?"s":""}`:""}</span>
+          <button onClick={()=>quitar(c)} aria-label="Borrar categoría" style={{width:36,height:36,borderRadius:8,background:RE+"14",border:`1px solid ${RE}33`,color:RE,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{I.trash}</button>
+        </div>
+      ))}
+      <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px dashed ${BO}`}}>
+        <input value={icono} onChange={e=>setIcono(e.target.value)} placeholder="🧾" style={{width:54,textAlign:"center",padding:"8px 4px"}} maxLength={4}/>
+        <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Nueva categoría" style={{flex:1,minWidth:0}} onKeyDown={e=>{if(e.key==="Enter")agregar();}}/>
+        <Btn onClick={agregar} disabled={!nombre.trim()}>{I.plus}Agregar</Btn>
+      </div>
+    </div>
+  );
+}
+
 function GestorCategorias({categorias,setCategorias,prods,setProds}){
   const[nueva,setNueva]=useState("");
   const[edit,setEdit]=useState(null);       // {c: nombre original, v: nombre nuevo}
@@ -8605,7 +9024,7 @@ function armarBackup(e){
     version:2,exportadoEn:new Date().toISOString(),
     clientes:e.clientes,prospectos:e.prospectos,pedidos:e.pedidos,prods:e.prods,speeches:e.speeches,notas:e.notas,gastos:e.gastos,comisiones:e.comisiones,proveedores:e.proveedores,
     talonarios:e.talonarios,movimientosPago:e.movimientosPago,
-    config:{metaSemanal:e.metaSemanal,diasMora:e.diasMora,promo51:e.promo51,envasesExtra:e.envasesExtra,categorias:e.categorias,impuestos:e.impuestos}
+    config:{metaSemanal:e.metaSemanal,diasMora:e.diasMora,promo51:e.promo51,envasesExtra:e.envasesExtra,categorias:e.categorias,impuestos:e.impuestos,categoriasGasto:e.categoriasGasto}
   };
 }
 function resumenBackup(d){
@@ -8699,7 +9118,7 @@ function HistorialBackups({getBackup,aplicarBackup}){
   );
 }
 
-function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,getBackup,aplicarBackup}){
+function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,categoriasGasto,setCategoriasGasto,getBackup,aplicarBackup}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
   const[moraTmp,setMoraTmp]=useState(String(diasMora));
@@ -9074,6 +9493,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         </div>
       </div>
 
+      <GestorCategoriasGasto categoriasGasto={categoriasGasto} setCategoriasGasto={setCategoriasGasto} gastos={gastos}/>
       <GestorCategorias categorias={categorias} setCategorias={setCategorias} prods={prods} setProds={setProds}/>
 
       <GestorImpuestos impuestos={impuestos} setImpuestos={setImpuestos}/>
@@ -9106,13 +9526,13 @@ const SYNC_STATUS={
   error:     {icon:"⚠️",label:"Error sync", color:RE},
 };
  
-function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,talonarios,setTalonarios,movimientosPago,setMovimientosPago){
+function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,talonarios,setTalonarios,movimientosPago,setMovimientosPago,categoriasGasto,setCategoriasGasto){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
   const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago,categoriasGasto}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
@@ -9120,7 +9540,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
     proveedores:d=>{if(Array.isArray(d))setProveedores(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);if(d&&Array.isArray(d.impuestos))setImpuestos(d.impuestos);if(d&&Array.isArray(d.talonarios))setTalonarios(d.talonarios);if(d&&Array.isArray(d.movimientosPago))setMovimientosPago(d.movimientosPago);},
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);if(d&&Array.isArray(d.impuestos))setImpuestos(d.impuestos);if(d&&Array.isArray(d.talonarios))setTalonarios(d.talonarios);if(d&&Array.isArray(d.movimientosPago))setMovimientosPago(d.movimientosPago);if(d&&Array.isArray(d.categoriasGasto)&&d.categoriasGasto.length)setCategoriasGasto(d.categoriasGasto);},
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
@@ -9231,7 +9651,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
-  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos]);
+  },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago,categoriasGasto]);
 
   return{status,errorMsg};
 }
@@ -9461,11 +9881,11 @@ function Stock({prods,setProds,pedidos}){
   const limpiarFiltros=()=>{setBusqueda("");setModo("todos");setFiltroEnvase("");setFiltroEstilo("");};
 
   const actualizarStock=(id,valor)=>{
-    const limpio=valor===""?"":Math.max(0,Number(valor)||0);
+    const limpio=valor===""?"":(Number(valor)||0);
     setProds(prev=>prev.map(p=>p.id===id?{...p,stock:limpio}:p));
   };
   const ajustarStock=(id,delta)=>{
-    setProds(prev=>prev.map(p=>p.id===id?{...p,stock:Math.max(0,(Number(p.stock)||0)+delta)}:p));
+    setProds(prev=>prev.map(p=>p.id===id?{...p,stock:(Number(p.stock)||0)+delta}:p));
   };
 
   const fl=n=>(Math.round((Number(n)||0)*10)/10).toLocaleString("es-AR");
@@ -9588,7 +10008,7 @@ function FilaStock({f,unidad,onCommit,onAjustar,movil,primera}){
         onFocus={()=>setEnFoco(true)}
         onChange={e=>setValor(e.target.value)}
         onBlur={()=>{setEnFoco(false);onCommit(prod.id,valor);}}
-        placeholder="0" style={{textAlign:"center",width:movil?84:72,height:tam+(movil?8:0),fontSize:movil?20:15,fontWeight:700,margin:0}}/>
+        placeholder="0" style={{textAlign:"center",width:movil?84:72,height:tam+(movil?8:0),fontSize:movil?20:15,fontWeight:700,margin:0,color:stock<0?RE:undefined}}/>
       <button onClick={()=>onAjustar(prod.id,1)} style={btn}>+</button>
     </div>
   );
@@ -9829,6 +10249,7 @@ const TABS=[
   {key:"caja",label:"Caja",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v2m0 8v2M9.5 9.5a2.5 2.5 0 012.5-1.5c1.5 0 2.5.8 2.5 2s-1 1.7-2.5 2-2.5.7-2.5 2 1 2 2.5 2a2.5 2.5 0 002.5-1.5"/></svg>},
   {key:"metricas",label:"Métricas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
   {key:"gastos",label:"Gastos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M14.5 9.5a2.5 2.5 0 00-2.5-1.5h-.5a2 2 0 000 4h1a2 2 0 010 4h-.5a2.5 2.5 0 01-2.5-1.5"/><line x1="12" y1="6" x2="12" y2="18"/></svg>},
+  {key:"personal",label:"Gastos personales",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>},
   {key:"productos",label:"Productos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>},
   {key:"stock",label:"Stock",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 3h18v4H3z"/><path d="M5 7v13a1 1 0 001 1h12a1 1 0 001-1V7"/><line x1="10" y1="12" x2="14" y2="12"/></svg>},
   {key:"proveedores",label:"Proveedores",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>},
@@ -9952,7 +10373,7 @@ function App(){
   const[filtroClientes,setFiltroClientes]=useState("todos");
   const irACobranza=()=>{setFiltroClientes("deuda");setTab("clientes");};
   const[showMore,setShowMore]=useState(false);
-  const[menusAbiertos,setMenusAbiertos]=useState({ventas:true,compras:true,inventario:false,gestion:false,herramientas:false});
+  const[menusAbiertos,setMenusAbiertos]=useState({ventas:true,compras:true,inventario:false,gestion:false,herramientas:false,personal:false});
   const renderGrupoMenu=(id,label,keys)=>{
     const items=keys.map(k=>TABS.find(t=>t.key===k)).filter(Boolean);
     const activo=items.some(t=>t.key===tab);
@@ -9987,6 +10408,8 @@ function App(){
   const[comisiones,setComisiones]=useState([]);
   const[envasesExtra,setEnvasesExtra]=useState([]);
   const[categorias,setCategorias]=useState(CATEGORIAS_INIT);
+  const[categoriasGasto,setCategoriasGasto]=useState(GASTO_CATEGORIAS);
+  if(typeof window!=="undefined")window.__catGasto=categoriasGasto;
   const[impuestos,setImpuestos]=useState([]);   // otros impuestos / percepciones editables (se usan en las compras con factura)
   const[talonarios,setTalonarios]=useState(()=>[{id:uid(),nombre:"Ventas",tipo:"Venta",puntoVenta:"0001",proximo:1,activo:true},{id:uid(),nombre:"Recibos de cobranza",tipo:"Recibo de cobranza",puntoVenta:"0001",proximo:1,activo:true},{id:uid(),nombre:"Órdenes de pago",tipo:"Orden de pago",puntoVenta:"0001",proximo:1,activo:true}]);
   const[movimientosPago,setMovimientosPago]=useState([]);
@@ -10030,7 +10453,7 @@ function App(){
   },[notas]);
  
   // Sincronización Firebase — todos los datos en la nube
-  const getBackup=()=>armarBackup({clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,talonarios,movimientosPago,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos});
+  const getBackup=()=>armarBackup({clientes,prospectos,pedidos,prods,speeches,notas,gastos,comisiones,proveedores,talonarios,movimientosPago,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,categoriasGasto});
   const aplicarBackup=data=>{
     if(Array.isArray(data.clientes))setClientes(data.clientes);
     if(Array.isArray(data.prospectos))setProspectos(data.prospectos);
@@ -10053,6 +10476,7 @@ function App(){
       if(Array.isArray(c.envasesExtra))setEnvasesExtra(c.envasesExtra);
       if(Array.isArray(c.categorias))setCategorias(c.categorias);
       if(Array.isArray(c.impuestos))setImpuestos(c.impuestos);
+      if(Array.isArray(c.categoriasGasto)&&c.categoriasGasto.length)setCategoriasGasto(c.categoriasGasto);
     }
   };
   const getBackupRef=React.useRef(getBackup);getBackupRef.current=getBackup;
@@ -10073,7 +10497,8 @@ function App(){
     categorias,setCategorias,
     impuestos,setImpuestos,
     talonarios,setTalonarios,
-    movimientosPago,setMovimientosPago
+    movimientosPago,setMovimientosPago,
+    categoriasGasto,setCategoriasGasto
   );
 
   // Copia automática diaria (una por día, la primera vez que la app está abierta y ya cargó los datos de la nube)
@@ -10133,6 +10558,7 @@ function App(){
             {renderGrupoMenu("compras","COMPRAS",["proveedores","compras"])}
             {renderGrupoMenu("inventario","INVENTARIO",["productos","stock"])}
             {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
+            {renderGrupoMenu("personal","PERSONAL",["personal"])}
             {renderGrupoMenu("herramientas","HERRAMIENTAS",["maps","difusion","speeches","notas","asistente"])}
             {TABS.filter(t=>t.key==="config").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",marginTop:5,borderRadius:10,fontSize:14,fontWeight:tab===item.key?750:650,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label==="Config"?"Configuración":item.label}</button>)}
           </nav>
@@ -10159,6 +10585,7 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos} proveedores={proveedores} gastos={gastos}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods} pedidos={pedidos}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
+          {tab==="personal"&&<GastosPersonales gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra} categorias={categorias}/>}
           {tab==="stock"&&<Stock prods={prods} setProds={setProds} pedidos={pedidos}/>}
           {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds} impuestos={impuestos}/>}
@@ -10167,7 +10594,7 @@ function App(){
           {tab==="pagoscobranzas"&&<PagosCobranzas clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
           {tab==="talonarios"&&<Talonarios talonarios={talonarios} setTalonarios={setTalonarios}/> }
           {tab==="reporteiva"&&<ReporteIVA clientes={clientes} proveedores={proveedores}/>}
-          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos} getBackup={getBackup} aplicarBackup={aplicarBackup}/>}
+          {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos} categoriasGasto={categoriasGasto} setCategoriasGasto={setCategoriasGasto} getBackup={getBackup} aplicarBackup={aplicarBackup}/>}
         </main>
       </div>
     </div>
