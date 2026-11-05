@@ -2739,6 +2739,13 @@ function Modal({open,onClose,title,children}){
     </div>
   );
 }
+function BotonBorrar({onConfirmar,titulo,mensaje,style,label}){
+  const[abierto,setAbierto]=useState(false);
+  return(<>
+    <button onClick={()=>setAbierto(true)} aria-label="Eliminar" style={style}>{I.trash}</button>
+    <ModalConfirmar open={abierto} onClose={()=>setAbierto(false)} onConfirmar={onConfirmar} titulo={titulo} mensaje={mensaje} labelConfirmar={label}/>
+  </>);
+}
 function ModalConfirmar({open,onClose,onConfirmar,titulo,mensaje,labelConfirmar}){
   if(!open)return null;
   return(
@@ -6293,7 +6300,7 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
                 </div>
                 <div style={{display:"flex",gap:4,flexShrink:0}}>
                   <button onClick={()=>startEdit(p)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
-                  <button onClick={()=>{if(window.confirm(`¿Eliminar "${p.nombre}" del catálogo? Esta acción no se puede deshacer.`))setProds(prev=>prev.filter(x=>x.id!==p.id));}} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
+                  <BotonBorrar titulo="¿Eliminar producto?" mensaje={`Vas a eliminar "${p.nombre}" del catálogo. Después podés recuperarlo desde Configuración, pero solo si quedó en una copia automática.`} onConfirmar={()=>setProds(prev=>prev.filter(x=>x.id!==p.id))} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}/>
                 </div>
               </div>
               <div style={{marginBottom:12}}>
@@ -6340,7 +6347,7 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
                 {(p.promos||[]).length===0?<p style={{fontSize:14,color:MU,fontStyle:"italic"}}>Sin promos configuradas.</p>:(p.promos||[]).map(pr=>(
                   <div key={pr.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",marginBottom:6}}>
                     <span style={{fontSize:15,color:CR}}>Desde {pr.minCantidad}L → {fmtARS(pr.precioUnitario)}/L</span>
-                    <button onClick={()=>eliminarPromo(p.id,pr.id)} style={{background:"none",border:"none",cursor:"pointer",color:RE,padding:4}}>{I.trash}</button>
+                    <BotonBorrar titulo="¿Eliminar precio por volumen?" mensaje={`Vas a quitar "Desde ${pr.minCantidad}L → ${fmtARS(pr.precioUnitario)}/L" de ${p.nombre}.`} onConfirmar={()=>eliminarPromo(p.id,pr.id)} style={{background:"none",border:"none",cursor:"pointer",color:RE,padding:4}}/>
                   </div>
                 ))}
                 {showPromo===p.id?(
@@ -6565,7 +6572,7 @@ function Speeches({speeches,setSpeeches}){
                 <div><div style={{fontSize:16,fontWeight:600,color:CR}}>{s.titulo}</div><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:2}}>{s.categoria} · {s.canal}</div></div>
                 <div style={{display:"flex",alignItems:"center",gap:4}}>
                   <button onClick={()=>startEdit(s)} style={{padding:7,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
-                  <button onClick={()=>setSpeeches(p=>p.filter(x=>x.id!==s.id))} style={{padding:7,background:"none",border:"none",cursor:"pointer",color:RE}}>{I.trash}</button>
+                  <BotonBorrar titulo="¿Eliminar speech?" mensaje="Esta acción no se puede deshacer." onConfirmar={()=>setSpeeches(p=>p.filter(x=>x.id!==s.id))} style={{padding:7,background:"none",border:"none",cursor:"pointer",color:RE}}/>
                   <button onClick={()=>copy(s)} style={{display:"flex",alignItems:"center",gap:4,fontSize:14,fontWeight:700,padding:"6px 10px",borderRadius:6,cursor:"pointer",border:`1px solid ${cp===s.id?"#25D36640":G+"44"}`,background:cp===s.id?"#25D36620":G+"22",color:cp===s.id?"#25D366":G}}>
                     {cp===s.id?<>{I.check}Copiado</>:<>{I.copy}Copiar</>}
                   </button>
@@ -9161,6 +9168,48 @@ function HistorialBackups({getBackup,aplicarBackup}){
   );
 }
 
+function RecuperarProductos({prods,setProds}){
+  const[lista,setLista]=useState(null);
+  const[error,setError]=useState("");
+  const cargar=async()=>{
+    try{
+      const metas=(await bkListar()).sort((a,b)=>b.id.localeCompare(a.id));
+      const actuales=new Set((prods||[]).map(p=>p.id));
+      const vistos={};
+      for(const m of metas){
+        const d=await bkLeer(m.id);
+        (d&&Array.isArray(d.prods)?d.prods:[]).forEach(p=>{if(p&&p.id&&!actuales.has(p.id)&&!vistos[p.id])vistos[p.id]={p,desde:m.id};});
+      }
+      setLista(Object.values(vistos));setError("");
+    }catch(e){setError(e.message||String(e));setLista([]);}
+  };
+  useEffect(()=>{cargar();},[]);
+  const fmt=id=>{const d=new Date(id);return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});};
+  const recuperar=x=>{
+    if(!confirm(`¿Recuperar "${x.p.nombre}"? Vuelve con el precio, las promos y el stock que tenía en la copia del ${fmt(x.desde)}.`))return;
+    setProds(prev=>(prev||[]).some(p=>p.id===x.p.id)?prev:[...(prev||[]),x.p]);
+    setLista(l=>(l||[]).filter(y=>y.p.id!==x.p.id));
+  };
+  return(
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginTop:10}}>
+      <div style={{fontSize:15,fontWeight:700,color:CR,marginBottom:4}}>Recuperar productos borrados</div>
+      <div style={{fontSize:12,color:MU,marginBottom:8,lineHeight:1.5}}>Busca en las copias automáticas de este dispositivo los productos que ya no están en tu catálogo y te deja traer solo ese, sin tocar el resto de tus datos.</div>
+      {error&&<div style={{fontSize:12,color:RE,marginBottom:6}}>{error}</div>}
+      {lista===null&&<div style={{fontSize:13,color:MU}}>Buscando…</div>}
+      {lista&&lista.length===0&&!error&&<div style={{fontSize:13,color:MU}}>No hay productos borrados para recuperar en las copias guardadas.</div>}
+      {(lista||[]).map(x=>(
+        <div key={x.p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:`1px solid ${BO}`}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:CR}}>{x.p.nombre}</div>
+            <div style={{fontSize:12,color:MU}}>{[x.p.marca,x.p.envase,x.p.precio?fmtARS(x.p.precio):""].filter(Boolean).join(" · ")} · copia del {fmt(x.desde)}</div>
+          </div>
+          <button onClick={()=>recuperar(x)} style={{fontSize:12,fontWeight:700,padding:"6px 10px",borderRadius:7,border:`1px solid ${G}66`,background:BG,color:G,cursor:"pointer",flexShrink:0}}>↺ Recuperar</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedidos,setPedidos,prods,setProds,speeches,setSpeeches,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,categoriasGasto,setCategoriasGasto,getBackup,aplicarBackup}){
   const[clientId,setClientId]=useState(getCalClientId());
   const[guardado,setGuardado]=useState(false);
@@ -9392,6 +9441,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
             <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 "Descargar backup" abre el menú de tu teléfono: elegí Drive o WhatsApp para guardarlo fuera de la app. Tus datos además se sincronizan en la nube.</div>
           </div>
           <HistorialBackups getBackup={getBackup} aplicarBackup={aplicarBackup}/>
+          <RecuperarProductos prods={prods} setProds={setProds}/>
         </div>
       </div>
  
