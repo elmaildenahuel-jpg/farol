@@ -7719,8 +7719,23 @@ function Compras({proveedores,prods}){
 // lotes específicos de stock), así que es una estimación — se aclara en la propia pantalla.
 function Rentabilidad({clientes,proveedores,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const ventasTodas=useMemo(()=>(clientes||[]).flatMap(c=>(c.ventas||[])),[clientes]);
-  const comprasTodas=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[])),[proveedores]);
+  const ventasAll=useMemo(()=>(clientes||[]).flatMap(c=>(c.ventas||[])),[clientes]);
+  const comprasAll=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[])),[proveedores]);
+  const[mes,setMes]=useState(""); // "" = todo el historial; "YYYY-MM" = ventas de ese mes
+  const mesesDisp=useMemo(()=>{const set=new Set();ventasAll.forEach(v=>{if(v.fecha)set.add(String(v.fecha).slice(0,7));});return[...set].sort().reverse();},[ventasAll]);
+  const mesMover=d=>{
+    if(!mesesDisp.length)return;
+    const i=mesesDisp.indexOf(mes);
+    if(!mes){setMes(mesesDisp[0]);return;}
+    const j=i-d; // lista ordenada del más nuevo al más viejo
+    if(j<0){setMes("");return;}
+    if(j>=mesesDisp.length)return;
+    setMes(mesesDisp[j]);
+  };
+  const ventasTodas=useMemo(()=>mes?ventasAll.filter(v=>String(v.fecha||"").slice(0,7)===mes):ventasAll,[ventasAll,mes]);
+  // En un mes, el costo es el promedio de todo lo comprado hasta fin de ese mes (el stock vendido pudo comprarse antes)
+  const comprasTodas=useMemo(()=>mes?comprasAll.filter(c=>String(c.fecha||"").slice(0,7)<=mes):comprasAll,[comprasAll,mes]);
+  const comprasDelMes=useMemo(()=>mes?comprasAll.filter(c=>String(c.fecha||"").slice(0,7)===mes).reduce((s,c)=>s+(c.monto||0),0):0,[comprasAll,mes]);
 
   const porProducto=useMemo(()=>{
     const map={};
@@ -7728,22 +7743,28 @@ function Rentabilidad({clientes,proveedores,prods}){
     ventasTodas.forEach(v=>{if(!map[v.producto])return;map[v.producto].litrosVendidos+=litrosDeItem(v.cantidad,envaseMap[v.producto]);map[v.producto].montoVendido+=v.monto||0;});
     comprasTodas.forEach(c=>{if(!map[c.producto])return;map[c.producto].litrosComprados+=litrosDeItem(c.cantidad,envaseMap[c.producto]);map[c.producto].montoComprado+=c.monto||0;});
     return Object.values(map).map(p=>{
-      const costoPorL=p.litrosComprados>0?p.montoComprado/p.litrosComprados:null;
+      // Si no hay compras cargadas, se usa el "precio de compra" de la ficha del producto (por L, o por unidad en latas)
+      const fichaProd=prods.find(x=>x.id===p.id);
+      const costoFicha=fichaProd&&Number(fichaProd.precioCompra)>0?Number(fichaProd.precioCompra)/(p.envase==="Lata"?0.5:1):null;
+      const costoDeCompras=p.litrosComprados>0?p.montoComprado/p.litrosComprados:null;
+      const costoPorL=costoDeCompras!=null?costoDeCompras:costoFicha;
+      const costoDeFicha=costoDeCompras==null&&costoFicha!=null;
       const ventaPorL=p.litrosVendidos>0?p.montoVendido/p.litrosVendidos:null;
       const margenPct=(costoPorL!=null&&ventaPorL!=null&&ventaPorL>0)?Math.round(((ventaPorL-costoPorL)/ventaPorL)*1000)/10:null;
       const gananciaPorL=(costoPorL!=null&&ventaPorL!=null)?ventaPorL-costoPorL:null;
       const gananciaEstimada=gananciaPorL!=null?Math.round(gananciaPorL*p.litrosVendidos):null;
-      return{...p,costoPorL,ventaPorL,margenPct,gananciaPorL,gananciaEstimada};
+      return{...p,costoPorL,costoDeFicha,ventaPorL,margenPct,gananciaPorL,gananciaEstimada};
     }).filter(p=>p.litrosVendidos>0||p.litrosComprados>0).sort((a,b)=>(b.margenPct??-999)-(a.margenPct??-999));
   },[ventasTodas,comprasTodas,prods,envaseMap]);
 
   const totales=useMemo(()=>{
     const montoVendido=ventasTodas.reduce((s,v)=>s+(v.monto||0),0);
-    const montoComprado=comprasTodas.reduce((s,c)=>s+(c.monto||0),0);
+    // todo el historial: lo comprado; un mes: costo de lo vendido ese mes (litros vendidos × costo promedio por litro)
+    const montoComprado=mes?porProducto.reduce((s,p)=>s+(p.costoPorL!=null?p.costoPorL*p.litrosVendidos:0),0):(comprasTodas.reduce((s,c)=>s+(c.monto||0),0)+porProducto.reduce((s,p)=>s+(p.costoDeFicha?p.costoPorL*p.litrosVendidos:0),0));
     const gananciaBruta=montoVendido-montoComprado;
     const margenGlobal=montoVendido>0?Math.round((gananciaBruta/montoVendido)*1000)/10:null;
     return{montoVendido,montoComprado,gananciaBruta,margenGlobal};
-  },[ventasTodas,comprasTodas]);
+  },[ventasTodas,comprasTodas,porProducto,mes]);
 
   // Margen por categoría: ganancia estimada / venta a precio promedio, solo con los productos que tienen compras y ventas
   const porCategoria=useMemo(()=>{
@@ -7764,14 +7785,23 @@ function Rentabilidad({clientes,proveedores,prods}){
         <p style={{fontSize:14,color:MU}}>Lo que pagás a proveedores vs. lo que cobrás a clientes, por producto</p>
       </div>
 
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <button onClick={()=>mesMover(-1)} disabled={!mes} style={{width:38,height:38,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0,opacity:mes?1:.4}}>‹</button>
+        <div style={{flex:1,textAlign:"center",fontSize:16,fontWeight:700,color:CR,textTransform:"capitalize"}}>{mes?fmtMesLargo(mes):"Todo el historial"}</div>
+        <button onClick={()=>mesMover(1)} disabled={!mesesDisp.length||mes===mesesDisp[mesesDisp.length-1]} style={{width:38,height:38,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0,opacity:(!mesesDisp.length||mes===mesesDisp[mesesDisp.length-1])?.4:1}}>›</button>
+      </div>
+      {mesesDisp.length>0&&<div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:12,paddingBottom:2}}>
+        {[""].concat(mesesDisp).map(k=>(<button key={k||"todo"} onClick={()=>setMes(k)} style={{flexShrink:0,padding:"6px 11px",borderRadius:20,fontSize:12,fontWeight:700,cursor:"pointer",border:`1px solid ${mes===k?G:BO}`,background:mes===k?G:"transparent",color:mes===k?"#fff":MU,textTransform:"capitalize"}}>{k?new Date(Number(k.slice(0,4)),Number(k.slice(5,7))-1,1).toLocaleDateString("es-AR",{month:"short",year:"2-digit"}):"Todo"}</button>))}
+      </div>}
+
       <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:16,fontSize:13,color:MU,lineHeight:1.4}}>
-        ℹ️ Es un promedio histórico acumulado (todo lo comprado vs. todo lo vendido de cada producto), no un seguimiento de lotes puntuales de stock. Sirve como estimación, no como contabilidad exacta.
+        {mes?<>ℹ️ Ventas de {fmtMesLargo(mes)} valuadas al costo promedio por litro de todo lo comprado hasta ese mes (la cerveza que vendés pudo comprarse antes). Comprado en el mes: <b style={{color:CR}}>{fmtARS(Math.round(comprasDelMes))}</b>. Es una estimación, no contabilidad exacta.</>:<>ℹ️ Es un promedio histórico acumulado (todo lo comprado vs. todo lo vendido de cada producto), no un seguimiento de lotes puntuales de stock. Sirve como estimación, no como contabilidad exacta.</>}
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
         {[
           {l:"Total vendido",v:fmtARS(totales.montoVendido)},
-          {l:"Total comprado",v:fmtARS(totales.montoComprado)},
+          {l:mes?"Costo de lo vendido":"Total comprado",v:fmtARS(Math.round(totales.montoComprado))},
           {l:"Ganancia bruta",v:fmtARS(totales.gananciaBruta)},
           {l:"Margen global",v:totales.margenGlobal!=null?`${totales.margenGlobal}%`:"—"},
         ].map(s=>(
@@ -7802,6 +7832,7 @@ function Rentabilidad({clientes,proveedores,prods}){
         <p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Todavía no hay compras y ventas registradas para comparar.</p>
       ):porProducto.map(p=>{
         const u=p.envase==="Lata"?"u":"L";
+        const fu=p.envase==="Lata"?0.5:1; // los cálculos son por litro; en latas se muestran por unidad
         const sinDatos=p.costoPorL==null||p.ventaPorL==null;
         return(
           <div key={p.id} style={{background:CA,border:`1px solid ${p.margenPct!=null&&p.margenPct<0?RE+"55":BO}`,borderRadius:14,padding:14,marginBottom:10}}>
@@ -7825,17 +7856,18 @@ function Rentabilidad({clientes,proveedores,prods}){
                 <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Costo prom./{u}</div>
-                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.costoPorL))}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.costoPorL*fu))}</div>
+                    {p.costoDeFicha&&<div style={{fontSize:11,color:AM}}>costo de la ficha del producto</div>}
                   </div>
                   <div>
                     <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Venta prom./{u}</div>
-                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.ventaPorL))}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.ventaPorL*fu))}</div>
                   </div>
                 </div>
                 <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden",marginBottom:8}}>
                   <div style={{width:`${Math.min(100,Math.max(0,Math.round((p.costoPorL/p.ventaPorL)*100)))}%`,height:"100%",background:p.margenPct<0?RE:G,borderRadius:4}}/>
                 </div>
-                <div style={{fontSize:13,color:MU}}>Ganancia por {u}: <strong style={{color:p.gananciaPorL<0?RE:G}}>{fmtARS(Math.round(p.gananciaPorL))}</strong> · Ganancia estimada sobre lo vendido: <strong style={{color:p.gananciaEstimada<0?RE:G}}>{fmtARS(p.gananciaEstimada)}</strong></div>
+                <div style={{fontSize:13,color:MU}}>Ganancia por {u}: <strong style={{color:p.gananciaPorL<0?RE:G}}>{fmtARS(Math.round(p.gananciaPorL*fu))}</strong> · Ganancia estimada sobre lo vendido: <strong style={{color:p.gananciaEstimada<0?RE:G}}>{fmtARS(p.gananciaEstimada)}</strong></div>
               </>
             )}
           </div>
