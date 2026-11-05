@@ -5980,7 +5980,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                   </div>
                 )
               )}
-              <PromoDetalleLista detalle={promoProgresoSel&&promoProgresoSel.detalle}/>
+              <PromoDetalleLista detalle={promoProgresoSel&&promoProgresoSel.detalle} onQuitar={id=>setClientes(prev=>prev.map(c=>c.id===clienteSel.id?{...c,ventas:(c.ventas||[]).map(v=>v.id===id?{...v,promoAcumulable:false}:v)}:c))}/>
             </div>
           )}
  
@@ -9567,8 +9567,39 @@ const SYNC_STATUS={
   synced:    {icon:"✓", label:"Guardado",   color:GR},
   offline:   {icon:"⚡",label:"Sin conexión",color:AM},
   error:     {icon:"⚠️",label:"Error sync", color:RE},
+  local:     {icon:"📴",label:"Copia local",color:AM},
 };
- 
+
+// ── Copia local de trabajo (IndexedDB): la app abre con esto aunque la base no responda ──
+const CACHE_DB="nomades_cache_v1";
+function cacheAbrir(){
+  return new Promise((res,rej)=>{
+    try{
+      const rq=indexedDB.open(CACHE_DB,1);
+      rq.onupgradeneeded=()=>{rq.result.createObjectStore("kv");};
+      rq.onsuccess=()=>res(rq.result);
+      rq.onerror=()=>rej(rq.error);
+    }catch(e){rej(e);}
+  });
+}
+async function cacheLeerTodo(){
+  try{
+    const db=await cacheAbrir();
+    return await new Promise(res=>{
+      const out={};const tx=db.transaction("kv","readonly");const st=tx.objectStore("kv");
+      const rq=st.openCursor();
+      rq.onsuccess=()=>{const c=rq.result;if(c){out[c.key]=c.value;c.continue();}else res(out);};
+      rq.onerror=()=>res({});
+    });
+  }catch(e){return {};}
+}
+async function cacheGuardar(k,entry){
+  try{
+    const db=await cacheAbrir();
+    await new Promise(res=>{const tx=db.transaction("kv","readwrite");tx.objectStore("kv").put(entry,k);tx.oncomplete=()=>res();tx.onerror=()=>res();tx.onabort=()=>res();});
+  }catch(e){}
+}
+
 function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,talonarios,setTalonarios,movimientosPago,setMovimientosPago,categoriasGasto,setCategoriasGasto){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
@@ -9588,12 +9619,28 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
   const timersRef=React.useRef({});
+  const cacheTimersRef=React.useRef({});
+  const cacheInfoRef=React.useRef({});   // por sección: {json, dirty} de lo restaurado desde la copia local
+  const hayCacheRef=React.useRef(false);
+  const cacheListoRef=React.useRef(null);
+  if(!cacheListoRef.current){
+    cacheListoRef.current=cacheLeerTodo().then(todo=>{
+      KEYS.forEach(k=>{
+        const e=todo[k];
+        if(e&&e.value!==undefined&&e.value!==null){
+          cacheInfoRef.current[k]={json:JSON.stringify(e.value),dirty:!!e.dirty};
+          hayCacheRef.current=true;
+          try{settersRef.current[k](e.value);}catch(err){}
+        }
+      });
+    }).catch(()=>{});
+  }
 
   const fallo=React.useCallback(e=>{
     const msg=(e&&e.code?`[${e.code}] `:"")+(e&&e.message?e.message:String(e||"Error desconocido"));
     setErrorMsg(msg);
     console.error("Firestore error:",e);
-    setStatus("error");
+    setStatus(hayCacheRef.current?"local":"error");
   },[]);
 
   React.useEffect(()=>{
@@ -9610,6 +9657,9 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
       }
       const unsubAuth=window.fbAuth.onAuthStateChanged(async user=>{
         if(!user||cancel)return;
+        await cacheListoRef.current;
+        await new Promise(r=>setTimeout(r,200));
+        if(cancel)return;
         const col=window.fbDb.collection("farolcrm");
 
         // Migración única desde el doc viejo "farolcrm/data" (todo-en-uno) hacia documentos separados por sección
@@ -9636,13 +9686,24 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
           const ref=col.doc(k);
           const unsub=ref.onSnapshot(snap=>{
             if(cancel)return;
-            if(snap.exists){
+            const info=cacheInfoRef.current[k];
+            const primera=!loadedRef.current[k];
+            const localCambiado=primera&&info&&(info.dirty||JSON.stringify(valuesRef.current[k])!==info.json);
+            if(snap.exists&&localCambiado){
+              // Se trabajó sin conexión: lo local gana y se sube. La versión del servidor se guarda aparte por seguridad.
+              const data=snap.data()||{};
+              cacheGuardar("previo_"+k,{value:data.value,dirty:false,at:Date.now()});
+              const val=valuesRef.current[k];
+              lastSyncRef.current[k]=JSON.stringify(val);
+              ref.set({value:val,updatedAt:Date.now()}).then(()=>cacheGuardar(k,{value:val,dirty:false,at:Date.now()})).catch(fallo);
+            }else if(snap.exists){
               const data=snap.data()||{};
               const incoming=JSON.stringify(data.value);
               if(incoming!==lastSyncRef.current[k]){
                 lastSyncRef.current[k]=incoming;
                 settersRef.current[k](data.value);
               }
+              cacheGuardar(k,{value:data.value,dirty:false,at:Date.now()});
             }else{
               const seedVal=valuesRef.current[k];
               lastSyncRef.current[k]=JSON.stringify(seedVal);
@@ -9662,8 +9723,8 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
     };
     attach();
 
-    const goOff=()=>setStatus(s=>s==="error"?s:"offline");
-    const goOn=()=>setStatus(s=>s==="error"?s:"synced");
+    const goOff=()=>setStatus(s=>(s==="error"||s==="local")?s:"offline");
+    const goOn=()=>setStatus(s=>(s==="error"||s==="local")?s:"synced");
     window.addEventListener("offline",goOff);
     window.addEventListener("online",goOn);
     return()=>{
@@ -9676,6 +9737,18 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
 
   // Guardar en Firestore cuando cambia cada sección (debounce 800ms, independiente por sección)
   React.useEffect(()=>{
+    // Copia local: se guarda siempre que ya se cargó la base o se restauró una copia (nunca pisa con valores vacíos)
+    KEYS.forEach(k=>{
+      const info=cacheInfoRef.current[k];
+      if(!loadedRef.current[k]&&!info)return;
+      const val=valuesRef.current[k];
+      const current=JSON.stringify(val);
+      const ls=lastSyncRef.current[k];
+      const dirty=ls!==undefined?current!==ls:(!!(info&&info.dirty)||(info?current!==info.json:false));
+      if(info&&ls===undefined&&!dirty)return;
+      if(cacheTimersRef.current[k])clearTimeout(cacheTimersRef.current[k]);
+      cacheTimersRef.current[k]=setTimeout(()=>{cacheGuardar(k,{value:val,dirty,at:Date.now()});},400);
+    });
     KEYS.forEach(k=>{
       if(!loadedRef.current[k])return;
       const val=valuesRef.current[k];
@@ -9688,6 +9761,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
         window.fbDb.collection("farolcrm").doc(k).set({value:val,updatedAt:Date.now()})
           .then(()=>{
             lastSyncRef.current[k]=current;
+            cacheGuardar(k,{value:val,dirty:false,at:Date.now()});
             setStatus(s=>s==="error"?s:"synced");
             setErrorMsg(null);
           })
@@ -9701,9 +9775,9 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
 
 function SyncBadge({status,errorMsg}){
   const s=SYNC_STATUS[status]||SYNC_STATUS.connecting;
-  const tocable=status==="error"&&errorMsg;
+  const tocable=(status==="error"||status==="local")&&errorMsg;
   return(
-    <div onClick={()=>{if(tocable)alert("Error de sincronización:\n\n"+errorMsg);}}
+    <div onClick={()=>{if(tocable)alert((status==="local"?"Sin conexión con la base. Estás trabajando con la copia guardada en este dispositivo; lo que cargues se sube solo cuando vuelva la conexión (recargá la página para reintentar).\n\nDetalle técnico:\n\n":"Error de sincronización:\n\n")+errorMsg);}}
       style={{display:"flex",alignItems:"center",gap:4,fontSize:13,fontWeight:700,color:s.color,padding:"3px 8px",borderRadius:6,background:s.color+"11",border:`1px solid ${s.color}33`,cursor:tocable?"pointer":"default"}}>
       <span>{s.icon}</span><span>{s.label}</span>{tocable&&<span style={{textDecoration:"underline"}}>(ver)</span>}
     </div>
@@ -10422,11 +10496,11 @@ function App(){
     const activo=items.some(t=>t.key===tab);
     const abierto=Boolean(menusAbiertos[id]||activo);
     return <div key={id} style={{marginTop:4}}>
-      <button type="button" onClick={()=>setMenusAbiertos(prev=>({...prev,[id]:!Boolean(prev[id]||activo)}))} aria-expanded={abierto} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,width:"100%",padding:"9px 12px",border:0,borderRadius:8,background:activo?(temaOscuro?"#26352d":"#edf5ef"):"transparent",color:activo?G:MU,cursor:"pointer",textAlign:"left",fontSize:11,fontWeight:800,letterSpacing:".09em"}}>
-        <span>{label}</span><span style={{fontSize:12,transform:abierto?"rotate(180deg)":"rotate(0deg)",transition:"transform .18s"}}>⌄</span>
+      <button type="button" onClick={()=>setMenusAbiertos(prev=>({...prev,[id]:!Boolean(prev[id]||activo)}))} aria-expanded={abierto} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,width:"100%",padding:"9px 12px",border:0,borderRadius:8,background:activo?(temaOscuro?"#26352d":"#edf5ef"):"transparent",color:activo?G:MU,cursor:"pointer",textAlign:"left",fontSize:13,fontWeight:800,letterSpacing:".09em"}}>
+        <span>{label}</span><span style={{fontSize:14,transform:abierto?"rotate(180deg)":"rotate(0deg)",transition:"transform .18s"}}>⌄</span>
       </button>
       {abierto&&<div style={{display:"flex",flexDirection:"column",gap:3,padding:"4px 0 4px 8px",marginLeft:5,borderLeft:"1px solid "+(temaOscuro?"#343b36":BO)}}>
-        {items.map(item=><button key={item.key} onClick={()=>{setTab(item.key);setMenusAbiertos(prev=>({...prev,[id]:true}));setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"9px 10px",borderRadius:8,fontSize:13,fontWeight:tab===item.key?750:550,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left",transition:"background .18s,color .18s"}}>
+        {items.map(item=><button key={item.key} onClick={()=>{setTab(item.key);setMenusAbiertos(prev=>({...prev,[id]:true}));setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"9px 10px",borderRadius:8,fontSize:15,fontWeight:tab===item.key?750:550,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left",transition:"background .18s,color .18s"}}>
           <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:21,flexShrink:0,opacity:tab===item.key?1:.82}}>{item.icon}</span><span style={{flex:1}}>{item.label}</span>
           {item.key==="caja"&&mostrarBadgeCaja&&<span style={{width:7,height:7,borderRadius:50,background:RE,flexShrink:0}}/>}
         </button>)}
@@ -10596,13 +10670,13 @@ function App(){
             </button>
           </div>
           <nav style={{padding:"12px 10px",display:"flex",flexDirection:"column",gap:6,flex:1,overflowY:"auto"}}>
-            {TABS.filter(t=>t.key==="inicio").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label}</button>)}
+            {TABS.filter(t=>t.key==="inicio").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",borderRadius:10,fontSize:16,fontWeight:700,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label}</button>)}
             {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cuentascorrientes","ventas"])}
             {renderGrupoMenu("compras","COMPRAS",["proveedores","compras"])}
             {renderGrupoMenu("inventario","INVENTARIO",["productos","stock"])}
             {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","personal","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
             {renderGrupoMenu("herramientas","HERRAMIENTAS",["maps","difusion","speeches","notas","asistente"])}
-            {TABS.filter(t=>t.key==="config").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",marginTop:5,borderRadius:10,fontSize:14,fontWeight:tab===item.key?750:650,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label==="Config"?"Configuración":item.label}</button>)}
+            {TABS.filter(t=>t.key==="config").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",marginTop:5,borderRadius:10,fontSize:16,fontWeight:tab===item.key?750:650,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label==="Config"?"Configuración":item.label}</button>)}
           </nav>
           <div className="nomades-sb-foot" style={{borderTop:`1px solid ${BO}`}}>
             <SyncBadge status={syncStatus} errorMsg={syncError}/>
