@@ -823,7 +823,7 @@ function nroRemitoDePedido(pedido){
 
 // Saldo de cuenta corriente del cliente para mostrar en el remito: anterior + este remito (si queda a cuenta) = saldo total
 function saldoRemito(pedido,cliente){
-  if(!cliente)return null;
+  if(!cliente||pedido._reimpresion)return null; // un remito viejo no muestra el saldo de hoy (no sería el de ese día)
   const actual=saldoCliente(cliente);
   const total=pedido.montoTotal||(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
   const enCC=pedido.pagado?0:total;
@@ -2576,6 +2576,23 @@ ${pedido.notas?`<div class="sub" style="margin-top:8px"><i>Notas: ${esc(pedido.n
 }
 
 // Pantalla que aparece al entregar un pedido o tocar el ícono de remito: imprimir (A5 / A4 / Ticket) y compartir
+// Reimprimir un remito viejo desde Clientes: usa el pedido original o, si no existe, lo reconstruye con las ventas del remito
+function BotonReimprimirRemito({nro,items,cliente,prods,pedidos,compacto}){
+  const[abierto,setAbierto]=useState(false);
+  const pedido=useMemo(()=>{
+    if(!abierto)return null;
+    const orig=(pedidos||[]).find(p=>p.clienteId===(cliente&&cliente.id)&&String(p.remitoNro)===String(nro));
+    if(orig)return{...orig,_reimpresion:true};
+    const fil=items||[];
+    if(!fil.length)return null;
+    const lineas=fil.map(v=>({productoId:v.producto,cantidad:v.cantidad,monto:Number(v.monto)||0}));
+    return{id:"rem"+nro,remitoNro:nro,clienteId:cliente&&cliente.id,estado:"entregado",fechaEntrega:fil[0].fecha,lineas,montoTotal:lineas.reduce((a,l)=>a+l.monto,0),pagado:false,_reimpresion:true};
+  },[abierto,pedidos,cliente,nro,items]);
+  return(<>
+    <button onClick={e=>{e.stopPropagation();setAbierto(true);}} aria-label={`Reimprimir remito ${fmtRemito(nro)}`} title="Imprimir / compartir este remito" style={{fontSize:compacto?12:14,fontWeight:700,padding:compacto?"3px 8px":"6px 10px",borderRadius:8,border:`1px solid ${BO}`,background:BG,color:CR,cursor:"pointer",flexShrink:0}}>🖨️{compacto?" Remito":""}</button>
+    {abierto&&pedido&&<RemitoOpciones pedido={pedido} cliente={cliente} prods={prods} onClose={()=>setAbierto(false)}/>}
+  </>);
+}
 function RemitoOpciones({pedido,cliente,prods,onClose,recienEntregado}){
   const[generando,setGenerando]=useState(false);
   if(!pedido)return null;
@@ -4036,6 +4053,7 @@ function MovimientosCards({cliente,prods,pedidos}){
                     <span style={{fontWeight:700,color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Cobrado":m.parcial?"Cobro parcial":"Pendiente"}</span>
                   </div>
                   {m.parcial&&<div style={{fontSize:12,color:MU}}>Cobrado {m$(m.cobrado)} · falta {m$(m.monto-m.cobrado)}</div>}
+                  <div style={{marginTop:4}}><BotonReimprimirRemito compacto nro={m.remitoNro} items={m.items} cliente={cliente} prods={prods} pedidos={pedidos}/></div>
                   {m.d&&<ChipBeneficio d={m.d}/>}
                 </>
               ):(
@@ -4150,6 +4168,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
                   </button>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                     <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(total)}</span>
+                    <BotonReimprimirRemito nro={g.remitoNro} items={g.filas} cliente={cliente} prods={prods} pedidos={pedidos}/>
                     <button onClick={()=>setPedirCobro({titulo:`Remito ${fmtRemito(g.remitoNro)}`,monto:total,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,g.filas.map(x=>x.id),`Remito ${fmtRemito(g.remitoNro)}`,f))})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
                   </div>
                 </div>
