@@ -620,8 +620,29 @@ function construirCatalogoPDF(prodsTodos,promo51){
     {envase:"Lata",titulo:"Latas 473 ml"},
     {envase:"PET",titulo:"Pet 1 Lt"},
   ];
-  SEGMENTOS.forEach(seg=>{
-    let prodsSeg=(prods||[]).filter(p=>(p.envase||"PET")===seg.envase);
+  // Primero la categoría Cerveza, después las demás (alfabético) y "Sin categoría" al final. Con una sola categoría el PDF queda igual que siempre.
+  const esCerveza=c=>String(c).trim().toLowerCase()==="cerveza";
+  const ordenCats=[...new Set((prods||[]).map(categoriaDe))].sort((a,b)=>{
+    const r=c=>esCerveza(c)?0:(c===SIN_CATEGORIA?2:1);
+    return r(a)-r(b)||a.localeCompare(b);
+  });
+  const variasCats=ordenCats.length>1;
+  ordenCats.forEach(cat=>{
+  if(variasCats){
+    asegurarEspacio(34);
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(15);
+    doc.setTextColor(NEGRO[0],NEGRO[1],NEGRO[2]);
+    doc.text(String(cat).toUpperCase(),marginX,y);
+    doc.setDrawColor(NEGRO[0],NEGRO[1],NEGRO[2]);
+    doc.setLineWidth(0.9);
+    doc.line(marginX,y+2.6,pageW-marginX,y+2.6);
+    y+=11;
+  }
+  const segsCat=[...SEGMENTOS];
+  [...new Set((prods||[]).filter(p=>categoriaDe(p)===cat).map(p=>p.envase||"PET"))].filter(e=>!segsCat.some(x=>x.envase===e)).forEach(e=>segsCat.push({envase:e,titulo:e}));
+  segsCat.forEach(seg=>{
+    let prodsSeg=(prods||[]).filter(p=>(p.envase||"PET")===seg.envase&&categoriaDe(p)===cat);
     if(prodsSeg.length===0)return;
     prodsSeg=seg.envase==="Barril"?ordenarBarriles(prodsSeg):prodsSeg.sort((a,b)=>(a.marca||"").localeCompare(b.marca||"")||(a.nombre||"").localeCompare(b.nombre||""));
 
@@ -708,7 +729,7 @@ function construirCatalogoPDF(prodsTodos,promo51){
     });
 
     // Recuadro fijo de la promo de barriles, apenas termina el listado de Barriles — mismo estilo simple sin relleno
-    if(seg.envase==="Barril"){
+    if(seg.envase==="Barril"&&(esCerveza(cat)||!variasCats)){
       y+=6;
       asegurarEspacio(17);
       doc.setDrawColor(NEGRO[0],NEGRO[1],NEGRO[2]);
@@ -727,6 +748,7 @@ function construirCatalogoPDF(prodsTodos,promo51){
     } else {
       y+=10;
     }
+  });
   });
 
   const totalPages=doc.internal.getNumberOfPages();
