@@ -557,12 +557,14 @@ const fmtDateTime=iso=>{
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"})+" · "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
 };
 // ── Catálogo PDF (para compartir por WhatsApp) ──────────────────────
-function construirCatalogoPDF(prods,promo51){
+const enCatalogo=p=>p.enCatalogo!==false; // sin el dato (productos viejos) = se muestra
+function construirCatalogoPDF(prodsTodos,promo51){
+  const prods=(prodsTodos||[]).filter(enCatalogo);
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4"});
   const pageW=210,pageH=297,marginX=16;
   const NEGRO=[26,26,26],GRIS=[130,130,130],GRIS_CLARO=[225,225,225],ACENTO=[23,141,79];
-  const bonoProd=promo51&&promo51.activo?(prods||[]).find(p=>p.id===promo51.productoBonoId):null;
+  const bonoProd=promo51&&promo51.activo?(prodsTodos||[]).find(p=>p.id===promo51.productoBonoId):null;
 
   let y=0;
   const dibujarHeader=()=>{
@@ -741,6 +743,7 @@ function construirCatalogoPDF(prods,promo51){
   return doc;
 }
 async function compartirCatalogoPDF(prods,promo51){
+  if(!(prods||[]).some(enCatalogo)){alert("No hay productos marcados \"En catálogo\". Activá al menos uno en Productos.");return;}
   if(!window.jspdf||!window.jspdf.jsPDF){
     alert("No se pudo cargar el generador de PDF (jsPDF). Revisá tu conexión a internet y volvé a intentar. Si persiste, avisame para revisarlo.");
     return;
@@ -4537,7 +4540,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
             ))}
           </>
         )}
-        {catalogoAbierto&&prods.map(p=>(
+        {catalogoAbierto&&prods.filter(enCatalogo).map(p=>(
           <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${BO}`}}><div><div style={{fontSize:16,fontWeight:500,color:CR}}>{p.nombre}</div><div style={{fontSize:14,color:MU}}>{p.marca||"Farol"} · {p.envase||"PET"}{(p.promos||[]).length>0?` · ${p.promos.length} promo${p.promos.length>1?"s":""}`:""}</div></div><div className="bebas" style={{fontSize:20,color:G}}>{fmtARS(p.precio)}<span style={{fontSize:12,color:MU,fontWeight:400}}> /L</span></div></div>
         ))}
       </div>
@@ -5189,7 +5192,7 @@ function contextoNegocio(clientes,pedidos,prods){
     return`${c.nombre} (${c.zona}, ${c.rubro}) — estado:${estadoC(c)}${dias!=null?`, últ. compra hace ${dias}d`:", sin compras"}${deuda>0?`, debe ${fmtARS(deuda)}`:""}`;
   }).join("\n");
   const pedidosPend=(pedidos||[]).filter(p=>p.estado!=="entregado").length;
-  const catalogo=prods.map(p=>`${nombreProdEnvase(p)} — ${fmtARS(p.precio)}/L`).join("\n");
+  const catalogo=prods.filter(enCatalogo).map(p=>`${nombreProdEnvase(p)} — ${fmtARS(p.precio)}/L`).join("\n");
   return`Sos el asistente comercial de Distribuidora Nómades, una distribuidora de cerveza artesanal en Buenos Aires (marcas Grunge y Farol, "Premium, Popular, Porteña"). Ayudás a Nahu (quien te habla) con ventas, cobranzas, atención a clientes y comercios. Respondé breve, concreto, en español rioplatense, sin vueltas.\n\nCATÁLOGO:\n${catalogo||"(sin productos cargados)"}\n\nCLIENTES (${clientes.length} en total${clientes.length>80?", mostrando los primeros 80":""}):\n${resumenClientes||"(sin clientes cargados)"}\n\nPedidos pendientes de entrega: ${pedidosPend}.\nHoy es ${fmtDate(hoyISO())}.`;
 }
 const ANALISIS_PROMPT="Analizá todo lo que ves de mi negocio (clientes, deuda, pedidos pendientes y catálogo) y dame sugerencias concretas para vender más y mejorar. Organizalo en 4 puntos cortos: 1) a qué clientes debería contactar hoy y por qué, 2) oportunidades de venta que notes, 3) alertas de cobranza urgentes si las hay, 4) cualquier otra mejora que veas. Sé específico, usá nombres y números reales de los datos, nada genérico.";
@@ -6190,6 +6193,12 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
   };
 
   const startEdit=p=>{setEditId(p.id);setEf({...p});};
+  const duplicarProducto=p=>{
+    // Copia todo (precios, IVA, marca, envase, categoría, descripción, promos por volumen) con stock en 0 y sin historial; queda abierto para editar
+    const copia={...p,id:uid(),nombre:`${p.nombre} (copia)`,stock:0,historialPrecios:[],promos:(p.promos||[]).map(x=>({...x,id:uid()}))};
+    setProds(prev=>{const i=prev.findIndex(x=>x.id===p.id);const n=[...prev];n.splice(i<0?n.length:i+1,0,copia);return n;});
+    setVistaLista(false);setEditId(copia.id);setEf({...copia});
+  };
   const saveEdit=()=>{
     setProds(prev=>prev.map(p=>{
       if(p.id!==editId)return p;
@@ -6286,7 +6295,7 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
           {prodsFiltrados.map((p,i)=>(
             <button key={p.id} onClick={()=>{startEdit(p);setVistaLista(false);}} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"12px 16px",background:"none",border:"none",borderBottom:i<prodsFiltrados.length-1?`1px solid ${BO}`:"none",cursor:"pointer",textAlign:"left"}}>
               <div style={{minWidth:0,flex:1}}>
-                <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.nombre}</div>
+                <div style={{fontSize:15,fontWeight:600,color:enCatalogo(p)?CR:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.nombre}{!enCatalogo(p)&&<span style={{fontSize:11,fontWeight:700,marginLeft:6,color:AM}}>🚫 fuera del catálogo</span>}</div>
                 <div style={{fontSize:12,color:MU,marginTop:2}}>{p.marca||"Sin marca"} · {p.envase||"PET"} · Compra: {Number(p.precioCompra)>0?fmtARS(p.precioCompra):"—"} · Rentabilidad: {Number(p.precioCompra)>0?`${(((Number(p.precio)||0)-Number(p.precioCompra))/Number(p.precioCompra)*100).toFixed(1)}%`:"—"}</div>
               </div>
               <div style={{fontSize:18,fontWeight:700,color:G,flexShrink:0}} className="bebas">{fmtARS(p.precio||0)}</div>
@@ -6296,7 +6305,7 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
       )}
 
       {!vistaLista&&prodsFiltrados.map(p=>(
-        <div key={p.id} className={editId===p.id?"":"card-desk"} style={{background:CA,border:`1px solid ${editId===p.id?G:BO}`,borderRadius:18,padding:16,marginBottom:12}}>
+        <div key={p.id} className={editId===p.id?"":"card-desk"} style={{background:CA,border:`1px solid ${editId===p.id?G:BO}`,borderRadius:18,padding:16,marginBottom:12,opacity:editId!==p.id&&!enCatalogo(p)?0.6:1}}>
           {editId===p.id?(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
               <div><Lbl t="Nombre"/><input value={ef.nombre} onChange={e=>setEf(x=>({...x,nombre:e.target.value}))}/></div>
@@ -6316,9 +6325,11 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
                   <div style={{fontSize:17,fontWeight:700,color:CR}}>{p.nombre}</div>
                   <div style={{fontSize:14,color:MU,marginTop:2}}>{p.marca||"Farol"} · {p.envase||"PET"}{p.categoria?` · ${p.categoria}`:""}</div>
                   {p.descripcion&&<div style={{fontSize:14,color:MU,marginTop:3,fontStyle:"italic"}}>{p.descripcion}</div>}
+                  <button onClick={()=>setProds(prev=>prev.map(x=>x.id===p.id?{...x,enCatalogo:!enCatalogo(x)}:x))} aria-pressed={enCatalogo(p)} style={{marginTop:8,display:"inline-flex",alignItems:"center",gap:6,padding:"5px 11px",borderRadius:20,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${enCatalogo(p)?G+"66":BO}`,background:enCatalogo(p)?G+"14":"transparent",color:enCatalogo(p)?G:MU}}>{enCatalogo(p)?"👁 En catálogo":"🚫 Fuera del catálogo"}</button>
                 </div>
                 <div style={{display:"flex",gap:4,flexShrink:0}}>
-                  <button onClick={()=>startEdit(p)} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
+                  <button onClick={()=>startEdit(p)} aria-label="Editar" style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}>{I.edit}</button>
+                  <button onClick={()=>duplicarProducto(p)} aria-label="Duplicar producto" title="Duplicar producto" style={{padding:8,background:"none",border:"none",cursor:"pointer",color:MU}}><span style={{display:"inline-flex",transform:"scale(1.3)"}}>{I.copy}</span></button>
                   <BotonBorrar titulo="¿Eliminar producto?" mensaje={`Vas a eliminar "${p.nombre}" del catálogo. Después podés recuperarlo desde Configuración, pero solo si quedó en una copia automática.`} onConfirmar={()=>setProds(prev=>prev.filter(x=>x.id!==p.id))} style={{padding:8,background:"none",border:"none",cursor:"pointer",color:RE}}/>
                 </div>
               </div>
