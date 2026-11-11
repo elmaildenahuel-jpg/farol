@@ -531,6 +531,46 @@ function precioEfectivo(prod,cantidad){
 }
 function montoTotal(prod,cantidad){ return precioEfectivo(prod,cantidad)*cantidad; }
 // Nombre + envase, para distinguir productos con el mismo nombre pero distinto envase (ej. "Rubia Arrabalera · Barril")
+// Selector de producto con búsqueda: se escribe parte de cada palabra ("bl ho la" = Blest Honey Lata)
+function SelectorProducto({prods,value,onChange,vacio}){
+  const[abierto,setAbierto]=useState(false);
+  const[q,setQ]=useState("");
+  const sel=(prods||[]).find(p=>p.id===value);
+  const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const lista=useMemo(()=>{
+    const ord=[...(prods||[])].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b)));
+    const toks=norm(q).split(/\s+/).filter(Boolean);
+    if(!toks.length)return ord;
+    const texto=p=>norm(`${p.marca||""} ${p.nombre||""} ${p.envase||"PET"} ${p.categoria||""}`);
+    const porPrefijo=ord.filter(p=>{const w=texto(p).split(/[^a-z0-9]+/).filter(Boolean);return toks.every(t=>w.some(x=>x.startsWith(t)));});
+    return porPrefijo.length?porPrefijo:ord.filter(p=>{const t=texto(p);return toks.every(x=>t.includes(x));});
+  },[prods,q]);
+  const elegir=id=>{onChange(id);setAbierto(false);setQ("");};
+  const filaStyle=act=>({display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"11px 12px",background:act?GLT:"transparent",border:"none",borderBottom:`1px solid ${BO}`,cursor:"pointer",color:CR,fontSize:15});
+  return(
+    <div>
+      <input value={abierto?q:(sel?nombreProdEnvase(sel):(vacio||""))}
+        onFocus={e=>{setAbierto(true);setQ("");}}
+        onChange={e=>setQ(e.target.value)}
+        onBlur={()=>setTimeout(()=>setAbierto(false),150)}
+        onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(lista[0])elegir(lista[0].id);}else if(e.key==="Escape"){setAbierto(false);e.target.blur();}}}
+        placeholder={sel?nombreProdEnvase(sel):"Escribí para buscar (ej: bl ho la)"}
+        autoComplete="off"/>
+      {abierto&&(
+        <div style={{marginTop:4,border:`1px solid ${BO}`,borderRadius:10,background:CA,maxHeight:260,overflowY:"auto",boxShadow:"0 6px 18px rgba(0,0,0,.18)"}}>
+          {vacio!==undefined&&!q.trim()&&<button onMouseDown={e=>e.preventDefault()} onClick={()=>elegir("")} style={filaStyle(!value)}><span style={{color:MU}}>{vacio}</span></button>}
+          {lista.length===0&&<div style={{padding:"12px",fontSize:14,color:MU}}>Sin resultados para "{q}"</div>}
+          {lista.map(p=>(
+            <button key={p.id} onMouseDown={e=>e.preventDefault()} onClick={()=>elegir(p.id)} style={filaStyle(p.id===value)}>
+              <span style={{minWidth:0}}><b>{p.nombre}</b> <span style={{color:MU}}>· {p.envase||"PET"}</span></span>
+              <span style={{fontSize:12,color:MU,flexShrink:0}}>{p.marca||""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function nombreProdEnvase(p){ return p?`${p.nombre} · ${p.envase||"PET"}`:""; }
  
 // ── Datos semilla ─────────────────────────────────────────────────
@@ -3079,7 +3119,7 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault,initial,labelGuarda
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {numeroSiguiente&&<div style={{padding:"8px 12px",borderRadius:10,background:GLT,color:G,fontSize:13,fontWeight:800}}>Comprobante siguiente · {numeroSiguiente}</div>}
       <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-      <div><Lbl t="Producto"/><select value={f.producto} onChange={s("producto")}>{[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}</select></div>
+      <div><Lbl t="Producto"/><SelectorProducto prods={prods} value={f.producto} onChange={v=>setF(p=>({...p,producto:v}))}/></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"12":"24"}/>{prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:4}}>Cada lata = 0.50L</div>}</div>
         <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={f.descuentoPct} onChange={s("descuentoPct")} placeholder="0"/></div>
@@ -6049,9 +6089,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                       {lineas.length>1&&<button onClick={()=>quitarLinea(l.id)} style={{background:"none",border:"none",cursor:"pointer",color:RE,padding:2}}>{I.trash}</button>}
                     </div>
                     <div style={{marginBottom:8}}>
-                      <select value={l.productoId} onChange={e=>updateLinea(l.id,"productoId",e.target.value)}>
-                        {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
-                      </select>
+                      <SelectorProducto prods={prods} value={l.productoId} onChange={v=>updateLinea(l.id,"productoId",v)}/>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                       <div>
@@ -7368,10 +7406,7 @@ function Ventas({clientes,prods}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Producto"/>
-            <select value={fProducto} onChange={e=>setFProducto(e.target.value)}>
-              <option value="">Todos</option>
-              {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
-            </select>
+            <SelectorProducto prods={prods} value={fProducto} onChange={setFProducto} vacio="Todos"/>
           </div>
           <div><Lbl t="Envase"/>
             <select value={fEnvase} onChange={e=>setFEnvase(e.target.value)}>
@@ -7589,10 +7624,7 @@ function Compras({proveedores,prods}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:10}}>
           <div><Lbl t="Producto"/>
-            <select value={fProducto} onChange={e=>setFProducto(e.target.value)}>
-              <option value="">Todos</option>
-              {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
-            </select>
+            <SelectorProducto prods={prods} value={fProducto} onChange={setFProducto} vacio="Todos"/>
           </div>
           <div><Lbl t="Envase"/>
             <select value={fEnvase} onChange={e=>setFEnvase(e.target.value)}>
@@ -9622,10 +9654,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           </div>
           <div>
             <Lbl t="Producto del bono"/>
-            <select value={promoTmp.productoBonoId} onChange={e=>setPromoTmp(p=>({...p,productoBonoId:e.target.value}))}>
-              <option value="">Elegir producto...</option>
-              {[...prods].sort((a,b)=>nombreProdEnvase(a).localeCompare(nombreProdEnvase(b))).map(p=><option key={p.id} value={p.id}>{nombreProdEnvase(p)}</option>)}
-            </select>
+            <SelectorProducto prods={prods} value={promoTmp.productoBonoId} onChange={v=>setPromoTmp(p=>({...p,productoBonoId:v}))} vacio="Elegir producto..."/>
           </div>
           <div>
             <Lbl t="Cantidad del bono"/>
@@ -10106,6 +10135,22 @@ function Stock({prods,setProds,pedidos}){
     sinStock:filas.filter(f=>f.stock<=0).length,
   }),[filas]);
 
+  // Barriles: litros por marca y estilo (suma si hay más de un producto del mismo estilo), mayor a menor
+  const barriles=useMemo(()=>{
+    const marcas={};let total=0;
+    filas.filter(f=>(f.prod.envase||"PET")==="Barril").forEach(f=>{
+      const marca=(f.prod.marca||"").trim()||"Sin marca";
+      const nombre=f.prod.nombre||"Sin nombre";
+      const m=marcas[marca]=marcas[marca]||{marca,estilos:{},total:0};
+      const e=m.estilos[nombre]=m.estilos[nombre]||{nombre,litros:0,pedido:0};
+      e.litros+=f.litStock;e.pedido+=f.litPedido;
+      m.total+=f.litStock;total+=f.litStock;
+    });
+    const lista=Object.values(marcas).map(m=>({...m,lista:Object.values(m.estilos).sort((a,b)=>b.litros-a.litros||a.nombre.localeCompare(b.nombre))}))
+      .sort((a,b)=>b.total-a.total||a.marca.localeCompare(b.marca));
+    return{lista,total};
+  },[filas]);
+
   const filasFiltradas=useMemo(()=>{
     const q=busqueda.trim().toLowerCase();
     const arr=filas.filter(f=>{
@@ -10164,6 +10209,35 @@ function Stock({prods,setProds,pedidos}){
         <Tarjeta titulo="Con faltante" valor={resumen.faltan.length} color={resumen.faltan.length>0?RE:G} sub={resumen.faltan.length>0?`faltan ${fl(resumen.litFalta)} L en total`:"todo cubierto"}/>
         <Tarjeta titulo="Sin stock" valor={resumen.sinStock} color={resumen.sinStock>0?AM:G} sub="productos en 0"/>
       </div>
+
+      {barriles.lista.length>0&&(
+        <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:14,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:10}}>
+            <span style={{fontSize:16,fontWeight:700,color:CR}}>🛢️ Barriles en stock</span>
+            <span className="bebas" style={{fontSize:24,color:barriles.total>0?G:MU}}>{fl(barriles.total)} L</span>
+          </div>
+          {barriles.lista.map(m=>(
+            <div key={m.marca} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:800,color:GDK,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>
+                <span>{m.marca}</span><span>{fl(m.total)} L</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:`repeat(auto-fill,minmax(${movil?130:150}px,1fr))`,gap:8}}>
+                {m.lista.map(e=>{
+                  const resta=e.litros-e.pedido;
+                  const color=e.litros<=0?RE:(resta<0?AM:G);
+                  return(
+                    <div key={e.nombre} style={{background:BG,border:`1px solid ${e.litros<=0?RE+"66":BO}`,borderRadius:12,padding:"10px 12px",minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.nombre}>{e.nombre}</div>
+                      <div className="bebas" style={{fontSize:26,color,lineHeight:1.15}}>{fl(e.litros)} L</div>
+                      <div style={{fontSize:11,color:e.pedido>0?(resta<0?AM:MU):"transparent",minHeight:14}}>{e.pedido>0?`pedidos: ${fl(e.pedido)} L${resta<0?` · faltan ${fl(-resta)}`:""}`:"."}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <CuadroStockLitros prods={prods}/>
 
@@ -10624,7 +10698,7 @@ function App(){
   const[filtroClientes,setFiltroClientes]=useState("todos");
   const irACobranza=()=>{setFiltroClientes("deuda");setTab("clientes");};
   const[showMore,setShowMore]=useState(false);
-  const[menusAbiertos,setMenusAbiertos]=useState({ventas:true,compras:true,inventario:false,gestion:false,herramientas:false});
+  const[menusAbiertos,setMenusAbiertos]=useState({ventas:false,compras:false,inventario:false,gestion:false,herramientas:false});
   const renderGrupoMenu=(id,label,keys)=>{
     const items=keys.map(k=>TABS.find(t=>t.key===k)).filter(Boolean);
     const activo=items.some(t=>t.key===tab);
