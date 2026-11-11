@@ -446,6 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
+const APP_BUILD="11-nov-2026 · 20:30";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -9511,6 +9512,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
   return(
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <span className="bebas" style={{fontSize:30,color:CR,display:"block",marginBottom:4}}>Configuración</span>
+      <div style={{fontSize:12,color:MU,marginBottom:10}}>Versión de la app: <b style={{color:CR}}>{APP_BUILD}</b></div>
       <p style={{fontSize:14,color:MU,marginBottom:24}}>Integraciones, exportaciones y ajustes</p>
  
       {/* ── Exportar datos ── */}
