@@ -10148,7 +10148,8 @@ function Stock({prods,setProds,pedidos}){
       e.litros+=f.litStock;e.pedido+=f.litPedido;
       m.total+=f.litStock;total+=f.litStock;
     });
-    const lista=Object.values(marcas).map(m=>({...m,lista:Object.values(m.estilos).sort((a,b)=>b.litros-a.litros||a.nombre.localeCompare(b.nombre))}))
+    const lista=Object.values(marcas).map(m=>({...m,lista:Object.values(m.estilos).filter(e=>e.litros>0).sort((a,b)=>b.litros-a.litros||a.nombre.localeCompare(b.nombre))}))
+      .filter(m=>m.lista.length>0)
       .sort((a,b)=>b.total-a.total||a.marca.localeCompare(b.marca));
     return{lista,total};
   },[filas]);
