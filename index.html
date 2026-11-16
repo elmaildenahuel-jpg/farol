@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="16-nov-2026 · 11:00";
+const APP_BUILD="16-nov-2026 · 16:45";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -4074,6 +4074,7 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
     return(<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
       {!m.pagado&&ids.length>0&&acciones.onCobrar&&<button onClick={()=>acciones.onCobrar(titulo,montoPend(ids),ids)} style={{...btnAcc,background:GR+"22",color:GR,borderColor:GR+"44"}}>✓ Cobrar {m$(montoPend(ids))}</button>}
       {!m.remitoNro&&m.rootId&&acciones.onEditar&&<button onClick={()=>acciones.onEditar(m.rootId)} style={btnAcc}>✎ Editar</button>}
+      {acciones.onEliminar&&<button onClick={()=>acciones.onEliminar(m)} aria-label="Eliminar" style={{...btnAcc,color:"#C62828"}}>🗑 Eliminar</button>}
     </div>);
   };
   const vencidaTxt=m=>{if(m.pagado||!diasMora)return null;const dd=daysSince(m.fecha);return dd>=diasMora?<div style={{fontSize:12,color:rojo,fontWeight:700}}>Vencido hace {dd}d</div>:null;};
@@ -4189,10 +4190,59 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
 }
 
 // Cuenta corriente ÚNICA del cliente (se abre desde la ficha, tanto desde Clientes como desde "Cobrar")
-function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
+function ModalEliminarVenta({datos,onClose,onConfirmar}){
+  const[reponer,setReponer]=useState(true);
+  if(!datos)return null;
+  const{titulo,monto,cobrado,pedidos,salidas}=datos;
+  const hayStock=pedidos.length>0;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.88)",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${RE}44`,borderRadius:16,width:"100%",maxWidth:360,padding:22,maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{fontSize:18,fontWeight:700,color:CR,marginBottom:8}}>¿Eliminar {titulo}?</div>
+        <div style={{fontSize:15,color:MU,marginBottom:12,lineHeight:1.5}}>
+          Se quita de la cuenta corriente ({fmtARS(monto)}).{cobrado>0.005?` Ya tenía ${fmtARS(cobrado)} cobrados: ese cobro también se descuenta del historial.`:""} Esta acción no se puede deshacer.
+        </div>
+        {hayStock&&(
+          <label style={{display:"flex",gap:10,alignItems:"flex-start",background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:14,cursor:"pointer"}}>
+            <input type="checkbox" checked={reponer} onChange={e=>setReponer(e.target.checked)} style={{width:20,height:20,marginTop:2,flexShrink:0}}/>
+            <span style={{fontSize:14,color:CR,lineHeight:1.45}}>Devolver al stock lo entregado{salidas?` (${salidas})`:""} y dejar el pedido otra vez como <b>pendiente</b>, para poder entregarlo de nuevo o eliminarlo.<br/><span style={{color:MU,fontSize:12}}>Si lo destildás, solo se borra de la cuenta: el stock y el pedido quedan como están.</span></span>
+          </label>
+        )}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"11px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
+          <button onClick={()=>{onConfirmar(hayStock&&reponer);onClose();}} style={{flex:1,padding:"11px 0",borderRadius:10,background:RE,border:"none",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Sí, eliminar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos,setProds,setPedidos}){
   const[pedirCobro,setPedirCobro]=useState(null);
   const[editandoVentaId,setEditandoVentaId]=useState(null);
   const refEdit=React.useRef(null);
+  const[elimVenta,setElimVenta]=useState(null);
+  // Prepara la eliminación de un remito (todas sus ventas) o de una venta suelta, con todas sus partes cobradas
+  const pedirEliminarVenta=m=>{
+    const raices=new Set(m.remitoNro?(m.items||[]).map(it=>it.rootId):[m.rootId]);
+    const ids=new Set(raices);let creció=true;
+    while(creció){creció=false;(cliente.ventas||[]).forEach(v=>{if(!ids.has(v.id)&&v._origenId&&ids.has(v._origenId)){ids.add(v.id);creció=true;}});}
+    const piezas=(cliente.ventas||[]).filter(v=>ids.has(v.id));
+    const pedIds=Array.from(new Set(piezas.map(v=>v.pedidoId).filter(Boolean)));
+    const peds=pedIds.map(id=>(pedidos||[]).find(x=>x.id===id)).filter(x=>x&&x.stockDescontado&&x.estado==="entregado");
+    const salida={};peds.forEach(pd=>(pd.lineas||[]).forEach(l=>{if(l.productoId)salida[l.productoId]=(salida[l.productoId]||0)+(Number(l.cantidad)||0);}));
+    const txt=Object.keys(salida).map(id=>{const pr=(prods||[]).find(x=>x.id===id);return`${nombreProdEnvase(pr)||id}: ${Math.round(salida[id]*10)/10}${pr&&pr.envase==="Lata"?" u":" L"}`;}).join(", ");
+    setElimVenta({titulo:m.remitoNro?`el remito ${fmtRemito(m.remitoNro)}`:`la venta del ${fmtDate(m.fecha)}`,monto:m.monto,cobrado:m.cobrado||0,ids,pedidos:peds,salida,salidas:txt});
+  };
+  const confirmarEliminarVenta=reponer=>{
+    const d=elimVenta;if(!d)return;
+    onUpdate({...cliente,ventas:(cliente.ventas||[]).filter(v=>!d.ids.has(v.id))});
+    if(reponer){
+      if(setProds)setProds(prev=>prev.map(x=>d.salida[x.id]?{...x,stock:Math.round(((Number(x.stock)||0)+d.salida[x.id])*100)/100}:x));
+      if(setPedidos){const pids=new Set(d.pedidos.map(x=>x.id));setPedidos(prev=>prev.map(x=>pids.has(x.id)?{...x,estado:"pendiente",stockDescontado:false}:x));}
+    }
+    setElimVenta(null);
+  };
   useEffect(()=>{if(editandoVentaId&&refEdit.current&&refEdit.current.scrollIntoView)refEdit.current.scrollIntoView({behavior:"smooth",block:"center"});},[editandoVentaId]);
   const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
@@ -4229,6 +4279,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
       </div>
       <div style={{display:"flex",gap:8,marginBottom:saldo>0?12:8}}>
         <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!hayMovs} style={{...btn2,opacity:compartiendoEC||!hayMovs?0.6:1,cursor:compartiendoEC?"not-allowed":"pointer"}}>{I.share}{compartiendoEC?"Generando...":"Enviar PDF"}</button>
+        <ExportarMovimientos tipo="cliente" entidad={cliente} prods={prods} pedidos={pedidos}/>
       </div>
 
       <BloqueSaldosAnteriores entidad={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
@@ -4257,7 +4308,8 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
           <div style={{fontSize:14,fontWeight:700,color:CR,marginBottom:8}}>Editar venta</div>
           <FormVenta prods={prods} comisionPctDefault={cliente.comisionPctDefault} initial={v} labelGuardar="Guardar cambios" onCancel={()=>setEditandoVentaId(null)} onSave={datos=>{onUpdate({...cliente,ventas:cliente.ventas.map(x=>x.id===v.id?{...x,...datos}:x)});setEditandoVentaId(null);}}/>
         </div>);})()}
-      {hayMovs&&<div style={{marginBottom:12}}><MovimientosCards cliente={cliente} prods={prods} pedidos={pedidos} diasMora={diasMora} acciones={{onCobrar:(titulo,monto,ids)=>setPedirCobro({titulo,monto,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,ids,titulo,f))}),onEditar:id=>setEditandoVentaId(id),onDeshacer:deshacer}}/></div>}
+      {hayMovs&&<div style={{marginBottom:12}}><MovimientosCards cliente={cliente} prods={prods} pedidos={pedidos} diasMora={diasMora} acciones={{onCobrar:(titulo,monto,ids)=>setPedirCobro({titulo,monto,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,ids,titulo,f))}),onEditar:id=>setEditandoVentaId(id),onEliminar:pedirEliminarVenta,onDeshacer:deshacer}}/></div>}
+      <ModalEliminarVenta datos={elimVenta} onClose={()=>setElimVenta(null)} onConfirmar={confirmarEliminarVenta}/>
 
       <PanelDescuentosCliente items={itemsDesc}/>
 
@@ -4267,7 +4319,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
 
 
 // ── DetalleCliente ────────────────────────────────────────────────
-function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,promo51,pedidos,talonarios,setTalonarios}){
+function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,talonarios,setTalonarios}){
   const[vForm,setVForm]=useState(false);
   const[editandoVentaId,setEditandoVentaId]=useState(null);
   const[edit,setEdit]=useState(false);
@@ -4310,7 +4362,7 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
       )}
       <button onClick={async()=>{setCompartiendoCatalogo(true);try{await compartirCatalogoPDF(prods,promo51);}finally{setCompartiendoCatalogo(false);}}} disabled={compartiendoCatalogo||!prods||prods.length===0} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"none",color:MU,border:`1px solid ${BO}`,cursor:compartiendoCatalogo?"not-allowed":"pointer",marginBottom:14,opacity:compartiendoCatalogo?0.6:1}}>{I.share}{compartiendoCatalogo?"Generando catálogo...":"Compartir catálogo"}</button>
       {cliente.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{cliente.notas}</div></div>}
-      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora} prods={prods} pedidos={pedidos}/>
+      <CuentaCorriente cliente={cliente} onUpdate={onUpdate} diasMora={diasMora} prods={prods} pedidos={pedidos} setProds={setProds} setPedidos={setPedidos}/>
       {(()=>{
         const promoProg=promo51&&promo51.activo?progresoPromo51(cliente,promo51,prods,pedidos):null;
         if(!promoProg)return null;
@@ -4552,7 +4604,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
-function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp,talonarios,setTalonarios}){
+function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp,talonarios,setTalonarios}){
   const[q,setQ]=useState("");
   const[filtroLocal,setFiltroLocal]=useState("todos");
   const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
@@ -4686,7 +4738,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} talonarios={talonarios} setTalonarios={setTalonarios} onUpdate={actualizar} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} talonarios={talonarios} setTalonarios={setTalonarios} onUpdate={actualizar} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
       </Modal>
       <Modal open={!!cobrandoObj} onClose={()=>setCobrandoId(null)} title={cobrandoObj?`Cobrar · ${cobrandoObj.nombre}`:""}>
         {cobrandoObj&&(
@@ -4704,6 +4756,271 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
   );
 }
  
+// ══ EXPORTAR MOVIMIENTOS (PDF / Excel) con filtro de fechas — clientes y proveedores ══
+// Escribe un .xlsx real sin librerías: un zip "sin comprimir" con el XML mínimo de Excel.
+function crc32Bytes(u8){
+  if(!crc32Bytes.t){const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}crc32Bytes.t=t;}
+  let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=crc32Bytes.t[(c^u8[i])&0xFF]^(c>>>8);return(c^0xFFFFFFFF)>>>0;
+}
+function zipSinComprimir(archivos){
+  const enc=new TextEncoder(),partes=[],central=[];let offset=0;
+  const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+  archivos.forEach(a=>{
+    const nombre=enc.encode(a.nombre),datos=enc.encode(a.contenido),crc=crc32Bytes(datos);
+    const local=new Uint8Array([0x50,0x4B,3,4,...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(crc),...u32(datos.length),...u32(datos.length),...u16(nombre.length),...u16(0)]);
+    partes.push(local,nombre,datos);
+    central.push({nombre,crc,len:datos.length,offset});
+    offset+=local.length+nombre.length+datos.length;
+  });
+  const cdIni=offset;let cdTam=0;
+  central.forEach(c=>{
+    const h=new Uint8Array([0x50,0x4B,1,2,...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(c.crc),...u32(c.len),...u32(c.len),...u16(c.nombre.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(c.offset)]);
+    partes.push(h,c.nombre);cdTam+=h.length+c.nombre.length;
+  });
+  partes.push(new Uint8Array([0x50,0x4B,5,6,...u16(0),...u16(0),...u16(central.length),...u16(central.length),...u32(cdTam),...u32(cdIni),...u16(0)]));
+  return new Blob(partes,{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+// hojas: [{nombre, anchos:[..], filas:[[celda,...]]}] — celda = valor | {v,s}; s: "h" encabezado, "$" importe, "$b" importe en negrita, "f" fecha (YYYY-MM-DD), "b" negrita, "t" título
+function crearXlsx(hojas){
+  const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"");
+  const ESTILO={h:1,"$":2,f:3,"$b":4,b:5,t:6};
+  const col=i=>{let s="";i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26);}return s;};
+  const serial=iso=>{const[a,m,d]=String(iso).split("-").map(Number);if(!a||!m||!d)return null;return Math.round((Date.UTC(a,m-1,d)-Date.UTC(1899,11,30))/86400000);};
+  const hojaXml=h=>{
+    const filas=h.filas.map((fila,r)=>`<row r="${r+1}">`+fila.map((c,ci)=>{
+      const o=c!==null&&typeof c==="object"?c:{v:c};const ref=col(ci)+(r+1),st=ESTILO[o.s]||0;
+      if(o.v===null||o.v===undefined||o.v==="")return st?`<c r="${ref}" s="${st}"/>`:"";
+      if(o.s==="f"){const n=serial(o.v);if(n!=null)return`<c r="${ref}" s="${st}"><v>${n}</v></c>`;}
+      if(typeof o.v==="number"&&isFinite(o.v))return`<c r="${ref}"${st?` s="${st}"`:""}><v>${o.v}</v></c>`;
+      return`<c r="${ref}"${st?` s="${st}"`:""} t="inlineStr"><is><t xml:space="preserve">${esc(o.v)}</t></is></c>`;
+    }).join("")+`</row>`).join("");
+    const cols=(h.anchos||[]).map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("");
+    return`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"/></sheetViews>${cols?`<cols>${cols}</cols>`:""}<sheetData>${filas}</sheetData></worksheet>`;
+  };
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0E4A2C"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="left"/></xf><xf numFmtId="4" fontId="2" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const archivos=[
+    {nombre:"[Content_Types].xml",contenido:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${hojas.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`},
+    {nombre:"_rels/.rels",contenido:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`},
+    {nombre:"xl/workbook.xml",contenido:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${hojas.map((h,i)=>`<sheet name="${esc(h.nombre).slice(0,31)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets></workbook>`},
+    {nombre:"xl/_rels/workbook.xml.rels",contenido:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${hojas.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${hojas.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`},
+    {nombre:"xl/styles.xml",contenido:styles},
+    ...hojas.map((h,i)=>({nombre:`xl/worksheets/sheet${i+1}.xml`,contenido:hojaXml(h)}))
+  ];
+  return zipSinComprimir(archivos);
+}
+// Entrega un archivo: menú de compartir del teléfono si existe; si no, lo descarga (o abre el PDF).
+async function entregarArchivo(blob,nombre,mime,titulo){
+  try{
+    if(navigator.share&&navigator.canShare){
+      const file=new File([blob],nombre,{type:mime});
+      if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:titulo||nombre});return;}
+    }
+  }catch(e){if(e&&e.name==="AbortError")return;}
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download=nombre;a.target="_blank";
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+const q1=n=>Math.round((Number(n)||0)*10)/10;
+// Filas normalizadas del libro (orden cronológico, con saldo acumulado)
+function filasExportCliente(cliente,prods,pedidos){
+  const nom=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
+  const uni=id=>{const p=(prods||[]).find(x=>x.id===id);return p&&p.envase==="Lata"?"u":"L";};
+  return construirMovimientosCliente(cliente,prods,pedidos).map(m=>{
+    const base={fecha:m.fecha||"",saldo:m.saldoAcum,cargo:0,pago:0,lineas:[]};
+    if(m.tipo==="pago")return{...base,concepto:"Pago recibido",detalle:[m.medioPago||"Efectivo",m.nota].filter(Boolean).join(" · "),estado:"",pago:m.monto,esPago:true};
+    const estado=m.tipo==="saldo"?(m.pagado?"Cobrado":"Pendiente"):(m.pagado?"Cobrado":m.parcial?"Cobro parcial":"Pendiente");
+    if(m.tipo==="saldo")return{...base,concepto:m.ajuste?"Ajuste de saldo":"Saldo anterior",detalle:m.descripcion||"",estado,cargo:m.monto};
+    if(m.remitoNro){
+      const lineas=(m.items||[]).map(it=>({producto:nom(it.producto),cantidad:q1(it.cantidad),unidad:uni(it.producto),monto:it.monto}));
+      return{...base,concepto:`Remito ${fmtRemito(m.remitoNro)}`,detalle:lineas.map(l=>`${l.producto} ${l.cantidad}${l.unidad}`).join(", "),estado,cargo:m.monto,lineas};
+    }
+    const l={producto:nom(m.producto),cantidad:q1(m.cantidad),unidad:uni(m.producto),monto:m.monto};
+    return{...base,concepto:"Venta",detalle:`${l.producto} ${l.cantidad}${l.unidad}${m.nota?" · "+m.nota:""}`,estado,cargo:m.monto,lineas:[l]};
+  });
+}
+function filasExportProveedor(prov,prods){
+  const nom=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):(id||"—");};
+  const uni=id=>{const p=(prods||[]).find(x=>x.id===id);return p&&p.envase==="Lata"?"u":"L";};
+  const etq=(tipo,numero)=>`${tipo==="factura"?"Factura":tipo==="remito"?"Remito":"Compra"}${numero?` ${numero}`:""}`;
+  return construirMovimientosProveedor(prov).map(m=>{
+    const base={fecha:m.fecha||"",saldo:m.saldoAcum,cargo:0,pago:0,lineas:[]};
+    if(m.tipo==="pago"){
+      const cubre=Array.from(new Set((m.filas||[]).map(c=>etq(c.tipoComprobante,c.numeroComprobante)))).join(", ");
+      return{...base,concepto:"Pago realizado",detalle:[m.medioPago,m.nota,cubre?`Cubrió: ${cubre}`:""].filter(Boolean).join(" · "),estado:"",pago:m.monto,esPago:true};
+    }
+    if(m.tipo==="saldo")return{...base,concepto:m.ajuste?"Ajuste de saldo":"Saldo anterior",detalle:m.descripcion||"",estado:m.pagado?"Pagado":"Pendiente",cargo:m.monto};
+    const g=m.grupo;
+    const lineas=g.rows.map(r=>({producto:nom(r.producto),cantidad:q1(r.cantidad),unidad:uni(r.producto),monto:r.montoNeto??r.monto,precioUnit:r.precioUnit||null}));
+    const extras=[];if(g.tipo==="factura"){extras.push(`Neto ${fmtARS(g.neto)}`,`IVA ${fmtARS(g.iva)}`);(g.otros||[]).forEach(x=>extras.push(`${x.nombre} ${fmtARS(x.monto)}`));}else if(g.gastos>0)extras.push(`${g.gastoConcepto} ${fmtARS(g.gastos)}`);
+    return{...base,concepto:etq(g.tipo,g.numero),detalle:[lineas.map(l=>`${l.producto} ${l.cantidad}${l.unidad}`).join(", "),extras.join(" · ")].filter(Boolean).join(" — ").replace(/\u00a0/g," "),estado:m.pagado?"Pagado":m.parcial?"Pago parcial":"Pendiente",cargo:m.monto,lineas};
+  });
+}
+// Aplica filtros de fecha/estado; calcula saldo anterior al período, totales y saldo final
+function aplicarFiltroExport(filas,{desde,hasta,estado}){
+  const antes=desde?filas.filter(f=>(f.fecha||"")<desde):[];
+  const apertura=antes.length?antes[antes.length-1].saldo:0;
+  let sel=filas.filter(f=>(!desde||(f.fecha||"")>=desde)&&(!hasta||(f.fecha||"")<=hasta));
+  const dentro=sel;
+  if(estado==="pend")sel=sel.filter(f=>!f.esPago&&f.estado!=="Cobrado"&&f.estado!=="Pagado");
+  else if(estado==="pagos")sel=sel.filter(f=>f.esPago);
+  const cargos=sel.reduce((a,f)=>a+f.cargo,0),pagos=sel.reduce((a,f)=>a+f.pago,0);
+  const cierre=dentro.length?dentro[dentro.length-1].saldo:apertura;
+  return{filas:sel,apertura:Math.round(apertura*100)/100,cargos:Math.round(cargos*100)/100,pagos:Math.round(pagos*100)/100,cierre:Math.round(cierre*100)/100};
+}
+const ESTADO_TXT={todo:"Todos los movimientos",pend:"Solo pendientes",pagos:"Solo pagos"};
+function textoPeriodo(desde,hasta){
+  const f=s=>fmtDateCorta(s);
+  if(desde&&hasta)return`Del ${f(desde)} al ${f(hasta)}`;
+  if(desde)return`Desde el ${f(desde)}`;
+  if(hasta)return`Hasta el ${f(hasta)}`;
+  return"Todo el historial";
+}
+function construirPDFMovimientos({titulo,entidad,subtitulo,res,desde,hasta,estado,etiquetaPago,etiquetaCargo}){
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210,pageH=297,mx=14;
+  let y=0;
+  const header=()=>{
+    doc.setFillColor(14,74,44);doc.rect(0,0,pageW,26,"F");
+    const wl=pdfLogoCaja(doc,mx,2,22);
+    doc.setTextColor(255,255,255);doc.setFont("helvetica","normal");doc.setFontSize(8.5);
+    doc.text("Distribución de cerveza artesanal",mx+wl+5,14.5);
+    doc.setFont("helvetica","bold");doc.setFontSize(12.5);doc.text(titulo,pageW-mx,14,{align:"right"});
+    doc.setFont("helvetica","normal");doc.setFontSize(8);
+    doc.text(`Emitido: ${new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"})}`,pageW-mx,20.5,{align:"right"});
+    y=33;
+  };
+  header();
+  doc.setTextColor(26,26,26);doc.setFont("helvetica","bold");doc.setFontSize(13);doc.text(entidad||"",mx,y);y+=5.5;
+  doc.setFont("helvetica","normal");doc.setFontSize(9.5);doc.setTextColor(86,91,96);
+  [subtitulo,`${textoPeriodo(desde,hasta)} · ${ESTADO_TXT[estado]}`].filter(Boolean).forEach(t=>{doc.text(t,mx,y);y+=5;});
+  y+=2;
+  const boxW=(pageW-mx*2-12)/4;
+  const cajas=[["Saldo anterior",res.apertura,[26,26,26]],[etiquetaCargo,res.cargos,[26,26,26]],[etiquetaPago,res.pagos,[15,122,66]],["Saldo final",res.cierre,res.cierre>0?[198,40,40]:[15,122,66]]];
+  cajas.forEach((c,i)=>{
+    const bx=mx+i*(boxW+4);
+    doc.setFillColor(248,248,247);doc.setDrawColor(228,231,229);doc.setLineWidth(0.25);doc.roundedRect(bx,y,boxW,16,2,2,"FD");
+    doc.setFont("helvetica","normal");doc.setFontSize(7);doc.setTextColor(120,120,120);doc.text(c[0].toUpperCase(),bx+3,y+5.5);
+    doc.setFont("helvetica","bold");doc.setFontSize(10.5);doc.setTextColor(c[2][0],c[2][1],c[2][2]);doc.text(fmtARS(c[1]),bx+3,y+12);
+  });
+  y+=22;
+  const cF=mx,cD=mx+20,rI=138,rP=167,rS=pageW-mx-1;
+  const wDet=rI-cD-26;
+  const cabecera=()=>{
+    doc.setFillColor(230,233,231);doc.rect(mx,y-4.2,pageW-mx*2,6.2,"F");
+    doc.setFont("helvetica","bold");doc.setFontSize(7.5);doc.setTextColor(86,91,96);
+    doc.text("FECHA",cF+1,y);doc.text("DETALLE",cD,y);doc.text(etiquetaCargo.toUpperCase(),rI,y,{align:"right"});doc.text(etiquetaPago.toUpperCase(),rP,y,{align:"right"});doc.text("SALDO",rS,y,{align:"right"});
+    y+=5;
+  };
+  cabecera();
+  if(!res.filas.length){doc.setFont("helvetica","italic");doc.setFontSize(10);doc.setTextColor(120,120,120);doc.text("No hay movimientos para ese filtro.",mx+1,y+4);y+=10;}
+  res.filas.forEach(f=>{
+    doc.setFont("helvetica","normal");doc.setFontSize(8);
+    const det=doc.splitTextToSize(f.detalle||"",wDet);
+    const alto=4.6+det.length*3.7+1.8;
+    if(y+alto>pageH-16){doc.addPage();header();cabecera();}
+    doc.setTextColor(86,91,96);doc.text(fmtDateCorta(f.fecha),cF+1,y);
+    doc.setFont("helvetica","bold");doc.setFontSize(8.5);doc.setTextColor(f.esPago?15:26,f.esPago?122:26,f.esPago?66:26);
+    doc.text(f.concepto+(f.estado?` · ${f.estado}`:""),cD,y);
+    doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(86,91,96);
+    det.forEach((t,i)=>doc.text(t,cD,y+3.8*(i+1)));
+    doc.setFontSize(8.5);doc.setTextColor(26,26,26);
+    if(f.cargo)doc.text(fmtARS(f.cargo),rI,y,{align:"right"});
+    if(f.pago){doc.setTextColor(15,122,66);doc.text(fmtARS(f.pago),rP,y,{align:"right"});}
+    doc.setFont("helvetica","bold");doc.setTextColor(f.saldo>0?198:15,f.saldo>0?40:122,f.saldo>0?40:66);doc.text(fmtARS(f.saldo),rS,y,{align:"right"});
+    y+=alto;doc.setDrawColor(228,231,229);doc.setLineWidth(0.2);doc.line(mx,y-3.4,pageW-mx,y-3.4);
+  });
+  const n=doc.getNumberOfPages();
+  for(let i=1;i<=n;i++){doc.setPage(i);doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.setTextColor(150,150,150);doc.text("Distribuidora Nómades · generado automáticamente",pageW/2,pageH-7,{align:"center"});doc.text(`Página ${i} de ${n}`,pageW-mx,pageH-7,{align:"right"});}
+  return doc;
+}
+function construirXlsxMovimientos({titulo,entidad,res,desde,hasta,estado,etiquetaPago,etiquetaCargo,conPrecio}){
+  const enc=[{v:"Fecha",s:"h"},{v:"Concepto / comprobante",s:"h"},{v:"Detalle",s:"h"},{v:"Estado",s:"h"},{v:etiquetaCargo,s:"h"},{v:etiquetaPago,s:"h"},{v:"Saldo",s:"h"}];
+  const filas=[
+    [{v:`${titulo} — ${entidad}`,s:"t"}],
+    [`${textoPeriodo(desde,hasta)} · ${ESTADO_TXT[estado]}`],
+    [],
+    [{v:"Saldo anterior al período",s:"b"},"","","","","",{v:res.apertura,s:"$b"}],
+    enc,
+    ...res.filas.map(f=>[{v:f.fecha,s:"f"},f.concepto,f.detalle,f.estado,f.cargo?{v:f.cargo,s:"$"}:"",f.pago?{v:f.pago,s:"$"}:"",{v:f.saldo,s:"$"}]),
+    [],
+    [{v:"Totales del período",s:"b"},"","","",{v:res.cargos,s:"$b"},{v:res.pagos,s:"$b"},{v:res.cierre,s:"$b"}]
+  ];
+  const lineasHoja=[["Fecha","Comprobante","Producto","Cantidad","Unidad",...(conPrecio?["Precio unitario"]:[]),"Importe"].map(v=>({v,s:"h"}))];
+  res.filas.forEach(f=>(f.lineas||[]).forEach(l=>lineasHoja.push([{v:f.fecha,s:"f"},f.concepto,l.producto,l.cantidad,l.unidad,...(conPrecio?[l.precioUnit?{v:l.precioUnit,s:"$"}:""]:[]),{v:l.monto,s:"$"}])));
+  const hojas=[{nombre:"Movimientos",anchos:[12,28,60,14,16,16,16],filas}];
+  if(lineasHoja.length>1)hojas.push({nombre:"Productos",anchos:conPrecio?[12,28,38,10,8,14,16]:[12,28,38,10,8,16],filas:lineasHoja});
+  return crearXlsx(hojas);
+}
+function ExportarMovimientos({tipo,entidad,prods,pedidos}){
+  const esProv=tipo==="proveedor";
+  const[abierto,setAbierto]=useState(false);
+  const[rango,setRango]=useState("todo");
+  const[desde,setDesde]=useState("");
+  const[hasta,setHasta]=useState("");
+  const[estado,setEstado]=useState("todo");
+  const[ocupado,setOcupado]=useState("");
+  const filas=useMemo(()=>abierto?(esProv?filasExportProveedor(entidad,prods):filasExportCliente(entidad,prods,pedidos)):[],[abierto,entidad,prods,pedidos,esProv]);
+  const res=useMemo(()=>aplicarFiltroExport(filas,{desde,hasta,estado}),[filas,desde,hasta,estado]);
+  const elegir=k=>{
+    setRango(k);
+    const hoy=new Date(),iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    if(k==="todo"){setDesde("");setHasta("");}
+    else if(k==="mes"){setDesde(iso(new Date(hoy.getFullYear(),hoy.getMonth(),1)));setHasta(iso(new Date(hoy.getFullYear(),hoy.getMonth()+1,0)));}
+    else if(k==="mesant"){setDesde(iso(new Date(hoy.getFullYear(),hoy.getMonth()-1,1)));setHasta(iso(new Date(hoy.getFullYear(),hoy.getMonth(),0)));}
+    else if(k==="30"){const d=new Date(hoy);d.setDate(d.getDate()-30);setDesde(iso(d));setHasta(iso(hoy));}
+    else if(k==="anio"){setDesde(`${hoy.getFullYear()}-01-01`);setHasta(`${hoy.getFullYear()}-12-31`);}
+  };
+  const nombreArchivo=ext=>`movimientos-${(entidad.nombre||"cuenta").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-${hoyISO()}.${ext}`;
+  const parametros={titulo:esProv?"CUENTA CORRIENTE PROVEEDOR":"ESTADO DE CUENTA",entidad:entidad.nombre||"",subtitulo:esProv?"Proveedor":[entidad.direccion,[entidad.rubro,entidad.zona].filter(Boolean).join(" · ")].filter(Boolean).join(" · "),res,desde,hasta,estado,etiquetaCargo:esProv?"Compras":"Facturado",etiquetaPago:esProv?"Pagado":"Cobrado",conPrecio:esProv};
+  const exportar=async fmt=>{
+    setOcupado(fmt);
+    try{
+      if(fmt==="pdf"){
+        if(!window.jspdf||!window.jspdf.jsPDF){alert("No se pudo cargar el generador de PDF. Revisá tu conexión y volvé a intentar.");return;}
+        const doc=construirPDFMovimientos(parametros);
+        await entregarArchivo(doc.output("blob"),nombreArchivo("pdf"),"application/pdf","Movimientos — "+entidad.nombre);
+      }else{
+        await entregarArchivo(construirXlsxMovimientos(parametros),nombreArchivo("xlsx"),"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Movimientos — "+entidad.nombre);
+      }
+    }catch(e){alert("No se pudo exportar: "+(e&&e.message||e));}
+    finally{setOcupado("");}
+  };
+  const chip=(k,l,act,fn)=>(<button key={k} onClick={fn} style={{padding:"7px 11px",borderRadius:20,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${act?G:BO}`,background:act?G:BG,color:act?"#fff":MU}}>{l}</button>);
+  const bt={flex:1,minHeight:48,borderRadius:10,border:"none",fontSize:15,fontWeight:700,cursor:"pointer",color:"#fff"};
+  return(<>
+    <button onClick={()=>setAbierto(true)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",borderRadius:8,fontSize:14,fontWeight:700,background:"#fff",color:G,border:`1px solid ${G}44`,cursor:"pointer"}}>📤 Exportar PDF / Excel</button>
+    <Modal open={abierto} onClose={()=>setAbierto(false)} title="Exportar movimientos">
+      <div style={{fontSize:15,fontWeight:700,color:CR,marginBottom:10}}>{entidad.nombre}</div>
+      <Lbl t="Período"/>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+        {chip("todo","Todo",rango==="todo",()=>elegir("todo"))}{chip("mes","Este mes",rango==="mes",()=>elegir("mes"))}{chip("mesant","Mes anterior",rango==="mesant",()=>elegir("mesant"))}{chip("30","Últimos 30 días",rango==="30",()=>elegir("30"))}{chip("anio","Este año",rango==="anio",()=>elegir("anio"))}{chip("pers","Personalizado",rango==="pers",()=>setRango("pers"))}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <div style={{flex:1}}><Lbl t="Desde"/><input type="date" value={desde} onChange={e=>{setDesde(e.target.value);setRango("pers");}}/></div>
+        <div style={{flex:1}}><Lbl t="Hasta"/><input type="date" value={hasta} onChange={e=>{setHasta(e.target.value);setRango("pers");}}/></div>
+      </div>
+      <Lbl t="Qué incluir"/>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[["todo","Todo"],["pend","Pendientes"],["pagos","Pagos"]].map(([k,l])=>chip(k,l,estado===k,()=>setEstado(k)))}
+      </div>
+      <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:13,color:CR,lineHeight:1.6}}>
+        <div><b>{res.filas.length}</b> movimiento{res.filas.length===1?"":"s"} · {textoPeriodo(desde,hasta)}</div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo anterior</span><b>{fmtARS(res.apertura)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>{esProv?"Compras":"Facturado"}</span><b>{fmtARS(res.cargos)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>{esProv?"Pagado":"Cobrado"}</span><b style={{color:GR}}>{fmtARS(res.pagos)}</b></div>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MU}}>Saldo final</span><b style={{color:res.cierre>0?"#C62828":GR}}>{fmtARS(res.cierre)}</b></div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>exportar("pdf")} disabled={!!ocupado} style={{...bt,background:"#C62828",opacity:ocupado?0.6:1}}>{ocupado==="pdf"?"Generando…":"📄 PDF"}</button>
+        <button onClick={()=>exportar("xlsx")} disabled={!!ocupado} style={{...bt,background:"#1D6F42",opacity:ocupado?0.6:1}}>{ocupado==="xlsx"?"Generando…":"📊 Excel"}</button>
+      </div>
+      <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>En el celular se abre el menú para enviarlo por WhatsApp, mail o guardarlo en Drive. El Excel trae una hoja con los movimientos y otra con el detalle por producto.</div>
+    </Modal>
+  </>);
+}
+
 // Libro de movimientos del proveedor: compras (por comprobante), saldos anteriores y pagos (agrupados por fecha/medio/ECHEQ) con saldo acumulado.
 function construirMovimientosProveedor(prov){
   const movs=[];
@@ -4814,7 +5131,7 @@ function MovimientosProveedorCards({proveedor,prods,acciones}){
                     {!m.pagado&&m.pendIds.length>0&&acciones.onPagar&&<button onClick={()=>acciones.onPagar(etiquetaComp(g.tipo,g.numero)+" · "+fmtDate(m.fecha),redondear2(m.monto-m.cobrado),m.pendIds)} style={{...btnAcc,background:GR+"22",color:GR,borderColor:GR+"44"}}>✓ Pagado {m$(m.monto-m.cobrado)}</button>}
                     {acciones.onImprimir&&<button onClick={()=>acciones.onImprimir(g)} style={btnAcc}>🖨️ Comprobante</button>}
                     {acciones.onEditar&&<button onClick={()=>acciones.onEditar(g.key)} style={btnAcc}>✎ Editar</button>}
-                    {acciones.onEliminar&&<button onClick={()=>acciones.onEliminar(g.key)} style={{...btnAcc,color:rojo}}>🗑</button>}
+                    {acciones.onEliminar&&<button onClick={()=>acciones.onEliminar(g.key)} aria-label="Eliminar" style={{...btnAcc,color:rojo}}>🗑 Eliminar</button>}
                   </div>}
                 </>)}
               </div>
@@ -4872,6 +5189,7 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods,acciones}){
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
 
+      <div style={{display:"flex",gap:8,marginBottom:8}}><ExportarMovimientos tipo="proveedor" entidad={proveedor} prods={prods}/></div>
       <ModalFechaCobro datos={pedirPago} onClose={()=>setPedirPago(null)}/>
       <BloqueSaldosAnteriores entidad={proveedor} onUpdate={onUpdate} esProveedor/>
 
@@ -4986,7 +5304,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
         :<button onClick={()=>onNuevaCompra?onNuevaCompra():setCForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:`1px dashed ${G}88`,background:G+"0A",color:G}}>{I.plus}Registrar factura / remito</button>
       }
       <p style={{fontSize:13,color:MU,textAlign:"center",padding:"4px 8px 12px",lineHeight:1.5}}>{grupos.length===0?"Sin compras aún.":"El detalle de cada compra (productos, impuestos, pagos, edición y comprobante) está en el historial de cuenta corriente, arriba."}</p>
-      <ModalConfirmar open={!!grupoBorrando} onClose={()=>setBorrandoKey(null)} onConfirmar={()=>eliminarGrupo(grupoBorrando)} titulo="¿Eliminar esta compra?" mensaje={`Se elimina el comprobante completo${grupoBorrando&&grupoBorrando.rows.length>1?` (${grupoBorrando.rows.length} productos)`:""}: se quita de la cuenta corriente y se revierten las cantidades que había sumado al stock. Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
+      <ModalConfirmar open={!!grupoBorrando} onClose={()=>setBorrandoKey(null)} onConfirmar={()=>eliminarGrupo(grupoBorrando)} titulo="¿Eliminar esta compra?" mensaje={`Se elimina el comprobante completo${grupoBorrando&&grupoBorrando.rows.length>1?` (${grupoBorrando.rows.length} productos)`:""}: se quita de la cuenta corriente y se revierten las cantidades que había sumado al stock.${grupoBorrando&&grupoBorrando.rows.some(r=>r.pagado)?" Tiene pagos registrados: también se quitan del historial.":""} Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
     </div>
   );
 }
@@ -11224,7 +11542,7 @@ function App(){
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:58,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza} proveedores={proveedores} setProveedores={setProveedores} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/>}
-          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios}/>}
+          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora} prods={prods} pedidos={pedidos}/>}
