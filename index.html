@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="11-nov-2026 · 20:30";
+const APP_BUILD="16-nov-2026 · 11:00";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -2441,7 +2441,7 @@ function construirMovimientosCliente(cliente,prods,pedidos){
     const sumable=piezas.every(x=>x.dv!==1||x.dvEsc);
     const d=piezas.length===1?ds[0]:(sumable?sumarDesgloses(ds):desgloseVenta(raiz,cliente.id,ctx));
     const pagada=piezas.length===1?!!piezas[0].pagado:cobrado>=monto-0.005;
-    const mv={id:raiz.id+"-v",orden:0,tipo:"venta",fecha:raiz.fecha,producto:raiz.producto,cantidad,monto,pagado:pagada,cobrado,parcial:!pagada&&cobrado>0.005,d};
+    const mv={id:raiz.id+"-v",rootId:raiz.id,pendIds:piezas.filter(x=>!x.pagado).map(x=>x.id),nota:raiz.nota||"",orden:0,tipo:"venta",fecha:raiz.fecha,producto:raiz.producto,cantidad,monto,pagado:pagada,cobrado,parcial:!pagada&&cobrado>0.005,d};
     if(raiz.remitoNro){const k=String(raiz.remitoNro);if(!porRemito[k]){porRemito[k]=[];ordenRemitos.push(k);}porRemito[k].push(mv);}
     else movs.push(mv);
   });
@@ -2451,7 +2451,7 @@ function construirMovimientosCliente(cliente,prods,pedidos){
     const monto=Math.round(items.reduce((a,x)=>a+x.monto,0)*100)/100;
     const cobrado=Math.round(items.reduce((a,x)=>a+x.cobrado,0)*100)/100;
     const pagada=items.every(x=>x.pagado);
-    movs.push({id:"rem-"+k+"-v",orden:0,tipo:"venta",remitoNro:Number(k),fecha:items.reduce((mn,x)=>x.fecha<mn?x.fecha:mn,items[0].fecha),items,monto,cobrado,pagado:pagada,parcial:!pagada&&cobrado>0.005,d:sumarDesgloses(items.map(x=>x.d))});
+    movs.push({id:"rem-"+k+"-v",pendIds:items.flatMap(x=>x.pendIds||[]),orden:0,tipo:"venta",remitoNro:Number(k),fecha:items.reduce((mn,x)=>x.fecha<mn?x.fecha:mn,items[0].fecha),items,monto,cobrado,pagado:pagada,parcial:!pagada&&cobrado>0.005,d:sumarDesgloses(items.map(x=>x.d))});
   });
   (cliente.saldosAnteriores||[]).forEach(x=>{
     const monto=Number(x.monto)||0;
@@ -4038,8 +4038,9 @@ function CargarSaldoClienteRapido({clientes,setClientes}){
 // Vista en tarjetas del estado de cuenta: ventas, saldos anteriores y pagos en una sola línea de tiempo, del más reciente al más viejo.
 // Tarjeta "Estado de cuenta": misma estructura y colores que el PDF (banda verde, 3 recuadros de resumen y libro de movimientos de
 // más reciente a más viejo con el saldo acumulado). Cada cobro es un solo movimiento. En celular, importe y saldo van apilados a la derecha.
-function MovimientosCards({cliente,prods,pedidos}){
+function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
   const[limite,setLimite]=useState(20);
+  const[filtro,setFiltro]=useState("todo");
   const[abiertos,setAbiertos]=useState(()=>new Set());
   const alternar=id=>setAbiertos(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else n.add(id);return n;});
   const movs=useMemo(()=>[...construirMovimientosCliente(cliente,prods,pedidos)].reverse(),[cliente,prods,pedidos]);
@@ -4057,12 +4058,25 @@ function MovimientosCards({cliente,prods,pedidos}){
   const hoyTxt=new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"});
   const rojo="#C62828";
   const caja=(lbl,val,color)=>(
-    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",minWidth:0}}>
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",minWidth:0,flex:1}}>
       <div style={{fontSize:10,color:MU,textTransform:"uppercase",letterSpacing:"0.05em",whiteSpace:"nowrap"}}>{lbl}</div>
       <div style={{fontSize:"clamp(12px,3.7vw,15px)",fontWeight:700,color,whiteSpace:"nowrap"}}>{m$(val)}</div>
     </div>
   );
-  const visibles=movs.slice(0,limite);
+  const filtrados=filtro==="pend"?movs.filter(m=>m.tipo!=="pago"&&!m.pagado):filtro==="pagos"?movs.filter(m=>m.tipo==="pago"):movs;
+  const visibles=filtrados.slice(0,limite);
+  const nPend=movs.filter(m=>m.tipo!=="pago"&&!m.pagado).length,nPagos=movs.filter(m=>m.tipo==="pago").length;
+  const montoPend=ids=>Math.round((cliente.ventas||[]).filter(v=>ids.indexOf(v.id)>=0&&!v.pagado).reduce((a,v)=>a+(Number(v.monto)||0),0)*100)/100;
+  const btnAcc={fontSize:12,fontWeight:700,padding:"5px 9px",borderRadius:7,cursor:"pointer",border:`1px solid ${BO}`,background:"#fff",color:MU};
+  const accionesVenta=(m,titulo)=>{
+    if(!acciones)return null;
+    const ids=m.pendIds||[];
+    return(<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+      {!m.pagado&&ids.length>0&&acciones.onCobrar&&<button onClick={()=>acciones.onCobrar(titulo,montoPend(ids),ids)} style={{...btnAcc,background:GR+"22",color:GR,borderColor:GR+"44"}}>✓ Cobrar {m$(montoPend(ids))}</button>}
+      {!m.remitoNro&&m.rootId&&acciones.onEditar&&<button onClick={()=>acciones.onEditar(m.rootId)} style={btnAcc}>✎ Editar</button>}
+    </div>);
+  };
+  const vencidaTxt=m=>{if(m.pagado||!diasMora)return null;const dd=daysSince(m.fecha);return dd>=diasMora?<div style={{fontSize:12,color:rojo,fontWeight:700}}>Vencido hace {dd}d</div>:null;};
   const colHead={fontSize:10,fontWeight:700,color:MU,letterSpacing:"0.05em"};
   return(
     <div className="ec-card" style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden"}}>
@@ -4070,12 +4084,18 @@ function MovimientosCards({cliente,prods,pedidos}){
         <span style={{display:"flex",alignItems:"center",gap:8}}><span style={{background:"#fff",borderRadius:6,padding:"2px 5px",display:"flex"}}><img className="logo-nomades" src={LOGO_NOMADES} alt="Nómades" style={{height:26,width:"auto",display:"block"}}/></span><span style={{fontSize:13,fontWeight:700,letterSpacing:"0.08em"}}>ESTADO DE CUENTA</span></span>
         <span style={{fontSize:12,opacity:0.85}}>Al {hoyTxt}</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,padding:10}}>
+      <div style={{display:"flex",gap:6,padding:10}}>
         {caja("Facturado",resumen.fact,CR)}
         {caja("Cobrado",resumen.cob,GR)}
         {caja("Saldo",resumen.saldo,resumen.saldo>0?rojo:GR)}
       </div>
       <div style={{padding:"2px 12px 8px",fontSize:13,fontWeight:700,color:CR}}>Historial de cuenta corriente</div>
+      <div style={{display:"flex",gap:6,padding:"0 12px 8px"}}>
+        {[["todo","Todo",movs.length],["pend","Pendientes",nPend],["pagos","Pagos",nPagos]].map(([k,l,n])=>(
+          <button key={k} onClick={()=>{setFiltro(k);setLimite(20);}} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro===k?G:BO}`,background:filtro===k?G:BG,color:filtro===k?"#fff":MU}}>{l} ({n})</button>
+        ))}
+      </div>
+      {filtrados.length===0&&<div style={{padding:"14px 12px",fontSize:14,color:MU,textAlign:"center",borderTop:`1px solid ${BO}`}}>{filtro==="pend"?"No hay nada pendiente ✓":"Sin movimientos."}</div>}
       <div className="ec-grid" style={{background:"#E6E9E7",padding:"6px 12px",...colHead}}>
         <span>FECHA</span>
         <span>DETALLE</span>
@@ -4102,6 +4122,7 @@ function MovimientosCards({cliente,prods,pedidos}){
                 <>
                   <div style={{fontSize:14,fontWeight:700,color:GR,whiteSpace:"nowrap"}}>Pago recibido</div>
                   <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.medioPago||"Efectivo"}{m.nota?` · ${m.nota}`:""}</div>
+                  {acciones&&acciones.onDeshacer&&<div style={{marginTop:6}}><button onClick={()=>acciones.onDeshacer(m)} style={{...btnAcc,background:RE+"11",color:"#C62828",borderColor:RE+"33"}}>Deshacer pago</button></div>}
                 </>
               ):saldoAnt?(
                 <>
@@ -4119,7 +4140,9 @@ function MovimientosCards({cliente,prods,pedidos}){
                     <span style={{fontWeight:700,color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Cobrado":m.parcial?"Cobro parcial":"Pendiente"}</span>
                   </div>
                   {m.parcial&&<div style={{fontSize:12,color:MU}}>Cobrado {m$(m.cobrado)} · falta {m$(m.monto-m.cobrado)}</div>}
-                  <div style={{marginTop:4}}><BotonReimprimirRemito compacto nro={m.remitoNro} items={m.items} cliente={cliente} prods={prods} pedidos={pedidos}/></div>
+                  {vencidaTxt(m)}
+                  <div style={{marginTop:4,display:"flex",gap:6,flexWrap:"wrap"}}><BotonReimprimirRemito compacto nro={m.remitoNro} items={m.items} cliente={cliente} prods={prods} pedidos={pedidos}/></div>
+                  {accionesVenta(m,`Remito ${fmtRemito(m.remitoNro)}`)}
                   {m.d&&<ChipBeneficio d={m.d}/>}
                 </>
               ):(
@@ -4130,6 +4153,9 @@ function MovimientosCards({cliente,prods,pedidos}){
                     <span style={{fontWeight:700,color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Cobrada":m.parcial?"Cobro parcial":"Pendiente"}</span>
                   </div>
                   {m.parcial&&<div style={{fontSize:12,color:MU}}>Cobrado {m$(m.cobrado)} · falta {m$(m.monto-m.cobrado)}</div>}
+                  {m.nota&&<div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.nota}</div>}
+                  {vencidaTxt(m)}
+                  {accionesVenta(m,`Venta del ${fmtDate(m.fecha)}`)}
                   {m.d&&<ChipBeneficio d={m.d}/>}
                 </>
               )}
@@ -4147,7 +4173,7 @@ function MovimientosCards({cliente,prods,pedidos}){
                 {m.items.map(it=>(
                   <div key={it.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"4px 0",fontSize:13}}>
                     <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{nombreProd(it.producto)} <span style={{color:MU}}>· {fl1(it.cantidad)}{envaseMap[it.producto]==="Lata"?"u":"L"}</span></span>
-                    <span style={{color:it.pagado?GR:CR,flexShrink:0,whiteSpace:"nowrap"}}>{m$(it.monto)}</span>
+                    <span style={{color:it.pagado?GR:CR,flexShrink:0,whiteSpace:"nowrap"}}>{m$(it.monto)}{acciones&&acciones.onEditar&&it.rootId&&<button onClick={()=>acciones.onEditar(it.rootId)} aria-label="Editar venta" style={{marginLeft:6,padding:"2px 6px",borderRadius:6,border:`1px solid ${BO}`,background:"#fff",color:MU,cursor:"pointer",fontSize:12}}>✎</button>}</span>
                   </div>
                 ))}
               </div>
@@ -4155,7 +4181,7 @@ function MovimientosCards({cliente,prods,pedidos}){
           </div>
         );
       })}
-      {movs.length>limite&&(
+      {filtrados.length>limite&&(
         <button onClick={()=>setLimite(l=>l+20)} style={{width:"100%",padding:"11px 0",background:BG,border:"none",borderTop:`1px solid ${BO}`,color:G,fontSize:14,fontWeight:700,cursor:"pointer"}}>Ver más movimientos ({movs.length-limite} restantes)</button>
       )}
     </div>
@@ -4165,9 +4191,9 @@ function MovimientosCards({cliente,prods,pedidos}){
 // Cuenta corriente ÚNICA del cliente (se abre desde la ficha, tanto desde Clientes como desde "Cobrar")
 function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
   const[pedirCobro,setPedirCobro]=useState(null);
-  const[showMovs,setShowMovs]=useState(false);
-  const[verTodos,setVerTodos]=useState(false);
-  const[showHistorial,setShowHistorial]=useState(false);
+  const[editandoVentaId,setEditandoVentaId]=useState(null);
+  const refEdit=React.useRef(null);
+  useEffect(()=>{if(editandoVentaId&&refEdit.current&&refEdit.current.scrollIntoView)refEdit.current.scrollIntoView({behavior:"smooth",block:"center"});},[editandoVentaId]);
   const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
   const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
@@ -4202,10 +4228,8 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:saldo>0?12:8}}>
-        <button onClick={()=>setShowMovs(v=>!v)} disabled={!hayMovs} style={{...btn2,opacity:hayMovs?1:0.5}}>📋 {showMovs?"Ocultar movimientos":"Ver movimientos"}</button>
         <button onClick={async()=>{setCompartiendoEC(true);try{await compartirEstadoCuentaPDF(cliente,prods,()=>{},pedidos);}finally{setCompartiendoEC(false);}}} disabled={compartiendoEC||!hayMovs} style={{...btn2,opacity:compartiendoEC||!hayMovs?0.6:1,cursor:compartiendoEC?"not-allowed":"pointer"}}>{I.share}{compartiendoEC?"Generando...":"Enviar PDF"}</button>
       </div>
-      {showMovs&&<div style={{marginBottom:12}}><MovimientosCards cliente={cliente} prods={prods} pedidos={pedidos}/></div>}
 
       <BloqueSaldosAnteriores entidad={cliente} onUpdate={onUpdate} diasMora={diasMora}/>
 
@@ -4218,53 +4242,6 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
               {cliente.telefono&&<a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,saldo,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"5px 10px",borderRadius:6,background:"#fff",color:"#C62828",textDecoration:"none",whiteSpace:"nowrap"}}>{I.wa} Recordar por WhatsApp</a>}
             </div>
           )}
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
-            {pendientesAgrupados.map(g=>{
-              if(!g.remitoNro)return null;
-              const dias=daysSince(g.fecha),vencida=dias>=diasMora,abierto=remAbiertos.has(g.key);
-              const total=g.filas.reduce((a,x)=>a+(Number(x.monto)||0),0);
-              return(
-              <div key={g.key} style={{background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                  <button onClick={()=>alternarRem(g.key)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",minWidth:0}}>
-                    <div style={{fontSize:16,color:CR,fontWeight:700}}>Remito {fmtRemito(g.remitoNro)}</div>
-                    <div style={{fontSize:14,color:MU}}>{fmtDate(g.fecha)} · {g.filas.length} producto{g.filas.length>1?"s":""}</div>
-                    <div style={{fontSize:13,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":"▼ Ver productos"}</div>
-                    {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
-                  </button>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(total)}</span>
-                    <BotonReimprimirRemito nro={g.remitoNro} items={g.filas} cliente={cliente} prods={prods} pedidos={pedidos}/>
-                    <button onClick={()=>setPedirCobro({titulo:`Remito ${fmtRemito(g.remitoNro)}`,monto:total,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,g.filas.map(x=>x.id),`Remito ${fmtRemito(g.remitoNro)}`,f))})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
-                  </div>
-                </div>
-                {abierto&&(
-                  <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
-                    {g.filas.map(x=>(
-                      <div key={x.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
-                        <span style={{color:CR,minWidth:0}}>{nombreProdCC(x.producto)} <span style={{color:MU}}>· {x.cantidad}{(prods||[]).find(p=>p.id===x.producto)?.envase==="Lata"?"u":"L"}</span></span>
-                        <span style={{color:MU,flexShrink:0}}>{fmtARS(x.monto)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );})}
-            {pendientes.filter(v=>!v.remitoNro).map(v=>{const dias=daysSince(v.fecha),vencida=dias>=diasMora;return(
-              <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${vencida?"#C6282866":BO}`,borderRadius:8,padding:"10px 12px"}}>
-                <div>
-                  <div style={{fontSize:16,color:CR,fontWeight:500}}>{fmtDate(v.fecha)}</div>
-                  <div style={{fontSize:14,color:MU}}>{v.cantidad}L · {v.nota||""}</div>
-                  <ChipBeneficio d={descPorId[v.id]}/>
-                  {vencida&&<div style={{fontSize:13,color:"#C62828",fontWeight:700,marginTop:2}}>Vencido hace {dias}d</div>}
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(v.monto)}</span>
-                  <button onClick={()=>setPedirCobro({titulo:`Venta del ${fmtDate(v.fecha)}`,monto:Number(v.monto)||0,confirmar:f=>onUpdate(cobrarVentaCliente(cliente,v.id,f))})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Cobrado</button>
-                </div>
-              </div>
-            );})}
-          </div>
           {!showPago?(
             <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               {I.check} Registrar pago
@@ -4275,32 +4252,15 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos}){
         </>
       )}
 
+      {editandoVentaId&&(()=>{const v=(cliente.ventas||[]).find(x=>x.id===editandoVentaId);if(!v)return null;return(
+        <div ref={refEdit} style={{marginBottom:12,background:"#fff",border:`1px solid ${G}66`,borderRadius:10,padding:12}}>
+          <div style={{fontSize:14,fontWeight:700,color:CR,marginBottom:8}}>Editar venta</div>
+          <FormVenta prods={prods} comisionPctDefault={cliente.comisionPctDefault} initial={v} labelGuardar="Guardar cambios" onCancel={()=>setEditandoVentaId(null)} onSave={datos=>{onUpdate({...cliente,ventas:cliente.ventas.map(x=>x.id===v.id?{...x,...datos}:x)});setEditandoVentaId(null);}}/>
+        </div>);})()}
+      {hayMovs&&<div style={{marginBottom:12}}><MovimientosCards cliente={cliente} prods={prods} pedidos={pedidos} diasMora={diasMora} acciones={{onCobrar:(titulo,monto,ids)=>setPedirCobro({titulo,monto,confirmar:f=>onUpdate(cobrarVentasCliente(cliente,ids,titulo,f))}),onEditar:id=>setEditandoVentaId(id),onDeshacer:deshacer}}/></div>}
+
       <PanelDescuentosCliente items={itemsDesc}/>
 
-      {pagos.length>0&&(
-        <div style={{marginTop:saldo>0?12:0}}>
-          <button onClick={()=>setShowHistorial(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
-            {showHistorial?"▲":"▼"} Historial de pagos ({pagos.length})
-          </button>
-          {showHistorial&&(
-            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
-              {(verTodos?pagos:pagos.slice(0,8)).map(m=>(
-                <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{fontSize:15,color:CR}}>{fmtDate(m.fecha)}</div>
-                    <div style={{fontSize:13,color:GR}}>✓ {m.medioPago||"Cobrado"}{m.nota?` · ${m.nota}`:""}</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(m.monto)}</span>
-                    <button onClick={()=>deshacer(m)} style={{fontSize:13,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
-                  </div>
-                </div>
-              ))}
-              {pagos.length>8&&<button onClick={()=>setVerTodos(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:G,fontWeight:700,padding:"4px 0"}}>{verTodos?"Ver menos":`Ver todos (${pagos.length})`}</button>}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -4371,35 +4331,14 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,diasMora,p
         <HistorialAgenda entidad={cliente} agenda={cliente.agenda||[]} historial={cliente.historial||[]} cal={cal} onAgregarAgenda={ev=>onUpdate({...cliente,agenda:[...(cliente.agenda||[]),ev]})} onAgregarContacto={c=>onUpdate({...cliente,historial:[...(cliente.historial||[]),c]})}/>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <span style={{fontSize:16,fontWeight:600,color:CR}}>Historial de ventas</span>
+        <span style={{fontSize:16,fontWeight:600,color:CR}}>Ventas</span>
         <span style={{fontSize:14,color:MU}}>Total: {fmtARS(total)}</span>
       </div>
       {vForm
         ?<div style={{marginBottom:14}}><FormVenta prods={prods} numeroSiguiente={previsualizarNumeroTalonario(talonarios,"Venta")} comisionPctDefault={cliente.comisionPctDefault} onCancel={()=>setVForm(false)} onSave={v=>{const asignado=consumirTalonario(talonarios,"Venta");if(asignado.talonarios!==talonarios)setTalonarios(asignado.talonarios);onUpdate({...cliente,ventas:[...cliente.ventas,{id:uid(),...v,numeroComprobante:asignado.numero||v.numeroComprobante||""}]});setVForm(false);}}/></div>
         :<button onClick={()=>setVForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Nueva venta</button>
       }
-      {sorted.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin ventas aún.</p>:sorted.map(v=>{
-        if(editandoVentaId===v.id)return(
-          <div key={v.id} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
-            <FormVenta prods={prods} comisionPctDefault={cliente.comisionPctDefault} initial={v} labelGuardar="Guardar cambios" onCancel={()=>setEditandoVentaId(null)} onSave={datos=>{onUpdate({...cliente,ventas:cliente.ventas.map(x=>x.id===v.id?{...x,...datos}:x)});setEditandoVentaId(null);}}/>
-          </div>
-        );
-        const p=prods.find(x=>x.id===v.producto);return(
-        <div key={v.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:BG,border:`1px solid ${v.pagado?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
-          <div>
-            <div style={{fontSize:15,fontWeight:500,color:CR}}>{p?nombreProdEnvase(p):v.producto}</div>
-            <div style={{fontSize:13,color:MU}}>{fmtDate(v.fecha)}</div>
-            <ChipBeneficio d={descPorId[v.id]}/>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(v.monto)}</div>
-              <div style={{fontSize:13,color:v.pagado?GR:"#E08070"}}>{v.cantidad} L · {v.pagado?"Pagado":"Pendiente"}</div>
-            </div>
-            <button onClick={()=>setEditandoVentaId(v.id)} style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
-          </div>
-        </div>
-      );})}
+      <p style={{fontSize:13,color:MU,textAlign:"center",padding:"4px 8px 12px",lineHeight:1.5}}>{sorted.length===0?"Sin ventas aún.":"El detalle de cada venta (productos, cobros, edición y remitos) está en el historial de cuenta corriente, arriba."}</p>
       <SpeechPicker open={spOpen} onClose={()=>setSpOpen(false)} speeches={speeches} telefono={cliente.telefono} nombre={cliente.nombre}/>
     </div>
   );
@@ -4765,8 +4704,135 @@ function Clientes({clientes,setClientes,speeches,cal,prods,diasMora,promo51,pedi
   );
 }
  
+// Libro de movimientos del proveedor: compras (por comprobante), saldos anteriores y pagos (agrupados por fecha/medio/ECHEQ) con saldo acumulado.
+function construirMovimientosProveedor(prov){
+  const movs=[];
+  agruparCompras(prov.compras).forEach(g=>{
+    const pagado=g.rows.filter(r=>r.pagado).reduce((a,r)=>a+(Number(r.monto)||0),0);
+    movs.push({id:"g-"+g.key,orden:0,tipo:"compra",fecha:g.fecha,grupo:g,monto:redondear2(g.total),pagado:g.estado==="pagado",parcial:g.estado==="parcial",cobrado:redondear2(pagado),pendIds:g.rows.filter(r=>!r.pagado).map(r=>r.id)});
+  });
+  (prov.saldosAnteriores||[]).forEach(x=>{
+    movs.push({id:x.id+"-v",orden:0,tipo:"saldo",fecha:x.fecha,descripcion:x.descripcion||"",monto:Number(x.monto)||0,pagado:!!x.pagado,ajuste:x.tipo==="ajuste"});
+  });
+  const pm=new Map();
+  const addPago=(x,origen)=>{
+    if(!x.pagado)return;
+    const fecha=x.fechaPago||x.fecha||"";
+    const k=[fecha,x.medioPago||"",x.echeqId||"",x.nota||""].join("|");
+    if(!pm.has(k))pm.set(k,{id:"p-"+k,orden:1,tipo:"pago",fecha,monto:0,medioPago:x.medioPago||"Efectivo",nota:x.nota||"",echeqId:x.echeqId||null,compraIds:[],saldoIds:[],filas:[]});
+    const o=pm.get(k);o.monto+=Number(x.monto)||0;
+    if(origen==="compra"){o.compraIds.push(x.id);o.filas.push(x);}else o.saldoIds.push(x.id);
+  };
+  (prov.compras||[]).forEach(c=>addPago(c,"compra"));
+  (prov.saldosAnteriores||[]).forEach(x=>addPago(x,"saldo"));
+  pm.forEach(o=>{o.monto=redondear2(o.monto);movs.push(o);});
+  movs.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")||a.orden-b.orden);
+  let acum=0;
+  movs.forEach(m=>{acum=redondear2(acum+(m.tipo==="pago"?-m.monto:m.monto));m.saldoAcum=acum;});
+  return movs;
+}
+function MovimientosProveedorCards({proveedor,prods,acciones}){
+  const[filtro,setFiltro]=useState("todo");
+  const[limite,setLimite]=useState(20);
+  const[abiertos,setAbiertos]=useState(()=>new Set());
+  const alternar=id=>setAbiertos(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else n.add(id);return n;});
+  const movs=useMemo(()=>[...construirMovimientosProveedor(proveedor)].reverse(),[proveedor]);
+  if(movs.length===0)return<p style={{fontSize:15,color:MU,textAlign:"center",padding:16}}>Sin movimientos registrados.</p>;
+  const rojo="#C62828";
+  const m$=n=>fmtARS(n).replace(/\$\s+/,"$");
+  const nombreProd=id=>{const p=(prods||[]).find(x=>x.id===id);return p?nombreProdEnvase(p):id;};
+  const unidad=id=>{const p=(prods||[]).find(x=>x.id===id);return p&&p.envase==="Lata"?"u":"L";};
+  const etiquetaComp=(tipo,numero)=>`${tipo==="factura"?"Factura":tipo==="remito"?"Remito":"Compra"}${numero?` ${numero}`:""}`;
+  const fact=movs.filter(m=>m.tipo!=="pago").reduce((a,m)=>a+m.monto,0),pag=movs.filter(m=>m.tipo==="pago").reduce((a,m)=>a+m.monto,0);
+  const saldo=redondear2(fact-pag);
+  const filtrados=filtro==="pend"?movs.filter(m=>m.tipo!=="pago"&&!m.pagado):filtro==="pagos"?movs.filter(m=>m.tipo==="pago"):movs;
+  const nPend=movs.filter(m=>m.tipo!=="pago"&&!m.pagado).length,nPagos=movs.filter(m=>m.tipo==="pago").length;
+  const visibles=filtrados.slice(0,limite);
+  const partes=f=>{const[a,mm,d]=String(f||"").split("-");return{d:d||"",m:mm||"",a:a||""};};
+  const btnAcc={fontSize:12,fontWeight:700,padding:"5px 9px",borderRadius:7,cursor:"pointer",border:`1px solid ${BO}`,background:"#fff",color:MU};
+  const caja=(lbl,val,color)=>(
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"8px 10px",minWidth:0,flex:1}}>
+      <div style={{fontSize:10,color:MU,textTransform:"uppercase",letterSpacing:"0.05em",whiteSpace:"nowrap"}}>{lbl}</div>
+      <div style={{fontSize:"clamp(12px,3.7vw,15px)",fontWeight:700,color,whiteSpace:"nowrap"}}>{m$(val)}</div>
+    </div>
+  );
+  return(
+    <div style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden"}}>
+      <div style={{background:GDK,color:"#fff",padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+        <span style={{fontSize:14,fontWeight:700,letterSpacing:"0.05em"}}>ESTADO DE CUENTA</span>
+        <span style={{fontSize:12,opacity:0.85}}>Al {new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"})}</span>
+      </div>
+      <div style={{display:"flex",gap:6,padding:10}}>
+        {caja("Comprado",fact,CR)}{caja("Pagado",pag,GR)}{caja("Saldo",saldo,saldo>0?rojo:GR)}
+      </div>
+      <div style={{padding:"2px 12px 8px",fontSize:13,fontWeight:700,color:CR}}>Historial de cuenta corriente</div>
+      <div style={{display:"flex",gap:6,padding:"0 12px 8px"}}>
+        {[["todo","Todo",movs.length],["pend","Pendientes",nPend],["pagos","Pagos",nPagos]].map(([k,l,n])=>(
+          <button key={k} onClick={()=>{setFiltro(k);setLimite(20);}} style={{flex:1,padding:"7px 0",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro===k?G:BO}`,background:filtro===k?G:BG,color:filtro===k?"#fff":MU}}>{l} ({n})</button>
+        ))}
+      </div>
+      {filtrados.length===0&&<div style={{padding:"14px 12px",fontSize:14,color:MU,textAlign:"center",borderTop:`1px solid ${BO}`}}>{filtro==="pend"?"No hay nada pendiente ✓":"Sin movimientos."}</div>}
+      {visibles.map(m=>{
+        const f=partes(m.fecha),pago=m.tipo==="pago",colorSaldo=m.saldoAcum>0?rojo:GR,abierto=abiertos.has(m.id);
+        const g=m.grupo,esF=g&&g.tipo==="factura";
+        return(
+          <div key={m.id} style={{padding:"10px 12px",borderTop:`1px solid ${BO}`,background:pago?GR+"0D":"transparent"}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{fontSize:12,color:pago?GR:MU,fontWeight:pago?700:400}}>{f.d}/{f.m}/{f.a}</div>
+                {pago?(<>
+                  <div style={{fontSize:14,fontWeight:700,color:GR}}>Pago realizado</div>
+                  <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.medioPago}{m.nota?` · ${m.nota}`:""}</div>
+                  {m.filas.length>0&&<button onClick={()=>alternar(m.id)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontSize:12,color:G,fontWeight:600,marginTop:2}}>{abierto?"▲ Ocultar":"▼ Ver"} qué cubrió</button>}
+                  {abierto&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",marginTop:4}}>
+                    {m.filas.map(c=>(<div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"3px 0",fontSize:13}}>
+                      <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{etiquetaComp(c.tipoComprobante,c.numeroComprobante)} · {nombreProd(c.producto)}</span>
+                      <span style={{color:MU,flexShrink:0}}>{m$(c.monto)}</span></div>))}
+                  </div>}
+                  {acciones&&acciones.onDeshacer&&<div style={{marginTop:6}}><button onClick={()=>acciones.onDeshacer(m)} style={{...btnAcc,background:RE+"11",color:rojo,borderColor:RE+"33"}}>Deshacer pago</button></div>}
+                </>):m.tipo==="saldo"?(<>
+                  <div style={{fontSize:14,fontWeight:700,color:"#B7691F"}}>{m.ajuste?"Ajuste de saldo":"Saldo anterior"}</div>
+                  <div style={{fontSize:12,color:MU,overflowWrap:"break-word"}}>{m.descripcion||"Saldo del sistema anterior"} · <b style={{color:m.pagado?GR:rojo}}>{m.pagado?"Pagado":"Pendiente"}</b></div>
+                </>):(<>
+                  <button onClick={()=>alternar(m.id)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",display:"block",width:"100%"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:CR,overflowWrap:"break-word"}}>{etiquetaComp(g.tipo,g.numero)}</div>
+                    <div style={{fontSize:12,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":`▼ Ver ${g.rows.length} producto${g.rows.length>1?"s":""}`}</div>
+                  </button>
+                  <div style={{fontSize:12,color:MU}}><b style={{color:m.pagado?GR:m.parcial?"#B7691F":rojo}}>{m.pagado?"Pagado":m.parcial?"Pago parcial":"Pendiente"}</b>{m.parcial?` · pagado ${m$(m.cobrado)} · falta ${m$(m.monto-m.cobrado)}`:""}</div>
+                  {abierto&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+                    {g.rows.map(r=>(<div key={r.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13}}>
+                      <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{nombreProd(r.producto)} <span style={{color:MU}}>· {r.cantidad}{unidad(r.producto)}{r.precioUnit?` × ${fmtARS2(r.precioUnit)}`:""}</span></span>
+                      <span style={{color:r.pagado?GR:CR,flexShrink:0}}>{m$(r.montoNeto??r.monto)}</span></div>))}
+                    {!esF&&g.gastos>0&&<div style={{paddingTop:4,borderTop:`1px dashed ${BO}`,fontSize:12,color:MU,display:"flex",justifyContent:"space-between"}}><span>{g.gastoConcepto}</span><span>{m$(g.gastos)}</span></div>}
+                    {esF&&<div style={{paddingTop:4,borderTop:`1px dashed ${BO}`,fontSize:12,color:MU,display:"flex",flexDirection:"column",gap:2}}>
+                      <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{m$(g.neto)}</span></div>
+                      <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA{g.ivaPct!=null?` (${g.ivaPct}%)`:""}</span><span>{m$(g.iva)}</span></div>
+                      {g.otros.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between"}}><span>{x.nombre}{x.pct!=null?` (${x.pct}%)`:""}</span><span>{m$(x.monto)}</span></div>)}
+                    </div>}
+                  </div>}
+                  {acciones&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                    {!m.pagado&&m.pendIds.length>0&&acciones.onPagar&&<button onClick={()=>acciones.onPagar(etiquetaComp(g.tipo,g.numero)+" · "+fmtDate(m.fecha),redondear2(m.monto-m.cobrado),m.pendIds)} style={{...btnAcc,background:GR+"22",color:GR,borderColor:GR+"44"}}>✓ Pagado {m$(m.monto-m.cobrado)}</button>}
+                    {acciones.onImprimir&&<button onClick={()=>acciones.onImprimir(g)} style={btnAcc}>🖨️ Comprobante</button>}
+                    {acciones.onEditar&&<button onClick={()=>acciones.onEditar(g.key)} style={btnAcc}>✎ Editar</button>}
+                    {acciones.onEliminar&&<button onClick={()=>acciones.onEliminar(g.key)} style={{...btnAcc,color:rojo}}>🗑</button>}
+                  </div>}
+                </>)}
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:14,fontWeight:700,color:pago?GR:CR,whiteSpace:"nowrap"}}>{pago?"− ":""}{m$(m.monto)}</div>
+                <div style={{fontSize:11,fontWeight:600,color:colorSaldo,whiteSpace:"nowrap"}}>Saldo {m$(m.saldoAcum)}</div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {filtrados.length>limite&&<button onClick={()=>setLimite(l=>l+20)} style={{width:"100%",padding:"11px 0",background:BG,border:"none",borderTop:`1px solid ${BO}`,color:G,fontSize:14,fontWeight:700,cursor:"pointer"}}>Ver más movimientos ({filtrados.length-limite} restantes)</button>}
+    </div>
+  );
+}
+
 // ── CuentaCorrienteProveedor ────────────────────────────────────────
-function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
+function CuentaCorrienteProveedor({proveedor,onUpdate,prods,acciones}){
   const[pedirPago,setPedirPago]=useState(null);
   const[showHistorial,setShowHistorial]=useState(false);
   const[showPago,setShowPago]=useState(false);
@@ -4811,37 +4877,6 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
 
       {saldo>0&&(
         <>
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12,marginBottom:12}}>
-            {pendGrupos.map(g=>{
-              const abierto=abiertos.has(g.key);
-              return(
-                <div key={g.key} style={{background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                    <button onClick={()=>alternar(g.key)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",minWidth:0}}>
-                      <div style={{fontSize:16,fontWeight:700,color:CR}}>{etiquetaComp(g.tipo,g.numero)}</div>
-                      <div style={{fontSize:14,color:MU}}>{fmtDate(g.fecha)} · {g.rows.length} producto{g.rows.length>1?"s":""}</div>
-                      <div style={{fontSize:13,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":"▼ Ver productos"}</div>
-                    </button>
-                    <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                      <span style={{fontSize:17,fontWeight:700,color:"#C62828"}}>{fmtARS(g.total)}</span>
-                      <button onClick={()=>setPedirPago({titulo:`${etiquetaComp(g.tipo,g.numero)} · ${fmtDate(g.fecha)}`,monto:g.total,modalTitulo:"Registrar pago",fechaLabel:"Fecha de pago",boton:"✓ Confirmar pago",accionAlt:"Registrar pago",confirmar:f=>marcarGrupoPagado(g.rows.map(r=>r.id),f)})} style={{fontSize:14,fontWeight:700,padding:"6px 12px",borderRadius:8,background:GR+"22",color:GR,border:`1px solid ${GR}44`,cursor:"pointer"}}>✓ Pagado</button>
-                    </div>
-                  </div>
-                  {abierto&&(
-                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
-                      {g.rows.map(c=>(
-                        <div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
-                          <span style={{color:CR,minWidth:0}}>{nombreProd(c.producto)} <span style={{color:MU}}>· {c.cantidad}{(prods||[]).find(p=>p.id===c.producto)?.envase==="Lata"?"u":"L"}</span></span>
-                          <span style={{color:MU,flexShrink:0}}>{fmtARS(c.monto)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
           {/* Registrar pago — mismo panel unificado que con clientes */}
           {!showPago?(
             <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
@@ -4853,30 +4888,18 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods}){
         </>
       )}
 
-      {pagadas.length>0&&(
-        <div style={{marginTop:saldo>0?12:0}}>
-          <button onClick={()=>setShowHistorial(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:MU,display:"flex",alignItems:"center",gap:4,padding:0}}>
-            {showHistorial?"▲":"▼"} Historial de pagos ({pagadas.length})
-          </button>
-          {showHistorial&&(
-            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
-              {pagadas.slice(0,8).map(c=>(
-                <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div>
-                    <div style={{fontSize:15,color:CR}}>{fmtDate(c.fechaPago||c.fecha)}</div>
-                    <div style={{fontSize:13,color:GR}}>✓ {c.medioPago||"Pagado"}{c.nota?` · ${c.nota}`:""}</div>
-                    {c.numeroComprobante&&<div style={{fontSize:13,color:MU}}>{etiquetaComp(c.tipoComprobante,c.numeroComprobante)} · {nombreProd(c.producto)}</div>}
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(c.monto)}</span>
-                    <button onClick={()=>desmarcarPagada(c.id)} style={{fontSize:13,padding:"4px 8px",borderRadius:6,background:RE+"11",color:"#C62828",border:`1px solid ${RE}33`,cursor:"pointer"}}>Deshacer</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{marginTop:12}}>
+        <MovimientosProveedorCards proveedor={proveedor} prods={prods} acciones={{
+          ...(acciones||{}),
+          onPagar:(titulo,monto,ids)=>setPedirPago({titulo,monto,modalTitulo:"Registrar pago",fechaLabel:"Fecha de pago",boton:"✓ Confirmar pago",accionAlt:"Registrar pago",confirmar:f=>marcarGrupoPagado(ids,f)}),
+          onDeshacer:m=>{
+            if(m.echeqId){if(confirm("Este pago se hizo con un ECHEQ. Al deshacerlo se quita el cheque del calendario y vuelven a deuda todas las compras que cubría. ¿Continuar?"))onUpdate(deshacerPagoEcheqProveedor(proveedor,m.echeqId));return;}
+            if(!confirm(`¿Deshacer este pago de ${fmtARS(m.monto)}? Vuelve a quedar como deuda.`))return;
+            const ci=new Set(m.compraIds),si=new Set(m.saldoIds);
+            onUpdate({...proveedor,compras:(proveedor.compras||[]).map(c=>ci.has(c.id)?{...c,pagado:false,fechaPago:null}:c),saldosAnteriores:(proveedor.saldosAnteriores||[]).map(x=>si.has(x.id)?{...x,pagado:false,fechaPago:null}:x)});
+          }
+        }}/>
+      </div>
     </div>
   );
 }
@@ -4888,6 +4911,9 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
   const[editandoKey,setEditandoKey]=useState(null);
   const[borrandoKey,setBorrandoKey]=useState(null);
   const[confirmBorrar,setConfirmBorrar]=useState(false);
+  const[impComp,setImpComp]=useState(null);
+  const refEditC=React.useRef(null);
+  useEffect(()=>{if(editandoKey&&refEditC.current&&refEditC.current.scrollIntoView)refEditC.current.scrollIntoView({behavior:"smooth",block:"center"});},[editandoKey]);
   const total=(proveedor.compras||[]).reduce((s,c)=>s+c.monto,0);
   const grupos=useMemo(()=>agruparCompras(proveedor.compras),[proveedor.compras]);
   const marcas=marcasDeProveedor(proveedor);
@@ -4925,7 +4951,7 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
     setBorrandoKey(null);
   };
   const grupoBorrando=grupos.find(g=>g.key===borrandoKey);
-  const[impComp,setImpComp]=useState(null);
+  const grupoEditando=grupos.find(g=>g.key===editandoKey);
 
   return(
     <div>
@@ -4944,66 +4970,22 @@ function DetalleProveedor({proveedor,onUpdate,onDelete,prods,setProds,impuestos,
         <a href={`https://wa.me/${proveedor.telefono}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:15,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginBottom:14}}>{I.wa}WhatsApp</a>
       )}
       {proveedor.notas&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:12,marginBottom:14}}><div style={{fontSize:13,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Notas</div><div style={{fontSize:15,color:"#D9C9B5"}}>{proveedor.notas}</div></div>}
-      <CuentaCorrienteProveedor proveedor={proveedor} onUpdate={onUpdate} prods={prods}/>
+      {grupoEditando&&(
+        <div ref={refEditC} style={{marginBottom:14,background:"#fff",border:`1px solid ${G}66`,borderRadius:10,padding:12}}>
+          <div style={{fontSize:14,fontWeight:700,color:CR,marginBottom:8}}>Editar compra</div>
+          <FormCompra prods={prods} marcas={marcas} impuestos={impuestos} historial={proveedor.compras} initialRows={grupoEditando.rows} labelGuardar="Guardar cambios" onCancel={()=>setEditandoKey(null)} onSave={comp=>guardarEdicion(grupoEditando,comp)}/>
+        </div>
+      )}
+      <CuentaCorrienteProveedor proveedor={proveedor} onUpdate={onUpdate} prods={prods} acciones={{onImprimir:g=>setImpComp({proveedor,grupo:g,prods,nuevo:false}),onEditar:k=>setEditandoKey(k),onEliminar:k=>setBorrandoKey(k)}}/>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <span style={{fontSize:16,fontWeight:600,color:CR}}>Historial de compras</span>
+        <span style={{fontSize:16,fontWeight:600,color:CR}}>Compras</span>
         <span style={{fontSize:14,color:MU}}>Total: {fmtARS(total)}</span>
       </div>
       {cForm
         ?<div style={{marginBottom:14}}><FormCompra prods={prods} marcas={marcas} impuestos={impuestos} historial={proveedor.compras} onCancel={()=>setCForm(false)} onSave={registrarCompra}/></div>
         :<button onClick={()=>onNuevaCompra?onNuevaCompra():setCForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:`1px dashed ${G}88`,background:G+"0A",color:G}}>{I.plus}Registrar factura / remito</button>
       }
-      {grupos.length===0?<p style={{fontSize:16,color:MU,textAlign:"center",padding:16}}>Sin compras aún.</p>:grupos.map(g=>{
-        if(editandoKey===g.key)return(
-          <div key={g.key} style={{marginBottom:10,background:"#fff",border:`1px solid ${BO}`,borderRadius:8,padding:12}}>
-            <FormCompra prods={prods} marcas={marcas} impuestos={impuestos} historial={proveedor.compras} initialRows={g.rows} labelGuardar="Guardar cambios" onCancel={()=>setEditandoKey(null)} onSave={comp=>guardarEdicion(g,comp)}/>
-          </div>
-        );
-        const esF=g.tipo==="factura";
-        const etiqueta=esF?"Factura":g.tipo==="remito"?"Remito":"Compra";
-        const colorEstado=g.estado==="pagado"?GR:g.estado==="parcial"?AM:"#E08070";
-        const textoEstado=g.estado==="pagado"?"Pagado":g.estado==="parcial"?"Pago parcial":"Pendiente";
-        return(
-          <div key={g.key} style={{background:BG,border:`1px solid ${g.estado==="pagado"?BO:RE+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:12,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>{etiqueta}{g.numero?` · ${g.numero}`:""}</div>
-                <div style={{fontSize:13,color:MU}}>{fmtDate(g.fecha)}</div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(g.total)}</div>
-                  <div style={{fontSize:13,fontWeight:600,color:colorEstado}}>{textoEstado}</div>
-                </div>
-                <button onClick={()=>setImpComp({proveedor,grupo:g,prods,nuevo:false})} aria-label="Imprimir comprobante interno" title="Imprimir comprobante interno" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0,fontSize:16}}>🖨️</button>
-                <button onClick={()=>setEditandoKey(g.key)} aria-label="Editar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:MU,flexShrink:0}}>{I.edit}</button>
-                <button onClick={()=>setBorrandoKey(g.key)} aria-label="Eliminar compra" style={{padding:6,background:"none",border:"none",cursor:"pointer",color:RE,flexShrink:0}}>{I.trash}</button>
-              </div>
-            </div>
-            <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${BO}`,display:"flex",flexDirection:"column",gap:4}}>
-              {g.rows.map(r=>{
-                const p=(prods||[]).find(x=>x.id===r.producto);
-                return(
-                  <div key={r.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:14}}>
-                    <span style={{color:CR,minWidth:0}}>{p?nombreProdEnvase(p):r.producto} <span style={{color:MU}}>· {r.cantidad}{p&&p.envase==="Lata"?"u":"L"}{r.precioUnit?` × ${fmtARS2(r.precioUnit)}`:""}{r.descuentoMonto>0?` · desc. ${r.descuentoPct!=null?`${r.descuentoPct}%`:fmtARS(r.descuentoMonto)}`:""}</span></span>
-                    <span style={{color:MU,flexShrink:0}}>{fmtARS(r.montoNeto??r.monto)}</span>
-                  </div>
-                );
-              })}
-              {!esF&&g.gastos>0&&(
-                <div style={{marginTop:4,paddingTop:6,borderTop:`1px dashed ${BO}`,fontSize:13,color:MU,display:"flex",justifyContent:"space-between"}}><span>{g.gastoConcepto}</span><span>{fmtARS(g.gastos)}</span></div>
-              )}
-              {esF&&(
-                <div style={{marginTop:4,paddingTop:6,borderTop:`1px dashed ${BO}`,fontSize:13,color:MU,display:"flex",flexDirection:"column",gap:2}}>
-                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Neto</span><span>{fmtARS(g.neto)}</span></div>
-                  <div style={{display:"flex",justifyContent:"space-between"}}><span>IVA{g.ivaPct!=null?` (${g.ivaPct}%)`:""}</span><span>{fmtARS(g.iva)}</span></div>
-                  {g.otros.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between"}}><span>{x.nombre}{x.pct!=null?` (${x.pct}%)`:""}</span><span>{fmtARS(x.monto)}</span></div>)}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      <p style={{fontSize:13,color:MU,textAlign:"center",padding:"4px 8px 12px",lineHeight:1.5}}>{grupos.length===0?"Sin compras aún.":"El detalle de cada compra (productos, impuestos, pagos, edición y comprobante) está en el historial de cuenta corriente, arriba."}</p>
       <ModalConfirmar open={!!grupoBorrando} onClose={()=>setBorrandoKey(null)} onConfirmar={()=>eliminarGrupo(grupoBorrando)} titulo="¿Eliminar esta compra?" mensaje={`Se elimina el comprobante completo${grupoBorrando&&grupoBorrando.rows.length>1?` (${grupoBorrando.rows.length} productos)`:""}: se quita de la cuenta corriente y se revierten las cantidades que había sumado al stock. Esta acción no se puede deshacer.`} labelConfirmar="Sí, eliminar"/>
     </div>
   );
@@ -6695,6 +6677,7 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
   const[periodo,setPeriodo]=useState("mes"); // dia | mes | anio | todo
   const[ref,setRef]=useState(hoyISO());
   const[verMov,setVerMov]=useState(false);
+  const[filaAbierta,setFilaAbierta]=useState(null);
   const[criterio,setCriterio]=useState("operacion"); // operacion | caja
   const f0=n=>fmtARS(Math.round(Number(n)||0));
   const movs=useMemo(()=>{
@@ -6749,7 +6732,7 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
     if(periodo==="dia")return[];
     const n=periodo==="mes"?10:7;
     const map={};
-    delPeriodo.forEach(m=>{const k=m.fecha.slice(0,n);const o=map[k]=map[k]||{k,debe:0,haber:0};if(m.tipo==="debe")o.debe+=m.monto;else o.haber+=m.monto;});
+    delPeriodo.forEach(m=>{const k=m.fecha.slice(0,n);const o=map[k]=map[k]||{k,debe:0,haber:0,movs:[]};o.movs.push(m);if(m.tipo==="debe")o.debe+=m.monto;else o.haber+=m.monto;});
     let acum=0;
     return Object.values(map).sort((a,b)=>a.k.localeCompare(b.k)).map(o=>{acum+=o.haber-o.debe;return{...o,saldo:o.haber-o.debe,acum};}).reverse();
   },[delPeriodo,periodo]);
@@ -6814,14 +6797,32 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
             <span>{periodo==="mes"?"Día":"Mes"}</span><span style={{textAlign:"right"}}>Debe</span><span style={{textAlign:"right"}}>Haber</span><span style={{textAlign:"right"}}>Saldo</span>
           </div>
           <div style={{maxHeight:300,overflowY:"auto"}}>
-            {filas.map(o=>(
-              <div key={o.k} style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1fr 1fr",gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:13,color:CR}}>
-                <span style={{textTransform:"capitalize"}}>{lblFila(o.k)}</span>
-                <span style={{textAlign:"right",color:o.debe?RE:MU}}>{o.debe?f0(o.debe):"—"}</span>
-                <span style={{textAlign:"right",color:o.haber?G:MU}}>{o.haber?f0(o.haber):"—"}</span>
-                <span style={{textAlign:"right",fontWeight:700,color:colSaldo(o.saldo)}}>{f0(o.saldo)}</span>
-              </div>
-            ))}
+            {filas.map(o=>{
+              const abre=filaAbierta===o.k;
+              const NOM={venta:["venta","ventas"],compra:["compra","compras"],gasto:["gasto","gastos"],sueldo:["sueldo/pago","sueldos/pagos"]};
+              const cuentas={};o.movs.forEach(m=>{cuentas[m.cat]=(cuentas[m.cat]||0)+1;});
+              const resumen=Object.keys(cuentas).map(c=>`${cuentas[c]} ${(NOM[c]||[c,c])[cuentas[c]===1?0:1]}`).join(" · ");
+              return(
+              <div key={o.k} style={{borderTop:`1px solid ${BO}`}}>
+                <div onClick={()=>setFilaAbierta(abre?null:o.k)} style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1fr 1fr",gap:6,padding:"7px 10px",fontSize:13,color:CR,cursor:"pointer",alignItems:"center"}}>
+                  <span style={{textTransform:"capitalize"}}>{abre?"▾":"▸"} {lblFila(o.k)}</span>
+                  <span style={{textAlign:"right",color:o.debe?RE:MU}}>{o.debe?f0(o.debe):"—"}</span>
+                  <span style={{textAlign:"right",color:o.haber?G:MU}}>{o.haber?f0(o.haber):"—"}</span>
+                  <span style={{textAlign:"right",fontWeight:700,color:colSaldo(o.saldo)}}>{f0(o.saldo)}</span>
+                </div>
+                <div style={{padding:"0 10px 7px",fontSize:11,color:MU}}>{resumen}</div>
+                {abre&&<div style={{background:BG,padding:"4px 10px 6px"}}>
+                  {o.movs.map((m,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"6px 0",borderTop:i?`1px dashed ${BO}`:"none",fontSize:12}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{color:CR}}>{m.concepto}</div>
+                        <div style={{fontSize:11,color:MU}}>{o.k.length===7?fmtDateCorta(m.fecha)+" · ":""}{m.tipo==="haber"?(m.hecho?"cobrado":(criterio==="caja"?"a acreditar":"por cobrar")):(m.cat==="compra"?(m.hecho?"pagada":(criterio==="caja"?"a debitar":"por pagar")):"pagado")}</div>
+                      </div>
+                      <b style={{color:m.tipo==="haber"?G:RE,whiteSpace:"nowrap"}}>{m.tipo==="haber"?"+":"−"}{f0(m.monto)}</b>
+                    </div>
+                  ))}
+                </div>}
+              </div>);})}
           </div>
         </div>
       )}
@@ -9526,6 +9527,39 @@ function validarBackup(d){
   return null;
 }
 
+function SaludDatos({getBackup}){
+  const[filas,setFilas]=useState(null);
+  const[ultimo,setUltimo]=useState(null);
+  const medir=()=>{
+    try{
+      const b=getBackup();const enc=new TextEncoder();
+      const L=[["clientes","Clientes y ventas",b.clientes],["pedidos","Pedidos",b.pedidos],["proveedores","Proveedores y compras",b.proveedores],["prods","Productos",b.prods],["gastos","Gastos",b.gastos],["prospectos","Comercios/prospectos",b.prospectos],["notas","Notas",b.notas],["comisiones","Comisiones",b.comisiones],["speeches","Speeches",b.speeches],["config","Configuración, sueldos y pagos",{c:b.config,t:b.talonarios,m:b.movimientosPago}]];
+      setFilas(L.map(([k,n,v])=>({k,n,bytes:enc.encode(JSON.stringify(v||[])).length})).sort((a,c)=>c.bytes-a.bytes));
+    }catch(e){setFilas([]);}
+    try{setUltimo(localStorage.getItem("nomades_ultimo_envio"));}catch(e){}
+  };
+  useEffect(()=>{medir();},[]);
+  const LIM=1048576;
+  const dias=ultimo?Math.floor((Date.now()-new Date(ultimo).getTime())/86400000):null;
+  const colorDe=p=>p>=80?RE:p>=50?AM:G;
+  return(
+    <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"12px 14px",marginTop:10}}>
+      <div style={{fontSize:15,fontWeight:700,color:CR,marginBottom:4}}>Salud de los datos</div>
+      <div style={{fontSize:12,color:MU,marginBottom:8,lineHeight:1.5}}>Firebase guarda cada sección en un solo documento con tope de 1 MB. Si una sección se acerca al límite, deja de guardarse. Acá ves qué tan llena está cada una.</div>
+      {(filas||[]).map(f=>{const pct=Math.min(100,Math.round(f.bytes/LIM*100));return(
+        <div key={f.k} style={{marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:CR}}><span>{f.n}</span><b style={{color:colorDe(pct)}}>{Math.max(1,Math.round(f.bytes/1024))} KB · {pct}%</b></div>
+          <div style={{height:6,borderRadius:3,background:BO,overflow:"hidden",marginTop:3}}><div style={{width:Math.max(2,pct)+"%",height:"100%",background:colorDe(pct)}}/></div>
+        </div>);})}
+      {(filas||[]).some(f=>f.bytes/LIM>=0.7)&&<div style={{fontSize:12,color:RE,background:RE+"11",borderRadius:8,padding:"8px 10px",marginBottom:8,lineHeight:1.5}}>⚠️ Una sección pasó el 70% del límite. Avisame para partir ese historial antes de que deje de guardar.</div>}
+      <div style={{borderTop:`1px solid ${BO}`,paddingTop:8,fontSize:13,color:CR}}>
+        Último backup enviado fuera del teléfono: <b style={{color:dias===null||dias>7?RE:G}}>{dias===null?"nunca":dias===0?"hoy":`hace ${dias} día${dias===1?"":"s"}`}</b>
+        {(dias===null||dias>7)&&<div style={{fontSize:12,color:MU,marginTop:2}}>Usá "↗ Enviar (Drive / WhatsApp)" en una de las copias de abajo y guardala en Drive. Conviene hacerlo una vez por semana.</div>}
+      </div>
+    </div>
+  );
+}
+
 function HistorialBackups({getBackup,aplicarBackup}){
   const[lista,setLista]=useState(null);
   const[error,setError]=useState("");
@@ -9534,7 +9568,7 @@ function HistorialBackups({getBackup,aplicarBackup}){
   useEffect(()=>{cargar();},[]);
   const fmt=id=>{const d=new Date(id);return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});};
   const copiaAhora=async()=>{setOcupado(true);try{await bkGuardar(getBackup(),"Manual");await cargar();}catch(e){alert("No se pudo guardar la copia: "+(e.message||e));}finally{setOcupado(false);}};
-  const enviar=async m=>{const d=await bkLeer(m.id);if(!d){alert("No se encontró esa copia.");return;}await bkDescargarOCompartir(d,`backup_nomades_${m.dia}.json`,"Backup de la app — "+textoResumen(m.resumen));};
+  const enviar=async m=>{const d=await bkLeer(m.id);if(!d){alert("No se encontró esa copia.");return;}try{localStorage.setItem("nomades_ultimo_envio",new Date().toISOString());}catch(e){}await bkDescargarOCompartir(d,`backup_nomades_${m.dia}.json`,"Backup de la app — "+textoResumen(m.resumen));};
   const restaurar=async m=>{
     const d=await bkLeer(m.id);if(!d){alert("No se encontró esa copia.");return;}
     const err=validarBackup(d);if(err){alert(err);return;}
@@ -9844,6 +9878,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
             </div>
             <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 "Descargar backup" abre el menú de tu teléfono: elegí Drive o WhatsApp para guardarlo fuera de la app. Tus datos además se sincronizan en la nube.</div>
           </div>
+          <SaludDatos getBackup={getBackup}/>
           <HistorialBackups getBackup={getBackup} aplicarBackup={aplicarBackup}/>
           <RecuperarProductos prods={prods} setProds={setProds}/>
         </div>
