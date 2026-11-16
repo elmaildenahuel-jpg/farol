@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="16-nov-2026 · 16:45";
+const APP_BUILD="16-nov-2026 · 18:00";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -4192,9 +4192,11 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
 // Cuenta corriente ÚNICA del cliente (se abre desde la ficha, tanto desde Clientes como desde "Cobrar")
 function ModalEliminarVenta({datos,onClose,onConfirmar}){
   const[reponer,setReponer]=useState(true);
+  useEffect(()=>{setReponer(!!(datos&&datos.pedidos.length>0));},[datos]);
   if(!datos)return null;
-  const{titulo,monto,cobrado,pedidos,salidas}=datos;
+  const{titulo,monto,cobrado,pedidos,salidas,salidasManual}=datos;
   const hayStock=pedidos.length>0;
+  const hayManual=!hayStock&&!!salidasManual;
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.88)",padding:20}}>
       <div onClick={e=>e.stopPropagation()} style={{background:SU,border:`1px solid ${RE}44`,borderRadius:16,width:"100%",maxWidth:360,padding:22,maxHeight:"90vh",overflowY:"auto"}}>
@@ -4208,9 +4210,16 @@ function ModalEliminarVenta({datos,onClose,onConfirmar}){
             <span style={{fontSize:14,color:CR,lineHeight:1.45}}>Devolver al stock lo entregado{salidas?` (${salidas})`:""} y dejar el pedido otra vez como <b>pendiente</b>, para poder entregarlo de nuevo o eliminarlo.<br/><span style={{color:MU,fontSize:12}}>Si lo destildás, solo se borra de la cuenta: el stock y el pedido quedan como están.</span></span>
           </label>
         )}
+        {hayManual&&(
+          <label style={{display:"flex",gap:10,alignItems:"flex-start",background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:14,cursor:"pointer"}}>
+            <input type="checkbox" checked={reponer} onChange={e=>setReponer(e.target.checked)} style={{width:20,height:20,marginTop:2,flexShrink:0}}/>
+            <span style={{fontSize:14,color:CR,lineHeight:1.45}}>Sumar igual al stock lo vendido ({salidasManual}).<br/><span style={{color:MU,fontSize:12}}>Esta venta no descontó stock automáticamente (se cargó a mano o es anterior a esa función). Tildalo solo si el stock sí se descontó antes.</span></span>
+          </label>
+        )}
+        {!hayStock&&!hayManual&&<div style={{fontSize:13,color:MU,marginBottom:14}}>Esta venta no tiene productos con stock para devolver.</div>}
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"11px 0",borderRadius:10,background:"none",border:`1px solid ${BO}`,color:MU,fontSize:16,fontWeight:600,cursor:"pointer"}}>Cancelar</button>
-          <button onClick={()=>{onConfirmar(hayStock&&reponer);onClose();}} style={{flex:1,padding:"11px 0",borderRadius:10,background:RE,border:"none",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Sí, eliminar</button>
+          <button onClick={()=>{onConfirmar((hayStock||hayManual)&&reponer);onClose();}} style={{flex:1,padding:"11px 0",borderRadius:10,background:RE,border:"none",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Sí, eliminar</button>
         </div>
       </div>
     </div>
@@ -4232,13 +4241,16 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos,setProds,setPe
     const peds=pedIds.map(id=>(pedidos||[]).find(x=>x.id===id)).filter(x=>x&&x.stockDescontado&&x.estado==="entregado");
     const salida={};peds.forEach(pd=>(pd.lineas||[]).forEach(l=>{if(l.productoId)salida[l.productoId]=(salida[l.productoId]||0)+(Number(l.cantidad)||0);}));
     const txt=Object.keys(salida).map(id=>{const pr=(prods||[]).find(x=>x.id===id);return`${nombreProdEnvase(pr)||id}: ${Math.round(salida[id]*10)/10}${pr&&pr.envase==="Lata"?" u":" L"}`;}).join(", ");
-    setElimVenta({titulo:m.remitoNro?`el remito ${fmtRemito(m.remitoNro)}`:`la venta del ${fmtDate(m.fecha)}`,monto:m.monto,cobrado:m.cobrado||0,ids,pedidos:peds,salida,salidas:txt});
+    const man={};piezas.forEach(v=>{if(v.producto)man[v.producto]=(man[v.producto]||0)+(Number(v.cantidad)||0);});
+    const txtMan=Object.keys(man).map(id=>{const pr=(prods||[]).find(x=>x.id===id);return`${nombreProdEnvase(pr)||id}: ${Math.round(man[id]*10)/10}${pr&&pr.envase==="Lata"?" u":" L"}`;}).join(", ");
+    setElimVenta({titulo:m.remitoNro?`el remito ${fmtRemito(m.remitoNro)}`:`la venta del ${fmtDate(m.fecha)}`,monto:m.monto,cobrado:m.cobrado||0,ids,pedidos:peds,salida,salidas:txt,salidaManual:man,salidasManual:peds.length?"":txtMan});
   };
   const confirmarEliminarVenta=reponer=>{
     const d=elimVenta;if(!d)return;
     onUpdate({...cliente,ventas:(cliente.ventas||[]).filter(v=>!d.ids.has(v.id))});
     if(reponer){
-      if(setProds)setProds(prev=>prev.map(x=>d.salida[x.id]?{...x,stock:Math.round(((Number(x.stock)||0)+d.salida[x.id])*100)/100}:x));
+      const dev=d.pedidos.length?d.salida:d.salidaManual;
+      if(setProds)setProds(prev=>prev.map(x=>dev[x.id]?{...x,stock:Math.round(((Number(x.stock)||0)+dev[x.id])*100)/100}:x));
       if(setPedidos){const pids=new Set(d.pedidos.map(x=>x.id));setPedidos(prev=>prev.map(x=>pids.has(x.id)?{...x,estado:"pendiente",stockDescontado:false}:x));}
     }
     setElimVenta(null);
@@ -4319,7 +4331,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos,setProds,setPe
 
 
 // ── DetalleCliente ────────────────────────────────────────────────
-function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,talonarios,setTalonarios}){
+function DetalleCliente({cliente,onUpdate,onDelete,onTomarPedido,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,talonarios,setTalonarios}){
   const[vForm,setVForm]=useState(false);
   const[editandoVentaId,setEditandoVentaId]=useState(null);
   const[edit,setEdit]=useState(false);
@@ -4382,13 +4394,14 @@ function DetalleCliente({cliente,onUpdate,onDelete,speeches,cal,prods,setProds,s
       <div style={{borderTop:`1px solid ${BO}`,paddingTop:14,marginBottom:14}}>
         <HistorialAgenda entidad={cliente} agenda={cliente.agenda||[]} historial={cliente.historial||[]} cal={cal} onAgregarAgenda={ev=>onUpdate({...cliente,agenda:[...(cliente.agenda||[]),ev]})} onAgregarContacto={c=>onUpdate({...cliente,historial:[...(cliente.historial||[]),c]})}/>
       </div>
+      {onTomarPedido&&<button onClick={()=>onTomarPedido(cliente.id)} style={{width:"100%",marginBottom:14,padding:"13px 0",borderRadius:10,fontSize:17,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"none",background:G,color:"#fff"}}>{I.box}Tomar pedido</button>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <span style={{fontSize:16,fontWeight:600,color:CR}}>Ventas</span>
         <span style={{fontSize:14,color:MU}}>Total: {fmtARS(total)}</span>
       </div>
       {vForm
         ?<div style={{marginBottom:14}}><FormVenta prods={prods} numeroSiguiente={previsualizarNumeroTalonario(talonarios,"Venta")} comisionPctDefault={cliente.comisionPctDefault} onCancel={()=>setVForm(false)} onSave={v=>{const asignado=consumirTalonario(talonarios,"Venta");if(asignado.talonarios!==talonarios)setTalonarios(asignado.talonarios);onUpdate({...cliente,ventas:[...cliente.ventas,{id:uid(),...v,numeroComprobante:asignado.numero||v.numeroComprobante||""}]});setVForm(false);}}/></div>
-        :<button onClick={()=>setVForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Nueva venta</button>
+        :<button onClick={()=>setVForm(true)} style={{width:"100%",marginBottom:10,padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px dashed #3A3028",background:"none",color:G}}>{I.plus}Cargar venta manual (sin pedido)</button>
       }
       <p style={{fontSize:13,color:MU,textAlign:"center",padding:"4px 8px 12px",lineHeight:1.5}}>{sorted.length===0?"Sin ventas aún.":"El detalle de cada venta (productos, cobros, edición y remitos) está en el historial de cuenta corriente, arriba."}</p>
       <SpeechPicker open={spOpen} onClose={()=>setSpOpen(false)} speeches={speeches} telefono={cliente.telefono} nombre={cliente.nombre}/>
@@ -4604,7 +4617,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
-function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp,talonarios,setTalonarios}){
+function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp,talonarios,setTalonarios,abrirClienteId,onClienteAbierto,onTomarPedido}){
   const[q,setQ]=useState("");
   const[filtroLocal,setFiltroLocal]=useState("todos");
   const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
@@ -4612,6 +4625,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
   const[vistaLista,setVistaLista]=useState(false);
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
+  useEffect(()=>{if(abrirClienteId){setSel(abrirClienteId);onClienteAbierto&&onClienteAbierto();}},[abrirClienteId]);
   const[cobrandoId,setCobrandoId]=useState(null);
   const filtroDeuda=filtro==="deuda"||filtro==="vencidos";
   useEffect(()=>{if(filtroDeuda)setOrden("deuda");},[filtro]);   // con deuda: arranca por mayor deuda
@@ -4738,7 +4752,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
       </Modal>
       <Modal open={!!selObj} onClose={()=>setSel(null)} title={selObj?.nombre||""}>
-        {selObj&&<DetalleCliente cliente={selObj} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} talonarios={talonarios} setTalonarios={setTalonarios} onUpdate={actualizar} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
+        {selObj&&<DetalleCliente cliente={selObj} onTomarPedido={onTomarPedido} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} talonarios={talonarios} setTalonarios={setTalonarios} onUpdate={actualizar} onDelete={id=>{setClientes(p=>p.filter(c=>c.id!==id));setSel(null);}}/>}
       </Modal>
       <Modal open={!!cobrandoObj} onClose={()=>setCobrandoId(null)} title={cobrandoObj?`Cobrar · ${cobrandoObj.nombre}`:""}>
         {cobrandoObj&&(
@@ -5995,7 +6009,7 @@ function Comercios({prospectos,setProspectos,onConvertir,speeches,prods,promo51}
 }
  
 // ── PEDIDOS ───────────────────────────────────────────────────────
-function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51}){
+function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51,pedidoInicial,onPedidoInicialUsado,onVolverACliente}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   // Producto/cantidad por defecto al cargar un pedido: Grunge Blonde en barril, 50L — se puede cambiar como siempre.
   const productoDefaultId=useMemo(()=>{
@@ -6023,11 +6037,23 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const[generandoRemitoId,setGenerandoRemitoId]=useState(null);
   const[remitoModal,setRemitoModal]=useState(null); // {id,nuevo}
  
+  const origenCliente=React.useRef(null);   // si el formulario se abrió desde la ficha de un cliente, al terminar se vuelve a ella
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
     setLineas([lineaVacia()]);
     setDescuentoPct("");setIncluyeIVA(false);setPromoAplica(false);setEditandoId(null);
   };
+
+  const cerrarForm=()=>{
+    setShowNew(false);resetForm();
+    const c=origenCliente.current;origenCliente.current=null;
+    if(c&&onVolverACliente)onVolverACliente(c);
+  };
+  useEffect(()=>{
+    if(!pedidoInicial||!pedidoInicial.clienteId)return;
+    resetForm();setClienteId(pedidoInicial.clienteId);origenCliente.current=pedidoInicial.clienteId;setShowNew(true);
+    onPedidoInicialUsado&&onPedidoInicialUsado();
+  },[pedidoInicial]);
 
   const abrirEdicion=p=>{
     setEditandoId(p.id);
@@ -6110,8 +6136,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       };
       setPedidos(p=>[nuevoPedido,...p]);
     }
-    setShowNew(false);
-    resetForm();
+    cerrarForm();
   };
  
   const marcarEntregado=(pedidoId)=>{
@@ -6349,7 +6374,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
         </div>
       )}
  
-      <Modal open={showNew} onClose={()=>{setShowNew(false);resetForm();}} title={editandoId?"Editar pedido":"Nuevo pedido"}>
+      <Modal open={showNew} onClose={cerrarForm} title={editandoId?"Editar pedido":"Nuevo pedido"}>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {/* Cliente */}
           <div><Lbl t="Cliente"/><select value={clienteId} onChange={e=>setClienteId(e.target.value)}><option value="">Seleccioná un cliente</option>{[...clientes].sort((a,b)=>a.nombre.localeCompare(b.nombre)).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}</select></div>
@@ -6472,7 +6497,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
  
           <div><Lbl t="Notas (opcional)"/><textarea rows={2} value={notas} onChange={e=>setNotas(e.target.value)} placeholder="Alguna aclaración para la entrega..."/></div>
           <div style={{display:"flex",gap:8,paddingTop:4}}>
-            <Btn variant="ghost" onClick={()=>{setShowNew(false);resetForm();}}>Cancelar</Btn>
+            <Btn variant="ghost" onClick={cerrarForm}>Cancelar</Btn>
             <Btn variant="green" onClick={confirmarPedido} disabled={!clienteId||lineasValidas.length===0}>{I.box}{editandoId?"Guardar cambios":"Confirmar pedido"}</Btn>
           </div>
         </div>
@@ -11338,6 +11363,9 @@ function AppGate(){
 
 function App(){
   const[tab,setTab]=useState("inicio");
+  const[pedidoInicial,setPedidoInicial]=useState(null);      // {clienteId,n}: abre "Nuevo pedido" con ese cliente cargado
+  const[abrirClienteId,setAbrirClienteId]=useState(null);    // al terminar el pedido se vuelve a la ficha de ese cliente
+  const tomarPedidoDe=cid=>{setPedidoInicial({clienteId:cid,n:Date.now()});setTab("pedidos");};
   const[filtroClientes,setFiltroClientes]=useState("todos");
   const irACobranza=()=>{setFiltroClientes("deuda");setTab("clientes");};
   const[showMore,setShowMore]=useState(false);
@@ -11542,9 +11570,9 @@ function App(){
  
         <main style={{flex:1,minWidth:0,overflowX:"hidden",paddingTop:58,minHeight:"100vh"}} id="mn">
           {tab==="inicio"&&<Inicio clientes={clientes} pedidos={pedidos} prods={prods} notas={notas} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} setTab={setTab} irACobranza={irACobranza} proveedores={proveedores} setProveedores={setProveedores} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/>}
-          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios}/>}
+          {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios} abrirClienteId={abrirClienteId} onClienteAbierto={()=>setAbrirClienteId(null)} onTomarPedido={tomarPedidoDe}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
-          {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51}/>}
+          {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51} pedidoInicial={pedidoInicial} onPedidoInicialUsado={()=>setPedidoInicial(null)} onVolverACliente={cid=>{setAbrirClienteId(cid);setTab("clientes");}}/>}
           {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora} prods={prods} pedidos={pedidos}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
