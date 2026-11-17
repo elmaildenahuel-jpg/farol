@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="17-nov-2026 · 16:45";
+const APP_BUILD="17-nov-2026 · 19:35";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -4548,7 +4548,10 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
             {[...notas].sort((a,b)=>new Date(b.actualizadoEn||b.creadoEn)-new Date(a.actualizadoEn||a.creadoEn)).slice(0,8).map(n=>{
               const col=colorNota(n.color);
               return(
-                <button key={n.id} onClick={()=>setTab("notas")} style={{width:"100%",textAlign:"left",padding:"9px 14px",borderRadius:12,fontSize:15,fontWeight:600,cursor:"pointer",background:col.bg,border:`1px solid ${col.bd}`,color:col.tx,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.titulo}</button>
+                <button key={n.id} onClick={()=>setTab("notas")} style={{width:"100%",textAlign:"left",padding:"9px 14px",borderRadius:12,cursor:"pointer",background:col.bg,border:`1px solid ${col.bd}`,color:col.tx,display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{flex:"1 1 50%",minWidth:0,fontSize:15,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.titulo}</span>
+                  <span style={{flex:"1 1 50%",minWidth:0,fontSize:13,fontWeight:400,opacity:.85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",borderLeft:`1px solid ${col.bd}`,paddingLeft:10}}>{(n.contenido||"").replace(/\s+/g," ").trim()||"—"}</span>
+                </button>
               );
             })}
           </div>
@@ -4641,8 +4644,109 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
 }
  
 // ── CLIENTES ──────────────────────────────────────────────────────
+// ── Buscador de comprobantes (clientes y proveedores) ─────────────
+function fechaBuscable(iso){
+  const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(iso||"");if(!m)return String(iso||"");
+  const y=m[1],mo=m[2],d=m[3],d1=String(Number(d)),mo1=String(Number(mo));
+  return `${iso} ${d}/${mo}/${y} ${d1}/${mo1}/${y} ${d}/${mo} ${d1}/${mo1} ${d}-${mo}-${y} ${d}/${mo}/${y.slice(2)}`;
+}
+// Cada palabra buscada tiene que aparecer en algún dato del comprobante (número, tipo, fecha, importe y, si se pide, el nombre)
+function filaCoincide(f,q,conNombre){
+  const t=normTxt(q).trim();if(!t)return true;
+  const base=normTxt(`${f.label} ${f.nro} ${f.extra||""} ${f.tipo==="factura"?"factura":f.tipo==="remito"?"remito":""}`);
+  const fech=normTxt(fechaBuscable(f.fecha));
+  const nom=normTxt(f.nombre);
+  const impDig=String(Math.round(Number(f.monto)||0)),nroDig=String(f.nro||"").replace(/\D/g,"")+" "+String(f.extra||"").replace(/[^0-9 ]/g,"");
+  return t.split(/\s+/).filter(Boolean).every(w=>{
+    if(conNombre&&nom.includes(w))return true;
+    if(base.includes(w)||fech.includes(w))return true;
+    const wd=w.replace(/\D/g,"");
+    if(wd.length>=2&&(impDig.includes(wd)||nroDig.includes(wd)))return true;
+    return false;
+  });
+}
+function filasComprobantesCliente(clientes,prods,pedidos){
+  const out=[];
+  (clientes||[]).forEach(c=>{
+    construirMovimientosCliente(c,prods,pedidos).filter(m=>m.tipo==="venta").forEach(m=>{
+      out.push({key:c.id+"|"+m.id,partyId:c.id,nombre:c.nombre,
+        tipo:m.comp==="Factura"?"factura":m.comp==="Remito"?"remito":"otro",
+        label:m.comp?`${m.comp} ${m.compNro}`:"Venta sin remito",nro:m.compNro||"",
+        extra:m.remitoNro?`${fmtRemito(m.remitoNro)} ${m.remitoNro}`:"",
+        fecha:m.fecha,monto:Number(m.monto)||0,cobrado:Number(m.cobrado)||0,
+        estado:m.pagado?"pagado":(m.parcial?"parcial":"pendiente")});
+    });
+  });
+  return out;
+}
+function filasComprobantesProveedor(proveedores){
+  const out=[];
+  (proveedores||[]).forEach(p=>{
+    agruparCompras(p.compras).forEach(g=>{
+      const cobrado=g.rows.filter(r=>r.pagado).reduce((a,r)=>a+(Number(r.monto)||0),0);
+      const et=g.tipo==="factura"?"Factura":g.tipo==="remito"?"Remito":"Compra";
+      out.push({key:p.id+"|"+g.key,partyId:p.id,nombre:p.nombre,tipo:g.tipo==="factura"||g.tipo==="remito"?g.tipo:"otro",
+        label:`${et}${g.numero?" "+g.numero:""}`,nro:g.numero||"",extra:"",fecha:g.fecha,monto:Number(g.total)||0,cobrado,estado:g.estado});
+    });
+  });
+  return out;
+}
+function aplicarFiltrosComp(filas,{q,tipo,estado,conNombre}){
+  return filas.filter(f=>(tipo==="todos"||f.tipo===tipo)&&(estado==="todos"||(estado==="pagado"?f.estado==="pagado":f.estado!=="pagado"))&&filaCoincide(f,q,conNombre))
+    .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||"")||String(b.label).localeCompare(String(a.label)));
+}
+function FiltrosComprobantes({tipo,setTipo,estado,setEstado,esCompra}){
+  const activo=tipo!=="todos"||estado!=="todos";
+  return(
+    <div style={{marginBottom:12}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
+        <select value={tipo} onChange={e=>setTipo(e.target.value)} aria-label="Tipo de comprobante">
+          <option value="todos">Comprobante: todos</option>
+          <option value="remito">Solo remitos</option>
+          <option value="factura">Solo facturas</option>
+        </select>
+        <select value={estado} onChange={e=>setEstado(e.target.value)} aria-label="Estado">
+          <option value="todos">Estado: todos</option>
+          <option value="pendiente">{esCompra?"Pendientes de pago":"Pendientes de cobro"}</option>
+          <option value="pagado">{esCompra?"Pagados":"Cobrados"}</option>
+        </select>
+      </div>
+      {activo&&<button onClick={()=>{setTipo("todos");setEstado("todos");}} style={{marginTop:6,background:"none",border:"none",color:G,fontSize:13,fontWeight:700,cursor:"pointer",padding:0}}>✕ Quitar filtros de comprobantes</button>}
+    </div>
+  );
+}
+function ListaComprobantes({filas,onAbrir,esCompra,vacioTxt}){
+  const total=filas.reduce((a,f)=>a+f.monto,0),pend=filas.filter(f=>f.estado!=="pagado").reduce((a,f)=>a+(f.monto-f.cobrado),0);
+  const colEst={pagado:GR,parcial:AM,pendiente:RE};
+  const txtEst={pagado:esCompra?"Pagado":"Cobrado",parcial:"Parcial",pendiente:"Pendiente"};
+  if(!filas.length)return <p style={{color:MU,textAlign:"center",padding:"28px 0",fontSize:15}}>{vacioTxt||"Ningún comprobante coincide con la búsqueda."}</p>;
+  return(
+    <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden",marginBottom:16}}>
+      <div style={{padding:"10px 14px",background:BG,fontSize:13,fontWeight:700,color:CR,display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+        <span>{filas.length} comprobante{filas.length!==1?"s":""} · {fmtARS(total)}</span>
+        {pend>0.5&&<span style={{color:RE}}>{esCompra?"A pagar":"A cobrar"}: {fmtARS(pend)}</span>}
+      </div>
+      {filas.slice(0,100).map(f=>(
+        <button key={f.key} onClick={()=>onAbrir(f.partyId)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"10px 14px",background:"none",border:"none",borderTop:`1px solid ${BO}`,cursor:"pointer"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.label}</div>
+            <div style={{fontSize:13,color:MU,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.nombre} · {fmtDateCorta(f.fecha)}</div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:CR}}>{fmtARS(f.monto)}</div>
+            <div style={{fontSize:12,fontWeight:700,color:colEst[f.estado]}}>{txtEst[f.estado]}{f.estado==="parcial"?` · falta ${fmtARS(f.monto-f.cobrado)}`:""}</div>
+          </div>
+        </button>
+      ))}
+      {filas.length>100&&<div style={{padding:"8px 14px",fontSize:12,color:MU,borderTop:`1px solid ${BO}`}}>Mostrando los 100 más recientes. Afiná la búsqueda para ver el resto.</div>}
+    </div>
+  );
+}
+
 function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,diasMora,promo51,pedidos,filtro:filtroProp,setFiltro:setFiltroProp,talonarios,setTalonarios,abrirClienteId,onClienteAbierto,onTomarPedido}){
   const[q,setQ]=useState("");
+  const[fTipo,setFTipo]=useState("todos");
+  const[fEstado,setFEstado]=useState("todos");
   const[filtroLocal,setFiltroLocal]=useState("todos");
   const filtro=filtroProp||filtroLocal,setFiltro=setFiltroProp||setFiltroLocal;   // el filtro lo puede fijar Inicio ("Por cobrar")
   const[orden,setOrden]=useState("deuda");   // por defecto: mayor deuda primero, cada vez que se entra a Clientes
@@ -4683,6 +4787,11 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
     if(orden==="deuda")return infoDeuda[b.id].deuda-infoDeuda[a.id].deuda;
     const la=lastSale(a),lb=lastSale(b);return(lb?daysSince(lb.fecha):0)-(la?daysSince(la.fecha):0);
   }),[clientes,q,filtro,orden,infoDeuda]);
+  const hayFiltroComp=fTipo!=="todos"||fEstado!=="todos";
+  const filasComp=useMemo(()=>{
+    if(!q.trim()&&!hayFiltroComp)return[];
+    return aplicarFiltrosComp(filasComprobantesCliente(clientes,prods,pedidos),{q,tipo:fTipo,estado:fEstado,conNombre:hayFiltroComp});
+  },[clientes,prods,pedidos,q,fTipo,fEstado,hayFiltroComp]);
   const selObj=clientes.find(c=>c.id===sel);
   const cobrandoObj=clientes.find(c=>c.id===cobrandoId);
   const actualizar=u=>setClientes(p=>p.map(c=>c.id===u.id?u:c));
@@ -4714,8 +4823,11 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
 
       <div style={{position:"relative",marginBottom:12}}>
         <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:MU,pointerEvents:"none"}}>{I.search}</span>
-        <input style={{paddingLeft:38}} placeholder="Buscar por nombre, zona o rubro..." value={q} onChange={e=>setQ(e.target.value)}/>
+        <input style={{paddingLeft:38}} placeholder="Buscar nombre, N° remito/factura, fecha o importe..." value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
+      <FiltrosComprobantes tipo={fTipo} setTipo={setFTipo} estado={fEstado} setEstado={setFEstado}/>
+      {(hayFiltroComp||filasComp.length>0)&&<ListaComprobantes filas={filasComp} onAbrir={setSel}/>}
+      {!hayFiltroComp&&<>
       <div style={{display:"flex",gap:8,marginBottom:10,overflowX:"auto",paddingBottom:4}}>
         {chips.map(f=>(
           <button key={f.k} onClick={()=>setFiltro(f.k)} style={{whiteSpace:"nowrap",padding:"6px 12px",borderRadius:20,fontSize:14,fontWeight:700,cursor:"pointer",border:`1px solid ${filtro===f.k?G:BO}`,background:filtro===f.k?G:"transparent",color:filtro===f.k?"#fff":MU}}>{f.l}</button>
@@ -4730,7 +4842,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
       </div>
       {filtroDeuda&&<CargarSaldoClienteRapido clientes={clientes} setClientes={setClientes}/>}
 
-      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>:<>
+      {filtered.length===0?(filasComp.length>0?null:<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>{filtro==="vencidos"?"🎉 No hay cuentas vencidas.":filtro==="deuda"?"🎉 No hay cuentas pendientes. Todo cobrado.":"Sin clientes para mostrar."}</p>):<>
       {vistaLista?(
         <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,overflow:"hidden"}}>
           <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(0,1fr) auto",gap:8,padding:"8px 14px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase",letterSpacing:"0.05em"}}>
@@ -4771,6 +4883,7 @@ function Clientes({clientes,setClientes,speeches,cal,prods,setProds,setPedidos,d
           {deuda>0&&<button onClick={()=>setCobrandoId(c.id)} aria-label={`Cobrar a ${c.nombre}`} style={{flexShrink:0,width:74,background:GR+"22",color:GR,border:"none",borderLeft:`1px solid ${GR}33`,fontSize:14,fontWeight:700,cursor:"pointer"}}>Cobrar</button>}
         </div>
       );})}
+      </>}
       </>}
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo cliente">
         <FormCliente onCancel={()=>setShowNew(false)} onSave={f=>{setClientes(p=>[...p,{id:uid(),...f,agenda:[],historial:[],ventas:[]}]);setShowNew(false);}}/>
@@ -5367,6 +5480,8 @@ function RegistroCompraPagina({proveedor,prods,setProds,impuestos,onSave,onCance
 function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
   if(typeof window!=="undefined")window.__nomadesProveedoresActuales=proveedores||[];
   const[q,setQ]=useState("");
+  const[fTipo,setFTipo]=useState("todos");
+  const[fEstado,setFEstado]=useState("todos");
   const[orden,setOrden]=useState("az");
   const[showNew,setShowNew]=useState(false);
   const[sel,setSel]=useState(null);
@@ -5376,6 +5491,11 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
     if(orden==="deuda")return saldoProveedor(b)-saldoProveedor(a);
     return(a.nombre||"").localeCompare(b.nombre||"");
   }),[proveedores,q,orden]);
+  const hayFiltroComp=fTipo!=="todos"||fEstado!=="todos";
+  const filasComp=useMemo(()=>{
+    if(!q.trim()&&!hayFiltroComp)return[];
+    return aplicarFiltrosComp(filasComprobantesProveedor(proveedores),{q,tipo:fTipo,estado:fEstado,conNombre:hayFiltroComp});
+  },[proveedores,q,fTipo,fEstado,hayFiltroComp]);
   const selObj=(proveedores||[]).find(p=>p.id===sel);
   const marcasDisponibles=useMemo(()=>Array.from(new Set((prods||[]).map(p=>p.marca).filter(Boolean))).sort(),[prods]);
   const proveedorCompra=(proveedores||[]).find(p=>p.id===compraNuevaId);
@@ -5389,15 +5509,18 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
       </div>
       <div style={{position:"relative",marginBottom:12}}>
         <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:MU,pointerEvents:"none"}}>{I.search}</span>
-        <input style={{paddingLeft:38}} placeholder="Buscar proveedor..." value={q} onChange={e=>setQ(e.target.value)}/>
+        <input style={{paddingLeft:38}} placeholder="Buscar nombre, N° remito/factura, fecha o importe..." value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
+      <FiltrosComprobantes esCompra tipo={fTipo} setTipo={setFTipo} estado={fEstado} setEstado={setFEstado}/>
+      {(hayFiltroComp||filasComp.length>0)&&<ListaComprobantes esCompra filas={filasComp} onAbrir={setSel}/>}
+      {!hayFiltroComp&&<>
       <div style={{marginBottom:16}}>
         <select value={orden} onChange={e=>setOrden(e.target.value)}>
           <option value="az">Ordenar: A → Z</option>
           <option value="deuda">Ordenar: mayor deuda</option>
         </select>
       </div>
-      {filtered.length===0?<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Sin proveedores para mostrar.</p>:filtered.map(p=>{const deuda=saldoProveedor(p);return(
+      {filtered.length===0?(filasComp.length>0?null:<p style={{color:MU,textAlign:"center",padding:"48px 0",fontSize:16}}>Sin proveedores para mostrar.</p>):filtered.map(p=>{const deuda=saldoProveedor(p);return(
         <button key={p.id} className="card-desk" onClick={()=>setSel(p.id)} style={{display:"flex",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%",marginBottom:8}}>
           <div style={{width:38,height:38,borderRadius:"50%",background:GLT,color:G,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0}}>{iniciales(p.nombre)}</div>
           <div style={{flex:1,minWidth:0}}>
@@ -5407,6 +5530,7 @@ function Proveedores({proveedores,setProveedores,prods,setProds,impuestos}){
           </div>
         </button>
       );})}
+      </>}
       <Modal open={showNew} onClose={()=>setShowNew(false)} title="Nuevo proveedor">
         <FormProveedor marcasDisponibles={marcasDisponibles} existingProviders={proveedores||[]} onCancel={()=>setShowNew(false)} onSave={f=>{setProveedores(prev=>[...(prev||[]),{id:uid(),...f,compras:[]}]);setShowNew(false);}}/>
       </Modal>
@@ -9648,7 +9772,7 @@ function FormMovSueldo({initial,saldo,onSave,onCancel}){
   );
 }
 
-function SueldosHonorarios({sueldos,setSueldos}){
+function SueldosHonorarios({sueldos,setSueldos,syncStatus,syncError}){
   const hoy=hoyISO();
   const[mes,setMes]=useState(hoy.slice(0,7));
   const[abierto,setAbierto]=useState({});
@@ -9760,6 +9884,12 @@ function SueldosHonorarios({sueldos,setSueldos}){
         <span className="bebas" style={{fontSize:30,color:CR}}>Sueldos y honorarios</span>
         <span style={{whiteSpace:"nowrap",flexShrink:0}}><Btn variant="green" small onClick={()=>setModalP({})}>{I.plus}<span style={{whiteSpace:"nowrap"}}>Persona</span></Btn></span>
       </div>
+      {(syncStatus==="error"||syncStatus==="local"||syncStatus==="offline")&&(
+        <div style={{background:RE+"14",border:`1px solid ${RE}55`,borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:13,color:CR}}>
+          <b style={{color:RE}}>⚠ Lo que cargues acá todavía NO está en la nube.</b> {syncStatus==="offline"?"Sin conexión: se sube solo cuando vuelva internet.":"No se pudo guardar en Firebase."}
+          {syncError&&<div style={{marginTop:4,fontFamily:"monospace",fontSize:12,wordBreak:"break-word"}}>{String(syncError)}</div>}
+        </div>
+      )}
       <p style={{fontSize:14,color:MU,marginBottom:14}}>Cuenta corriente por persona: lo que se devenga (sueldo, honorarios, bonos) contra lo que le pagás. Entra al balance de Caja como gasto del negocio.</p>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
         <button onClick={()=>mover(-1)} style={{width:38,height:38,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>‹</button>
@@ -10492,13 +10622,24 @@ async function cacheGuardar(k,entry){
   }catch(e){}
 }
 
+// Une dos listas de personas de sueldos por id (y sus movimientos por id): nada de lo cargado en el celular se pierde si llega tarde la versión de la nube
+function mergeSueldos(nube,local){
+  const out=(nube||[]).map(p=>({...p,movs:[...(p.movs||[])]}));
+  (local||[]).forEach(lp=>{
+    const e=out.find(p=>p.id===lp.id);
+    if(!e){out.push({...lp,movs:[...(lp.movs||[])]});return;}
+    const ids=new Set((e.movs||[]).map(m=>m.id));
+    (lp.movs||[]).forEach(m=>{if(!ids.has(m.id))e.movs.push(m);});
+  });
+  return out;
+}
 function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,setSpeeches,pedidos,setPedidos,prods,setProds,notas,setNotas,gastos,setGastos,comisiones,setComisiones,metaSemanal,setMetaSemanal,diasMora,setDiasMora,promo51,setPromo51,envasesExtra,setEnvasesExtra,proveedores,setProveedores,categorias,setCategorias,impuestos,setImpuestos,talonarios,setTalonarios,movimientosPago,setMovimientosPago,categoriasGasto,setCategoriasGasto,sueldos,setSueldos){
   const[status,setStatus]=useState("connecting");
   const[errorMsg,setErrorMsg]=useState(null);
 
-  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config"];
+  const KEYS=["clientes","prospectos","speeches","pedidos","prods","notas","gastos","comisiones","proveedores","config","sueldos"];
   const valuesRef=React.useRef({});
-  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago,categoriasGasto,sueldos}};
+  valuesRef.current={clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,sueldos,config:{metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago,categoriasGasto}};
   const settersRef=React.useRef({
     clientes:setClientes,prospectos:setProspectos,speeches:setSpeeches,pedidos:setPedidos,
     prods:d=>{if(Array.isArray(d)&&d.length>0)setProds(d);},
@@ -10506,11 +10647,13 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
     gastos:d=>{if(Array.isArray(d))setGastos(d);},
     comisiones:d=>{if(Array.isArray(d))setComisiones(d);},
     proveedores:d=>{if(Array.isArray(d))setProveedores(d);},
-    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);if(d&&Array.isArray(d.impuestos))setImpuestos(d.impuestos);if(d&&Array.isArray(d.talonarios))setTalonarios(d.talonarios);if(d&&Array.isArray(d.movimientosPago))setMovimientosPago(d.movimientosPago);if(d&&Array.isArray(d.categoriasGasto)&&d.categoriasGasto.length)setCategoriasGasto(d.categoriasGasto);if(d&&Array.isArray(d.sueldos))setSueldos(d.sueldos);},
+    sueldos:d=>{if(Array.isArray(d))setSueldos(d);},   // documento propio: ya no depende del tamaño/estado del doc "config"
+    config:d=>{if(d&&typeof d.metaSemanal==="number")setMetaSemanal(d.metaSemanal);if(d&&typeof d.diasMora==="number")setDiasMora(d.diasMora);if(d&&d.promo51&&typeof d.promo51==="object")setPromo51(prev=>({...prev,...d.promo51}));if(d&&Array.isArray(d.envasesExtra))setEnvasesExtra(d.envasesExtra);if(d&&Array.isArray(d.categorias))setCategorias(d.categorias);if(d&&Array.isArray(d.impuestos))setImpuestos(d.impuestos);if(d&&Array.isArray(d.talonarios))setTalonarios(d.talonarios);if(d&&Array.isArray(d.movimientosPago))setMovimientosPago(d.movimientosPago);if(d&&Array.isArray(d.categoriasGasto)&&d.categoriasGasto.length)setCategoriasGasto(d.categoriasGasto);if(d&&Array.isArray(d.sueldos)&&d.sueldos.length)setSueldos(prev=>(prev&&prev.length)?prev:d.sueldos);},   // compatibilidad: sueldos guardados antes dentro de config
   });
   const lastSyncRef=React.useRef({});
   const loadedRef=React.useRef({});
   const timersRef=React.useRef({});
+  const enVueloRef=React.useRef({});     // guardados enviados a la nube que todavía no confirmó
   const cacheTimersRef=React.useRef({});
   const cacheInfoRef=React.useRef({});   // por sección: {json, dirty} de lo restaurado desde la copia local
   const hayCacheRef=React.useRef(false);
@@ -10581,7 +10724,13 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
             const info=cacheInfoRef.current[k];
             const primera=!loadedRef.current[k];
             const localCambiado=primera&&info&&(info.dirty||JSON.stringify(valuesRef.current[k])!==info.json);
-            if(snap.exists&&localCambiado){
+            const locSueldos=k==="sueldos"&&primera&&!localCambiado&&snap.exists&&Array.isArray(valuesRef.current.sueldos)&&valuesRef.current.sueldos.length>0&&JSON.stringify(valuesRef.current.sueldos)!==JSON.stringify((snap.data()||{}).value);
+            if(locSueldos){
+              // Se cargó una persona/movimiento antes de que llegara la versión de la nube: se unen las dos, no se pisa ninguna
+              const data=snap.data()||{};
+              lastSyncRef.current[k]=JSON.stringify(data.value);
+              settersRef.current[k](mergeSueldos(data.value,valuesRef.current.sueldos));
+            }else if(snap.exists&&localCambiado){
               // Se trabajó sin conexión: lo local gana y se sube. La versión del servidor se guarda aparte por seguridad.
               const data=snap.data()||{};
               cacheGuardar("previo_"+k,{value:data.value,dirty:false,at:Date.now()});
@@ -10592,7 +10741,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
             }else if(snap.exists){
               const data=snap.data()||{};
               const incoming=JSON.stringify(data.value);
-              const pendienteLocal=!!timersRef.current[k]&&JSON.stringify(valuesRef.current[k])!==lastSyncRef.current[k];
+              const pendienteLocal=(!!timersRef.current[k]||!!enVueloRef.current[k])&&JSON.stringify(valuesRef.current[k])!==lastSyncRef.current[k];
               if(!pendienteLocal&&incoming!==lastSyncRef.current[k]){
                 lastSyncRef.current[k]=incoming;
                 settersRef.current[k](data.value);
@@ -10641,27 +10790,42 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
       const dirty=ls!==undefined?current!==ls:(!!(info&&info.dirty)||(info?current!==info.json:false));
       if(info&&ls===undefined&&!dirty)return;
       if(cacheTimersRef.current[k])clearTimeout(cacheTimersRef.current[k]);
-      cacheTimersRef.current[k]=setTimeout(()=>{cacheGuardar(k,{value:val,dirty,at:Date.now()});},400);
+      cacheTimersRef.current[k]=setTimeout(()=>{
+        // se guarda el valor MÁS NUEVO (no el que había al programar el guardado): evita escribir una copia vieja/vacía
+        const vNow=valuesRef.current[k],lsNow=lastSyncRef.current[k];
+        cacheGuardar(k,{value:vNow,dirty:lsNow!==undefined?JSON.stringify(vNow)!==lsNow:dirty,at:Date.now()});
+      },400);
     });
     KEYS.forEach(k=>{
       if(!loadedRef.current[k])return;
       const val=valuesRef.current[k];
       const current=JSON.stringify(val);
-      if(current===lastSyncRef.current[k])return;
+      if(current===lastSyncRef.current[k]){
+        // ya coincide con la nube: si había un guardado pendiente con un valor viejo, se cancela (si no, pisaría la nube con datos viejos)
+        if(timersRef.current[k]){clearTimeout(timersRef.current[k]);timersRef.current[k]=null;}
+        return;
+      }
       if(timersRef.current[k])clearTimeout(timersRef.current[k]);
       setStatus(s=>s==="error"?s:"saving");
       timersRef.current[k]=setTimeout(()=>{
+        timersRef.current[k]=null;
         if(!window.fbDb){fallo(new Error("Sin conexión a Firestore"));return;}
+        // se sube el valor MÁS NUEVO, no el que había al programar el guardado
+        const val=valuesRef.current[k];
+        const current=JSON.stringify(val);
+        if(current===lastSyncRef.current[k]){setStatus(s=>s==="error"?s:"synced");return;}
         let limpio;try{limpio=JSON.parse(JSON.stringify(val));}catch(e){fallo(e);return;}
         let prom;try{prom=window.fbDb.collection("farolcrm").doc(k).set({value:limpio,updatedAt:Date.now()});}catch(e){fallo(e);return;}
+        enVueloRef.current[k]=true;
         prom
           .then(()=>{
+            enVueloRef.current[k]=false;
             lastSyncRef.current[k]=current;
             cacheGuardar(k,{value:val,dirty:false,at:Date.now()});
             setStatus(s=>s==="error"?s:"synced");
             setErrorMsg(null);
           })
-          .catch(e=>{ navigator.onLine?fallo(e):setStatus("offline"); });
+          .catch(e=>{ enVueloRef.current[k]=false; navigator.onLine?fallo(e):setStatus("offline"); });
       },800);
     });
   },[clientes,prospectos,speeches,pedidos,prods,notas,gastos,comisiones,proveedores,metaSemanal,diasMora,promo51,envasesExtra,categorias,impuestos,talonarios,movimientosPago,categoriasGasto,sueldos]);
@@ -11650,7 +11814,7 @@ function App(){
           {tab==="caja"&&<Caja clientes={clientes} setClientes={setClientes} prods={prods} comisiones={comisiones} setComisiones={setComisiones} pedidos={pedidos} proveedores={proveedores} gastos={gastos} sueldos={sueldos}/>}
           {tab==="metricas"&&<Metricas clientes={clientes} prods={prods} pedidos={pedidos}/>}
           {tab==="gastos"&&<Gastos gastos={gastos} setGastos={setGastos}/>}
-          {tab==="sueldos"&&<SueldosHonorarios sueldos={sueldos} setSueldos={setSueldos}/>}
+          {tab==="sueldos"&&<SueldosHonorarios sueldos={sueldos} setSueldos={setSueldos} syncStatus={syncStatus} syncError={syncError}/>}
           {tab==="personal"&&<GastosPersonales gastos={gastos} setGastos={setGastos}/>}
           {tab==="productos"&&<Productos prods={prods} setProds={setProds} promo51={promo51} envasesExtra={envasesExtra} categorias={categorias}/>}
           {tab==="stock"&&<Stock prods={prods} setProds={setProds} pedidos={pedidos}/>}
