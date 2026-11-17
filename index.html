@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="16-nov-2026 · 19:10";
+const APP_BUILD="17-nov-2026 · 10:30";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -981,20 +981,31 @@ function construirRemitoPDF(pedido,cliente,prods){
     doc.setFont("helvetica","normal");
     y+=7.5;
   });
+  (pedido.servicios||[]).forEach(x=>{
+    doc.setTextColor(26,26,26);
+    doc.text(`${x.concepto} (servicio)`,marginX,y,{maxWidth:pageW-marginX*2-90});
+    doc.text("—",pageW-marginX-58,y,{align:"right"});
+    doc.text("—",pageW-marginX-32,y,{align:"right"});
+    doc.setFont("helvetica","bold");
+    doc.text(fmtARS(x.monto||0),pageW-marginX,y,{align:"right"});
+    doc.setFont("helvetica","normal");
+    y+=7.5;
+  });
 
   y+=2;
   doc.setDrawColor(228,231,229);
   doc.line(marginX,y,pageW-marginX,y);
   y+=8;
 
-  const totalLineas=(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
+  const totalLineasProd=(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
+  const totalLineas=totalLineasProd+(pedido.servicios||[]).reduce((s,x)=>s+(Number(x.monto)||0),0);
   doc.setFontSize(10.5);
   doc.setTextColor(86,91,96);
   doc.text("Subtotal",pageW-marginX-45,y,{align:"right"});
   doc.text(fmtARS(totalLineas),pageW-marginX,y,{align:"right"});
   y+=6.5;
   if(pedido.descuentoPct>0){
-    const montoDesc=Math.round(totalLineas*pedido.descuentoPct/100);
+    const montoDesc=Math.round(totalLineasProd*pedido.descuentoPct/100);
     doc.setTextColor(200,60,60);
     doc.text(`Descuento pedido (${pedido.descuentoPct}%)`,pageW-marginX-45,y,{align:"right"});
     doc.text(`-${fmtARS(montoDesc)}`,pageW-marginX,y,{align:"right"});
@@ -1226,7 +1237,7 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
       doc.text(fmtARS(m.monto),colX.pago-2,y,{align:"right"});
     }else{
       const esSaldo=m.tipo==="saldo";
-      const cantTxt=esSaldo?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
+      const cantTxt=(esSaldo||m.servicio)?"—":`${m.cantidad}${esLata(m.producto)?"u":"L"}`;
       doc.setTextColor(60,60,60);
       doc.text(fmtDateCorta(m.fecha),colX.fecha+1,y);
       let prodTxt=esSaldo?`Saldo anterior${m.descripcion?" · "+m.descripcion:""}`:nombreDeProd(m.producto);
@@ -1248,7 +1259,7 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
         doc.setFontSize(7.6);
         doc.setTextColor(120,120,120);
         doc.text(`· ${nombreDeProd(it.producto)}`,colX.prod+3,y-0.6,{maxWidth:52});
-        doc.text(`${it.cantidad}${esLata(it.producto)?"u":"L"}`,colX.monto-4,y-0.6,{align:"right"});
+        doc.text(it.servicio?"servicio":`${it.cantidad}${esLata(it.producto)?"u":"L"}`,colX.monto-4,y-0.6,{align:"right"});
         doc.text(fmtARS(it.monto),colX.pago-2,y-0.6,{align:"right"});
         y+=4.6;
       });
@@ -1954,13 +1965,15 @@ const iniciales=nombre=>{
 };
 const mensajePedido=(p,nombreCliente,prods)=>{
   const lineas=p.lineas||[];
+  const servs=p.servicios||[];
   const detalle=lineas.map(l=>{
     const prod=prods.find(x=>x.id===l.productoId);
     return`• ${l.cantidad}L ${prod?nombreProdEnvase(prod):l.productoId} — ${fmtARS(l.monto||0)}`;
-  }).join("\n");
-  const subtotal=lineas.reduce((s,l)=>s+(l.monto||0),0);
+  }).concat(servs.map(x=>`• ${x.concepto} (servicio) — ${fmtARS(x.monto||0)}`)).join("\n");
+  const subtotalProd=lineas.reduce((s,l)=>s+(l.monto||0),0);
+  const subtotal=subtotalProd+servs.reduce((s,x)=>s+(Number(x.monto)||0),0);
   const descPct=p.descuentoPct||0;
-  const montoDesc=descPct?Math.round(subtotal*descPct/100):0;
+  const montoDesc=descPct?Math.round(subtotalProd*descPct/100):0;
   const montoIVA=p.incluyeIVA?Math.round((subtotal-montoDesc)*0.21):0;
   let resumen="";
   if(descPct>0||p.incluyeIVA){
@@ -2445,7 +2458,7 @@ function construirMovimientosCliente(cliente,prods,pedidos){
     const sumable=piezas.every(x=>x.dv!==1||x.dvEsc);
     const d=piezas.length===1?ds[0]:(sumable?sumarDesgloses(ds):desgloseVenta(raiz,cliente.id,ctx));
     const pagada=piezas.length===1?!!piezas[0].pagado:cobrado>=monto-0.005;
-    const mv={id:raiz.id+"-v",rootId:raiz.id,pendIds:piezas.filter(x=>!x.pagado).map(x=>x.id),nota:raiz.nota||"",orden:0,tipo:"venta",fecha:raiz.fecha,producto:raiz.producto,cantidad,monto,pagado:pagada,cobrado,parcial:!pagada&&cobrado>0.005,d};
+    const mv={id:raiz.id+"-v",rootId:raiz.id,pendIds:piezas.filter(x=>!x.pagado).map(x=>x.id),nota:raiz.nota||"",orden:0,tipo:"venta",fecha:raiz.fecha,producto:raiz.producto,servicio:!!raiz.servicio,cantidad,monto,pagado:pagada,cobrado,parcial:!pagada&&cobrado>0.005,d};
     if(raiz.remitoNro){const k=String(raiz.remitoNro);if(!porRemito[k]){porRemito[k]=[];ordenRemitos.push(k);}porRemito[k].push(mv);}
     else movs.push(mv);
   });
@@ -2588,8 +2601,10 @@ function imprimirRemito(pedido,cliente,prods,formato){
   const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
   const nro=nroComprobanteDePedido(pedido);
   const lineas=pedido.lineas||[];
+  const servs=pedido.servicios||[];
+  const totalServ=servs.reduce((s,x)=>s+(Number(x.monto)||0),0);
   const totalLineas=lineas.reduce((s,l)=>s+(l.monto||0),0);
-  const total=pedido.montoTotal||totalLineas;
+  const total=pedido.montoTotal||(totalLineas+totalServ);
   const ticket=formato==="ticket";
   const pagina=ticket?"80mm auto":formato==="a5"?"A5":"A4";
   const margen=ticket?"4mm":formato==="a5"?"10mm":"15mm";
@@ -2601,7 +2616,9 @@ function imprimirRemito(pedido,cliente,prods,formato){
     return ticket
       ?`<tr><td colspan="2">${esc(nom)}${l.esBono?" (bonif.)":""}</td></tr><tr><td>${esc(l.cantidad)}${u}${l.descuentoPct>0?` · -${l.descuentoPct}%`:""}</td><td class="r">${esc(fmtARS(l.monto||0))}</td></tr>`
       :`<tr><td>${esc(nom)}${l.esBono?" (bonificado)":""}</td><td class="r">${esc(l.cantidad)}${u}</td><td class="r">${l.descuentoPct>0?"-"+l.descuentoPct+"%":"—"}</td><td class="r"><b>${esc(fmtARS(l.monto||0))}</b></td></tr>`;
-  }).join("");
+  }).join("")+servs.map(x=>ticket
+      ?`<tr><td>${esc(x.concepto)} (servicio)</td><td class="r">${esc(fmtARS(x.monto||0))}</td></tr>`
+      :`<tr><td>${esc(x.concepto)} <span style="color:#777">(servicio)</span></td><td class="r">—</td><td class="r">—</td><td class="r"><b>${esc(fmtARS(x.monto||0))}</b></td></tr>`).join("");
   const montoDesc=pedido.descuentoPct>0?Math.round(totalLineas*pedido.descuentoPct/100):0;
   const sr=saldoRemito(pedido,cliente);
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>${tituloComprobante(pedido)} ${esc(nro)}</title><style>
@@ -2630,7 +2647,7 @@ ${cliente&&cliente.telefono?`<div class="sub">Tel: ${esc(cliente.telefono)}</div
 <div class="sub" style="margin-top:4px">Entrega: ${esc(fmtDate(pedido.fechaEntrega))}${pedido.horaEntrega?` · ${esc(pedido.horaEntrega)}hs`:""} · ${pedido.pagado?"Pagado":"Cuenta corriente"}</div>
 <table>${ticket?"":"<thead><tr><th>Producto</th><th class=\"r\">Cant.</th><th class=\"r\">Desc.</th><th class=\"r\">Subtotal</th></tr></thead>"}<tbody>${filas}</tbody></table>
 <div class="tot">
-<div>Subtotal: ${esc(fmtARS(totalLineas))}</div>
+<div>Subtotal: ${esc(fmtARS(totalLineas+totalServ))}</div>
 ${montoDesc?`<div>Descuento pedido (${esc(pedido.descuentoPct)}%): -${esc(fmtARS(montoDesc))}</div>`:""}
 ${pedido.incluyeIVA?"<div>IVA (21%) incluido</div>":""}
 <div class="big">TOTAL ${esc(fmtARS(total))}</div></div>
@@ -2657,8 +2674,9 @@ function BotonReimprimirRemito({nro,items,cliente,prods,pedidos,compacto}){
     if(orig)return{...orig,_reimpresion:true};
     const fil=items||[];
     if(!fil.length)return null;
-    const lineas=fil.map(v=>({productoId:v.producto,cantidad:v.cantidad,monto:Number(v.monto)||0}));
-    return{id:"rem"+nro,remitoNro:nro,clienteId:cliente&&cliente.id,estado:"entregado",fechaEntrega:fil[0].fecha,lineas,montoTotal:lineas.reduce((a,l)=>a+l.monto,0),pagado:false,_reimpresion:true};
+    const lineas=fil.filter(v=>!v.servicio).map(v=>({productoId:v.producto,cantidad:v.cantidad,monto:Number(v.monto)||0}));
+    const servicios=fil.filter(v=>v.servicio).map(v=>({id:v.id||v.rootId,concepto:v.producto,monto:Number(v.monto)||0}));
+    return{id:"rem"+nro,remitoNro:nro,clienteId:cliente&&cliente.id,estado:"entregado",fechaEntrega:fil[0].fecha,lineas,servicios,montoTotal:fil.reduce((a,v)=>a+(Number(v.monto)||0),0),pagado:false,_reimpresion:true};
   },[abierto,pedidos,cliente,nro,items]);
   return(<>
     <button onClick={e=>{e.stopPropagation();setAbierto(true);}} aria-label={`Reimprimir remito ${fmtRemito(nro)}`} title="Imprimir / compartir este remito" style={{fontSize:compacto?12:14,fontWeight:700,padding:compacto?"3px 8px":"6px 10px",borderRadius:8,border:`1px solid ${BO}`,background:BG,color:CR,cursor:"pointer",flexShrink:0}}>🖨️{compacto?" Remito":""}</button>
@@ -2669,8 +2687,8 @@ function RemitoOpciones({pedido,cliente,prods,onClose,recienEntregado}){
   const[generando,setGenerando]=useState(false);
   if(!pedido)return null;
   const nro=nroComprobanteDePedido(pedido);
-  const total=pedido.montoTotal||(pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0);
-  const resumen=(pedido.lineas||[]).map(l=>{const pr=prods.find(x=>x.id===l.productoId);return`• ${l.cantidad}${pr&&pr.envase==="Lata"?"u":"L"} ${pr?nombreProdEnvase(pr):l.productoId}`;}).join("\n");
+  const total=pedido.montoTotal||((pedido.lineas||[]).reduce((s,l)=>s+(l.monto||0),0)+(pedido.servicios||[]).reduce((s,x)=>s+(Number(x.monto)||0),0));
+  const resumen=(pedido.lineas||[]).map(l=>{const pr=prods.find(x=>x.id===l.productoId);return`• ${l.cantidad}${pr&&pr.envase==="Lata"?"u":"L"} ${pr?nombreProdEnvase(pr):l.productoId}`;}).concat((pedido.servicios||[]).map(x=>`• ${x.concepto} (servicio)`)).join("\n");
   const srTxt=saldoRemito(pedido,cliente);
   const texto=`${tituloComprobante(pedido)} Nº ${nro} — Distribuidora Nómades\n${cliente?cliente.nombre:""}\nEntrega: ${fmtDate(pedido.fechaEntrega)}\n\n${resumen}\n\nTotal: ${fmtARS(total)}${srTxt?`\nSaldo anterior: ${fmtARS(srTxt.anterior)}\nSaldo total: ${fmtARS(srTxt.total)}`:""}`;
   const wa=cliente&&cliente.telefono?waLink(cliente.telefono,texto):null;
@@ -4117,7 +4135,7 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
         const f=partes(m.fecha);
         const colorSaldo=m.saldoAcum>0?rojo:GR;
         const esRem=!!m.remitoNro,abierto=abiertos.has(m.id);
-        const cantTxt=esRem?`${m.items.length} prod.`:(!pago&&!saldoAnt)?`${fl1(m.cantidad)}${envaseMap[m.producto]==="Lata"?"u":"L"}`:"—";
+        const cantTxt=esRem?`${m.items.filter(x=>!x.servicio).length} prod.${m.items.some(x=>x.servicio)?" + serv.":""}`:(!pago&&!saldoAnt)?(m.servicio?"—":`${fl1(m.cantidad)}${envaseMap[m.producto]==="Lata"?"u":"L"}`):"—";
         return(
           <div key={m.id} className="ec-grid" style={{padding:"9px 12px",borderTop:`1px solid ${BO}`,background:pago?GR+"0D":"transparent"}}>
             <div style={{fontSize:12,color:pago?GR:MU,fontWeight:pago?700:400,lineHeight:1.25,whiteSpace:"nowrap"}}>
@@ -4140,7 +4158,7 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
                 <>
                   <button onClick={()=>alternar(m.id)} aria-expanded={abierto} style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left",display:"block",width:"100%"}}>
                     <div style={{fontSize:14,fontWeight:700,color:CR,overflowWrap:"break-word",lineHeight:1.3}}>{m.comp||"Remito"} {m.compNro||fmtRemito(m.remitoNro)}</div>
-                    <div style={{fontSize:12,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":`▼ Ver ${m.items.length} producto${m.items.length>1?"s":""}`}</div>
+                    <div style={{fontSize:12,color:G,fontWeight:600}}>{abierto?"▲ Ocultar productos":`▼ Ver detalle (${m.items.length})`}</div>
                   </button>
                   <div style={{fontSize:12,color:MU}}>
                     <span className="ec-m">{cantTxt} · </span>
@@ -4179,7 +4197,7 @@ function MovimientosCards({cliente,prods,pedidos,diasMora,acciones}){
               <div style={{gridColumn:"1 / -1",background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"6px 10px",marginTop:4}}>
                 {m.items.map(it=>(
                   <div key={it.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"4px 0",fontSize:13}}>
-                    <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{nombreProd(it.producto)} <span style={{color:MU}}>· {fl1(it.cantidad)}{envaseMap[it.producto]==="Lata"?"u":"L"}</span></span>
+                    <span style={{color:CR,minWidth:0,overflowWrap:"break-word"}}>{nombreProd(it.producto)} {it.servicio?<span style={{color:AM}}>· servicio</span>:<span style={{color:MU}}>· {fl1(it.cantidad)}{envaseMap[it.producto]==="Lata"?"u":"L"}</span>}</span>
                     <span style={{color:it.pagado?GR:CR,flexShrink:0,whiteSpace:"nowrap"}}>{m$(it.monto)}{acciones&&acciones.onEditar&&it.rootId&&<button onClick={()=>acciones.onEditar(it.rootId)} aria-label="Editar venta" style={{marginLeft:6,padding:"2px 6px",borderRadius:6,border:`1px solid ${BO}`,background:"#fff",color:MU,cursor:"pointer",fontSize:12}}>✎</button>}</span>
                   </div>
                 ))}
@@ -4247,7 +4265,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos,setProds,setPe
     const peds=pedIds.map(id=>(pedidos||[]).find(x=>x.id===id)).filter(x=>x&&x.stockDescontado&&x.estado==="entregado");
     const salida={};peds.forEach(pd=>(pd.lineas||[]).forEach(l=>{if(l.productoId)salida[l.productoId]=(salida[l.productoId]||0)+(Number(l.cantidad)||0);}));
     const txt=Object.keys(salida).map(id=>{const pr=(prods||[]).find(x=>x.id===id);return`${nombreProdEnvase(pr)||id}: ${Math.round(salida[id]*10)/10}${pr&&pr.envase==="Lata"?" u":" L"}`;}).join(", ");
-    const man={};piezas.forEach(v=>{if(v.producto)man[v.producto]=(man[v.producto]||0)+(Number(v.cantidad)||0);});
+    const man={};piezas.forEach(v=>{if(v.producto&&!v.servicio)man[v.producto]=(man[v.producto]||0)+(Number(v.cantidad)||0);});
     const txtMan=Object.keys(man).map(id=>{const pr=(prods||[]).find(x=>x.id===id);return`${nombreProdEnvase(pr)||id}: ${Math.round(man[id]*10)/10}${pr&&pr.envase==="Lata"?" u":" L"}`;}).join(", ");
     setElimVenta({titulo:m.remitoNro?`${m.comp==="Factura"?"la factura":"el remito"} ${m.compNro||fmtRemito(m.remitoNro)}`:`la venta del ${fmtDate(m.fecha)}`,monto:m.monto,cobrado:m.cobrado||0,ids,pedidos:peds,salida,salidas:txt,salidaManual:man,salidasManual:peds.length?"":txtMan});
   };
@@ -4264,7 +4282,7 @@ function CuentaCorriente({cliente,onUpdate,diasMora,prods,pedidos,setProds,setPe
   useEffect(()=>{if(editandoVentaId&&refEdit.current&&refEdit.current.scrollIntoView)refEdit.current.scrollIntoView({behavior:"smooth",block:"center"});},[editandoVentaId]);
   const[showPago,setShowPago]=useState(false);
   const[compartiendoEC,setCompartiendoEC]=useState(false);
-  const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
+  const itemsDesc=useMemo(()=>{const ctx=ctxDescuentos(prods,pedidos);return(cliente.ventas||[]).filter(v=>!v.servicio).map(v=>({v,d:desgloseVenta(v,cliente.id,ctx)}));},[cliente,prods,pedidos]);
   const descPorId=useMemo(()=>{const m={};itemsDesc.forEach(({v,d})=>{m[v.id]=d;});return m;},[itemsDesc]);
   const[remAbiertos,setRemAbiertos]=useState(()=>new Set());
   const alternarRem=k=>setRemAbiertos(prev=>{const n=new Set(prev);if(n.has(k))n.delete(k);else n.add(k);return n;});
@@ -4434,7 +4452,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
   // Productos más vendidos (por cantidad en todas las ventas registradas) para mostrar su precio en el catálogo
   const masVendidos=useMemo(()=>{
     const t={};
-    clientes.forEach(c=>(c.ventas||[]).forEach(v=>{if(v.producto)t[v.producto]=(t[v.producto]||0)+(Number(v.cantidad)||0);}));
+    clientes.forEach(c=>(c.ventas||[]).forEach(v=>{if(v.producto&&!v.servicio)t[v.producto]=(t[v.producto]||0)+(Number(v.cantidad)||0);}));
     return Object.entries(t).map(([id,cant])=>({p:prods.find(x=>x.id===id),cant})).filter(x=>x.p).sort((a,b)=>b.cant-a.cant).slice(0,5);
   },[clientes,prods]);
  
@@ -4852,7 +4870,7 @@ function filasExportCliente(cliente,prods,pedidos){
     const estado=m.tipo==="saldo"?(m.pagado?"Cobrado":"Pendiente"):(m.pagado?"Cobrado":m.parcial?"Cobro parcial":"Pendiente");
     if(m.tipo==="saldo")return{...base,concepto:m.ajuste?"Ajuste de saldo":"Saldo anterior",detalle:m.descripcion||"",estado,cargo:m.monto};
     if(m.remitoNro){
-      const lineas=(m.items||[]).map(it=>({producto:nom(it.producto),cantidad:q1(it.cantidad),unidad:uni(it.producto),monto:it.monto}));
+      const lineas=(m.items||[]).map(it=>it.servicio?{producto:nom(it.producto),cantidad:"",unidad:"(servicio)",monto:it.monto}:{producto:nom(it.producto),cantidad:q1(it.cantidad),unidad:uni(it.producto),monto:it.monto});
       return{...base,concepto:`${m.comp||"Remito"} ${m.compNro||fmtRemito(m.remitoNro)}`,detalle:lineas.map(l=>`${l.producto} ${l.cantidad}${l.unidad}`).join(", "),estado,cargo:m.monto,lineas};
     }
     const l={producto:nom(m.producto),cantidad:q1(m.cantidad),unidad:uni(m.producto),monto:m.monto};
@@ -6041,6 +6059,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const[descuentoPct,setDescuentoPct]=useState("");
   const[tipoComp,setTipoComp]=useState("remito");     // igual que en compras: remito o factura (la factura suma 21% de IVA)
   const[numeroFactura,setNumeroFactura]=useState("");
+  const[servicios,setServicios]=useState([]);          // otros servicios con importe manual (no son productos: no entran en estadísticas, stock ni litros)
   const incluyeIVA=tipoComp==="factura";
   const[generandoRemitoId,setGenerandoRemitoId]=useState(null);
   const[remitoModal,setRemitoModal]=useState(null); // {id,nuevo}
@@ -6049,7 +6068,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const resetForm=()=>{
     setClienteId("");setFechaEntrega(hoyISO());setHoraEntrega("10:00");setPagado(false);setNotas("");
     setLineas([lineaVacia()]);
-    setDescuentoPct("");setTipoComp("remito");setNumeroFactura("");setPromoAplica(false);setEditandoId(null);
+    setDescuentoPct("");setTipoComp("remito");setNumeroFactura("");setServicios([]);setPromoAplica(false);setEditandoId(null);
   };
 
   const cerrarForm=()=>{
@@ -6073,6 +6092,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
     setLineas((p.lineas&&p.lineas.length>0?p.lineas:[lineaVacia()]).map(l=>({id:l.id||uid(),productoId:l.productoId,cantidad:String(l.cantidad||""),monto:String(l.monto||""),descuentoPct:l.descuentoPct?String(l.descuentoPct):"",esBono:!!l.esBono})));
     setDescuentoPct(p.descuentoPct?String(p.descuentoPct):"");
     setTipoComp(p.tipoComprobante||(p.incluyeIVA?"factura":"remito"));setNumeroFactura(p.numeroFactura||"");
+    setServicios((p.servicios||[]).map(x=>({id:x.id||uid(),concepto:x.concepto||"",monto:String(x.monto||"")})));
     setPromoAplica(!!p.promoAplica);
     setShowNew(true);
   };
@@ -6118,28 +6138,33 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const descPctNum=Number(descuentoPct)||0;
   const montoDescuento=Math.round(totalPedido*descPctNum/100);
   const subtotalConDescuento=totalPedido-montoDescuento;
-  const montoIVA=incluyeIVA?Math.round(subtotalConDescuento*0.21):0;
-  const totalFinal=subtotalConDescuento+montoIVA;
-  const gananciaEstimadaPedido=comisionPctSel?Math.round(totalFinal*comisionPctSel/100):0;
+  const serviciosValidos=servicios.filter(x=>Number(x.monto)>0).map(x=>({id:x.id,concepto:(x.concepto||"").trim()||"Servicio",monto:Number(x.monto)}));
+  const totalServicios=serviciosValidos.reduce((a,x)=>a+x.monto,0);
+  const montoIVAProd=incluyeIVA?Math.round(subtotalConDescuento*0.21):0;
+  const montoIVAServ=incluyeIVA?Math.round(totalServicios*0.21):0;
+  const montoIVA=montoIVAProd+montoIVAServ;
+  const totalProductosFinal=subtotalConDescuento+montoIVAProd;   // solo productos (con su descuento e IVA)
+  const totalFinal=totalProductosFinal+totalServicios+montoIVAServ;
+  const gananciaEstimadaPedido=comisionPctSel?Math.round(totalProductosFinal*comisionPctSel/100):0;
  
   const confirmarPedido=()=>{
     if(!clienteId||lineasValidas.length===0)return;
     // Factor de ajuste (descuento + IVA) que se reparte proporcionalmente entre las líneas al confirmar la entrega
-    const factor=totalPedido>0?totalFinal/totalPedido:1;
+    const factor=totalPedido>0?totalProductosFinal/totalPedido:1;
     const lineasFinal=lineasValidas.map(l=>({...l,cantidad:Number(l.cantidad),monto:Number(l.monto||0),descuentoPct:Number(l.descuentoPct)||0}));
     if(editandoId){
       setPedidos(prev=>prev.map(p=>p.id!==editandoId?p:{
         ...p,clienteId,fechaEntrega,horaEntrega,pagado,notas,
         lineas:lineasFinal,
         descuentoPct:descPctNum,incluyeIVA,tipoComprobante:tipoComp,numeroFactura:tipoComp==="factura"?numeroFactura.trim():"",factorAjuste:factor,
-        montoTotal:totalFinal,promoAplica,
+        servicios:serviciosValidos,montoTotal:totalFinal,promoAplica,
       }));
     }else{
       const nuevoPedido={
         id:uid(),remitoNro:proximoRemito(pedidos,clientes),clienteId,fechaEntrega,horaEntrega,pagado,notas,
         lineas:lineasFinal,
         descuentoPct:descPctNum,incluyeIVA,tipoComprobante:tipoComp,numeroFactura:tipoComp==="factura"?numeroFactura.trim():"",factorAjuste:factor,
-        montoTotal:totalFinal,promoAplica,
+        servicios:serviciosValidos,montoTotal:totalFinal,promoAplica,
         estado:"pendiente",creadoEn:new Date().toISOString()
       };
       setPedidos(p=>[nuevoPedido,...p]);
@@ -6164,7 +6189,12 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
           ...desgloseAlEntregar(prod,l,ped),
         };
       });
-      return{...c,ventas:[...c.ventas,...nuevasVentas]};
+      // Otros servicios: una "venta" por servicio, con el importe manual (+IVA si es factura). cantidad 0 → no cuenta en litros, stock ni estadísticas de productos
+      const ventasServicio=(ped.servicios||[]).map(sv=>({
+        id:uid(),fecha:ped.fechaEntrega,producto:sv.concepto||"Servicio",servicio:true,concepto:sv.concepto||"Servicio",remitoNro:nroRem,pedidoId:ped.id,
+        cantidad:0,monto:Math.round(sv.monto*(ped.incluyeIVA?1.21:1)),pagado:ped.pagado,promoAcumulable:false,esBono:false,
+      }));
+      return{...c,ventas:[...c.ventas,...nuevasVentas,...ventasServicio]};
     }));
     // Descuenta del stock lo entregado (latas en unidades, el resto en litros), incluidas las líneas bonificadas; puede quedar en negativo
     const salida={};
@@ -6316,6 +6346,12 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                       </div>
                     );
                   })}
+                  {(p.servicios||[]).map(sv=>(
+                    <div key={sv.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:6,marginTop:6,borderTop:`1px solid ${BO}`}}>
+                      <span style={{fontSize:15,color:CR}}>{sv.concepto} <span style={{fontSize:12,color:AM}}>servicio</span></span>
+                      <span style={{fontSize:15,fontWeight:600,color:CR}}>{fmtARS(sv.monto||0)}</span>
+                    </div>
+                  ))}
                 </div>
                 {p.notas&&<div style={{fontSize:14,color:"#A89682",marginBottom:10}}>{p.notas}</div>}
                 <div style={{display:"flex",gap:8}}>
@@ -6465,8 +6501,21 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
             <button onClick={agregarLinea} style={{width:"100%",marginTop:8,padding:"9px 0",borderRadius:8,background:"none",border:`1px dashed ${G}44`,color:G,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{I.plus}Agregar otro producto</button>
           </div>
  
+          {/* Otros servicios */}
+          <div>
+            <Lbl t="Otros servicios (importe manual, no es producto)"/>
+            {servicios.map(sv=>(
+              <div key={sv.id} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 110px 34px",gap:6,marginBottom:6,alignItems:"center"}}>
+                <input value={sv.concepto} onChange={e=>setServicios(prev=>prev.map(x=>x.id===sv.id?{...x,concepto:e.target.value}:x))} placeholder="Ej: Flete, instalación, alquiler..."/>
+                <input type="number" inputMode="numeric" value={sv.monto} onChange={e=>setServicios(prev=>prev.map(x=>x.id===sv.id?{...x,monto:e.target.value}:x))} placeholder="Importe"/>
+                <button onClick={()=>setServicios(prev=>prev.filter(x=>x.id!==sv.id))} style={{background:"none",border:"none",color:RE,fontSize:20,cursor:"pointer",padding:0}}>×</button>
+              </div>
+            ))}
+            <button onClick={()=>setServicios(prev=>[...prev,{id:uid(),concepto:"",monto:""}])} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"none",border:`1px dashed ${AM}66`,color:AM,fontSize:15,fontWeight:600,cursor:"pointer"}}>+ Agregar servicio</button>
+          </div>
+
           {/* Total, descuento e IVA */}
-          {totalPedido>0&&(
+          {(totalPedido>0||totalServicios>0)&&(
             <div style={{background:G+"11",border:`1px solid ${G}33`,borderRadius:8,padding:"12px 14px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <span style={{fontSize:15,color:MU}}>Subtotal · {totalLitros}L</span>
@@ -6475,8 +6524,9 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
 
               <div style={{marginBottom:10}}><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={descuentoPct} onChange={e=>setDescuentoPct(e.target.value)} placeholder="0"/></div>
 
-              {(descPctNum>0||incluyeIVA)&&(
+              {(descPctNum>0||incluyeIVA||totalServicios>0)&&(
                 <div style={{fontSize:14,color:MU,marginBottom:8}}>
+                  {totalServicios>0&&<div>Servicios: <span style={{color:AM,fontWeight:600}}>+{fmtARS(totalServicios)}</span></div>}
                   {descPctNum>0&&<div>Descuento ({descPctNum}%): <span style={{color:RE,fontWeight:600}}>-{fmtARS(montoDescuento)}</span></div>}
                   {incluyeIVA&&<div>IVA (21%): <span style={{color:G,fontWeight:600}}>+{fmtARS(montoIVA)}</span></div>}
                 </div>
@@ -7204,7 +7254,7 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
 
 function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,proveedores,gastos,sueldos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:Number(c.comisionPctDefault)||0}))),[clientes]);
+  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:v.servicio?0:(Number(c.comisionPctDefault)||0)}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
   const totalFacturado=todas.reduce((s,v)=>s+(v.monto||0),0);
   const totalGanancia=todas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
@@ -7701,7 +7751,7 @@ function Ventas({clientes,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
   const catMap=useMemo(()=>categoriaMapDe(prods),[prods]);
   const categoriasDisponibles=useMemo(()=>[...new Set(Object.values(catMap))].sort((a,b)=>a.localeCompare(b)),[catMap]);
-  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,cn:c.nombre,clienteId:c.id}))).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[clientes]);
+  const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.filter(v=>!v.servicio).map(v=>({...v,cn:c.nombre,clienteId:c.id}))).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)),[clientes]);
 
   // ── Filtros ──
   const[fDesde,setFDesde]=useState("");
@@ -8168,7 +8218,7 @@ function Compras({proveedores,prods}){
 // lotes específicos de stock), así que es una estimación — se aclara en la propia pantalla.
 function Rentabilidad({clientes,proveedores,prods}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const ventasAll=useMemo(()=>(clientes||[]).flatMap(c=>(c.ventas||[])),[clientes]);
+  const ventasAll=useMemo(()=>(clientes||[]).flatMap(c=>(c.ventas||[]).filter(v=>!v.servicio)),[clientes]);
   const comprasAll=useMemo(()=>(proveedores||[]).flatMap(p=>(p.compras||[])),[proveedores]);
   const[mes,setMes]=useState(""); // "" = todo el historial; "YYYY-MM" = ventas de ese mes
   const mesesDisp=useMemo(()=>{const set=new Set();ventasAll.forEach(v=>{if(v.fecha)set.add(String(v.fecha).slice(0,7));});return[...set].sort().reverse();},[ventasAll]);
@@ -8329,7 +8379,7 @@ function Rentabilidad({clientes,proveedores,prods}){
 // ── MÉTRICAS ──────────────────────────────────────────────────────
 function Metricas({clientes,prods,pedidos}){
   const envaseMap=useMemo(()=>envaseMapDe(prods),[prods]);
-  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
+  const todasSinFiltro=useMemo(()=>clientes.flatMap(c=>c.ventas.filter(v=>!v.servicio).map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,rubro:c.rubro,zona:c.zona}))),[clientes]);
 
   // ── Filtro de período (afecta los rankings de más abajo, no la evolución mensual fija) ──
   const[pDesde,setPDesde]=useState("");
@@ -11131,7 +11181,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
                   </div>
                 );})}
 
-                <PanelDescuentosCliente items={(cliente.ventas||[]).map(v=>({v,d:desgloseVenta(v,cliente.id,ctxDesc)}))}/>
+                <PanelDescuentosCliente items={(cliente.ventas||[]).filter(v=>!v.servicio).map(v=>({v,d:desgloseVenta(v,cliente.id,ctxDesc)}))}/>
                 {vencidas.length>0&&cliente.telefono&&(
                   <a href={waLink(cliente.telefono,mensajeRecordatorioDeuda(cliente,deuda,diasMora))} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,fontSize:13,fontWeight:700,background:"#25D36620",color:"#25D366",border:"1px solid #25D36640",textDecoration:"none",marginTop:10}}>{I.wa} Recordar deuda por WhatsApp</a>
                 )}
@@ -11425,7 +11475,7 @@ function App(){
   const[movimientosPago,setMovimientosPago]=useState([]);
   const[proveedores,setProveedores]=useState([]);
   const mostrarBadgeCaja=useMemo(()=>{
-    const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:Number(c.comisionPctDefault)||0})));
+    const todasV=clientes.flatMap(c=>(c.ventas||[]).map(v=>({...v,comisionPct:v.servicio?0:(Number(c.comisionPctDefault)||0)})));
     const gananciaCobrada=todasV.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
     const totalLiquidado=(comisiones||[]).reduce((s,l)=>s+(Number(l.monto)||0),0);
     const pendienteLiquidar=gananciaCobrada-totalLiquidado;
