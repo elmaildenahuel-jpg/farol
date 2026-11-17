@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="17-nov-2026 · 10:30";
+const APP_BUILD="17-nov-2026 · 16:45";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -9685,7 +9685,7 @@ function SueldosHonorarios({sueldos,setSueldos}){
       if(p.id!==pid)return p;
       const movs=p.movs||[];
       if(modalM.mov){
-        return{...p,movs:movs.map(m=>m.id===modalM.mov.id?{...m,...datosM,nro:datosM.tipo==="pago"?(m.nro||proximoNro()):undefined}:m)};
+        return{...p,movs:movs.map(m=>m.id===modalM.mov.id?{...m,...datosM,nro:datosM.tipo==="pago"?(m.nro||proximoNro()):null}:m)};
       }
       const nuevo={id:uid(),...datosM,creadoEn:new Date().toISOString()};
       if(datosM.tipo==="pago"){nuevo.nro=proximoNro();reciboParaMostrar=nuevo.id;}
@@ -9758,7 +9758,7 @@ function SueldosHonorarios({sueldos,setSueldos}){
     <div style={{padding:"24px 16px 90px",maxWidth:640,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:4}}>
         <span className="bebas" style={{fontSize:30,color:CR}}>Sueldos y honorarios</span>
-        <Btn variant="green" small onClick={()=>setModalP({})}>{I.plus}Persona</Btn>
+        <span style={{whiteSpace:"nowrap",flexShrink:0}}><Btn variant="green" small onClick={()=>setModalP({})}>{I.plus}<span style={{whiteSpace:"nowrap"}}>Persona</span></Btn></span>
       </div>
       <p style={{fontSize:14,color:MU,marginBottom:14}}>Cuenta corriente por persona: lo que se devenga (sueldo, honorarios, bonos) contra lo que le pagás. Entra al balance de Caja como gasto del negocio.</p>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
@@ -10587,11 +10587,13 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
               cacheGuardar("previo_"+k,{value:data.value,dirty:false,at:Date.now()});
               const val=valuesRef.current[k];
               lastSyncRef.current[k]=JSON.stringify(val);
-              ref.set({value:val,updatedAt:Date.now()}).then(()=>cacheGuardar(k,{value:val,dirty:false,at:Date.now()})).catch(fallo);
+              let limpio;try{limpio=JSON.parse(JSON.stringify(val));}catch(e){fallo(e);return;}
+              ref.set({value:limpio,updatedAt:Date.now()}).then(()=>cacheGuardar(k,{value:val,dirty:false,at:Date.now()})).catch(fallo);
             }else if(snap.exists){
               const data=snap.data()||{};
               const incoming=JSON.stringify(data.value);
-              if(incoming!==lastSyncRef.current[k]){
+              const pendienteLocal=!!timersRef.current[k]&&JSON.stringify(valuesRef.current[k])!==lastSyncRef.current[k];
+              if(!pendienteLocal&&incoming!==lastSyncRef.current[k]){
                 lastSyncRef.current[k]=incoming;
                 settersRef.current[k](data.value);
               }
@@ -10599,7 +10601,7 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
             }else{
               const seedVal=valuesRef.current[k];
               lastSyncRef.current[k]=JSON.stringify(seedVal);
-              ref.set({value:seedVal,updatedAt:Date.now()}).catch(fallo);
+              try{ref.set({value:JSON.parse(JSON.stringify(seedVal)),updatedAt:Date.now()}).catch(fallo);}catch(e){fallo(e);}
             }
             loadedRef.current[k]=true;
             if(KEYS.every(kk=>loadedRef.current[kk])){setStatus("synced");setErrorMsg(null);}
@@ -10650,7 +10652,9 @@ function useFirebaseSync(clientes,setClientes,prospectos,setProspectos,speeches,
       setStatus(s=>s==="error"?s:"saving");
       timersRef.current[k]=setTimeout(()=>{
         if(!window.fbDb){fallo(new Error("Sin conexión a Firestore"));return;}
-        window.fbDb.collection("farolcrm").doc(k).set({value:val,updatedAt:Date.now()})
+        let limpio;try{limpio=JSON.parse(JSON.stringify(val));}catch(e){fallo(e);return;}
+        let prom;try{prom=window.fbDb.collection("farolcrm").doc(k).set({value:limpio,updatedAt:Date.now()});}catch(e){fallo(e);return;}
+        prom
           .then(()=>{
             lastSyncRef.current[k]=current;
             cacheGuardar(k,{value:val,dirty:false,at:Date.now()});
