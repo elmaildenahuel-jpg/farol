@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="17-nov-2026 · 19:35";
+const APP_BUILD="18-nov-2026 · 02:30";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -2346,10 +2346,10 @@ const MEDIOS_PAGO=[{id:"Efectivo",ic:"💵"},{id:"Transferencia",ic:"🏦"},{id:
 const PERIODO_LIQUIDACION_DIAS=30;
 // Aplica un cobro (total o parcial) a las ventas pendientes de un cliente, de más antigua a más nueva.
 // Registra fechaCobro y medioPago en cada venta saldada; si el monto no alcanza a cubrir una venta, la divide en dos.
-function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",fecha=null}={}){
+function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",fecha=null,cobroId:cobroIdFijo=null}={}){
   const monto=Number(montoCobro);
   if(!monto||monto<=0)return cliente;
-  const cobroId=uid();   // todo cobro es UN movimiento: las ventas/saldos que cubre quedan etiquetadas con este id
+  const cobroId=cobroIdFijo||uid();   // todo cobro es UN movimiento: las ventas/saldos que cubre quedan etiquetadas con este id
   const pendientesOrdenadas=(cliente.ventas||[]).filter(v=>!v.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(v=>v.id);
   const fechaCobro=fecha||hoyISO();
   const resSaldos=aplicarPagoASaldos(cliente.saldosAnteriores,monto,"fechaCobro",fechaCobro,medioPago,nota,cobroId);
@@ -2490,16 +2490,17 @@ function construirMovimientosCliente(cliente,prods,pedidos){
 // ── Proveedores: cuenta corriente invertida (lo que yo les debo por compras) ──
 function saldoProveedor(p){ return (p.compras||[]).filter(c=>!c.pagado).reduce((s,c)=>s+c.monto,0)+totalSaldosPendientes(p); }
 
-function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota="",fecha=null}={}){
+function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota="",fecha=null,pagoId:pagoIdFijo=null}={}){
   const monto=Number(montoPago);
   if(!monto||monto<=0)return proveedor;
+  const pagoId=pagoIdFijo||uid(),pagoTs=Date.now();
   const pendientesOrdenadas=(proveedor.compras||[]).filter(c=>!c.pagado).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map(c=>c.id);
   const fechaPago=fecha||hoyISO();
-  const resSaldos=aplicarPagoASaldos(proveedor.saldosAnteriores,monto,"fechaPago",fechaPago,medioPago,nota);
+  const resSaldos=aplicarPagoASaldos(proveedor.saldosAnteriores,monto,"fechaPago",fechaPago,medioPago,nota,pagoId);
   let restante=resSaldos.restante;
   const nuevasCompras=[...proveedor.compras].map(c=>{
     if(c.pagado||!pendientesOrdenadas.includes(c.id)||restante<=0)return c;
-    if(restante>=c.monto){restante-=c.monto;return{...c,pagado:true,fechaPago,medioPago,nota:nota||c.nota||""};}
+    if(restante>=c.monto){restante-=c.monto;return{...c,pagado:true,fechaPago,medioPago,nota:nota||c.nota||"",pagoId,pagoTs};}
     const montoPagado=restante,montoRestante=c.monto-restante;
     const cantPagada=Math.round((c.cantidad*(montoPagado/c.monto))*10)/10;
     restante=0;
@@ -2512,11 +2513,12 @@ function aplicarPagoAProveedor(proveedor,montoPago,{medioPago="Efectivo",nota=""
       const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=c;
       const escalar=(campo,ratio)=>base[campo]!=null?redondear2((Number(base[campo])||0)*ratio):base[campo];
       const rP=c.monto>0?_montoPagado/c.monto:0,rR=c.monto>0?_montoRestante/c.monto:0;
-      comprasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,montoNeto:escalar("montoNeto",rP),ivaMonto:escalar("ivaMonto",rP),otrosImpuestos:escalar("otrosImpuestos",rP),descuentoMonto:escalar("descuentoMonto",rP),pagado:true,fechaPago,medioPago,nota:nota||c.nota||""});
+      comprasFinales.push({...base,cantidad:_cantPagada,monto:_montoPagado,montoNeto:escalar("montoNeto",rP),ivaMonto:escalar("ivaMonto",rP),otrosImpuestos:escalar("otrosImpuestos",rP),descuentoMonto:escalar("descuentoMonto",rP),pagado:true,fechaPago,medioPago,nota:nota||c.nota||"",pagoId,pagoTs});
       comprasFinales.push({...base,id:uid(),cantidad:_cantRestante,monto:_montoRestante,montoNeto:escalar("montoNeto",rR),ivaMonto:escalar("ivaMonto",rR),otrosImpuestos:escalar("otrosImpuestos",rR),descuentoMonto:escalar("descuentoMonto",rR),pagado:false});
     }else{comprasFinales.push(c);}
   });
-  return{...proveedor,compras:comprasFinales,saldosAnteriores:resSaldos.saldos};
+  const saldosSellados=resSaldos.saldos.map(x=>x.cobroId===pagoId?{...x,pagoId,pagoTs}:x);
+  return{...proveedor,compras:comprasFinales,saldosAnteriores:saldosSellados};
 }
 
 // ── Meta semanal helpers ──────────────────────────────────────────
@@ -5318,8 +5320,8 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods,acciones}){
   const saldo=saldoProveedor(proveedor);
 
   // Pago rápido de una compra puntual, hoy y en efectivo — para otra fecha/medio o pago parcial se usa "Registrar pago".
-  const marcarPagada=(id,fecha)=>onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo"}:c)});
-  const marcarGrupoPagado=(ids,fecha)=>{const set=new Set(ids);onUpdate({...proveedor,compras:proveedor.compras.map(c=>set.has(c.id)&&!c.pagado?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo"}:c)});};
+  const marcarPagada=(id,fecha)=>{const pagoId=uid(),pagoTs=Date.now();onUpdate({...proveedor,compras:proveedor.compras.map(c=>c.id===id?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo",pagoId,pagoTs}:c)});};
+  const marcarGrupoPagado=(ids,fecha)=>{const set=new Set(ids),pagoId=uid(),pagoTs=Date.now();onUpdate({...proveedor,compras:proveedor.compras.map(c=>set.has(c.id)&&!c.pagado?{...c,pagado:true,fechaPago:fecha||hoyISO(),medioPago:"Efectivo",pagoId,pagoTs}:c)});};
   const desmarcarPagada=id=>{
     const c=(proveedor.compras||[]).find(x=>x.id===id);
     if(c&&c.echeqId){
@@ -11394,8 +11396,179 @@ function Talonarios({talonarios,setTalonarios}){
   </div>;
 }
 
-function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonarios,setTalonarios,movimientosPago,setMovimientosPago}){
-  const[tipo,setTipo]=useState("cobranza");const[entidadId,setEntidadId]=useState("");const[seleccion,setSeleccion]=useState([]);const[fecha,setFecha]=useState(hoyISO());const[medio,setMedio]=useState("Efectivo");const[numeroEcheq,setNumeroEcheq]=useState("");const[bancoEcheq,setBancoEcheq]=useState("");const[emisionEcheq,setEmisionEcheq]=useState(hoyISO());const[pagoEcheq,setPagoEcheq]=useState(hoyISO());const[importeEcheq,setImporteEcheq]=useState("");const[observaciones,setObservaciones]=useState("");
+// ── Cobranzas y órdenes de pago: numeración automática, detalle, edición e impresión ─────────────────
+// Solo se numeran/registran automáticamente los cobros y pagos hechos desde esta versión en adelante (18-nov-2026); los anteriores no se tocan.
+const RECIBOS_DESDE=Date.UTC(2026,10,18,4,45,0);
+const tsDeId=id=>{const m=/^id(\d{13})/.exec(String(id||""));return m?Number(m[1]):0;};
+const ETQ_COMP_COMPRA=(tipo,numero)=>`${tipo==="factura"?"Factura":tipo==="remito"?"Remito":"Compra"}${numero?" "+numero:""}`;
+// Cobros de clientes (cliente.cobros) y pagos a proveedores (filas con pagoId) que todavía no tienen comprobante de talonario
+function pagosSinNumerar(clientes,proveedores,movs){
+  const ya=new Set();(movs||[]).forEach(m=>{[m.id,m.cobroId,m.pagoRef].forEach(x=>{if(x)ya.add(x);});});
+  const out=[];
+  (clientes||[]).forEach(c=>(c.cobros||[]).forEach(cb=>{if(tsDeId(cb.id)>RECIBOS_DESDE&&!ya.has(cb.id))out.push({ts:tsDeId(cb.id),tipo:"cobranza",entidad:c,cobro:cb});}));
+  (proveedores||[]).forEach(pr=>{
+    const g=new Map();
+    [...(pr.compras||[]),...(pr.saldosAnteriores||[])].forEach(r=>{if(r.pagado&&r.pagoId&&(r.pagoTs||0)>RECIBOS_DESDE&&!ya.has(r.pagoId)){if(!g.has(r.pagoId))g.set(r.pagoId,[]);g.get(r.pagoId).push(r);}});
+    g.forEach((rows,pagoId)=>out.push({ts:Math.min(...rows.map(r=>r.pagoTs||0)),tipo:"pago",entidad:pr,pagoId,rows}));
+  });
+  return out.sort((a,b)=>a.ts-b.ts);
+}
+// Marca como anulado el comprobante automático cuyo cobro/pago ya no existe (se deshizo desde la ficha) y lo reactiva si vuelve a existir
+function movsAnuladosActualizados(movs,clientes,proveedores){
+  const vivos=new Set();
+  (clientes||[]).forEach(c=>(c.cobros||[]).forEach(cb=>vivos.add(cb.id)));
+  (proveedores||[]).forEach(pr=>[...(pr.compras||[]),...(pr.saldosAnteriores||[])].forEach(r=>{if(r.pagado&&r.pagoId)vivos.add(r.pagoId);}));
+  let cambio=false;
+  const nuevo=(movs||[]).map(m=>{
+    if(!m.auto)return m;
+    const vivo=vivos.has(m.cobroId||m.pagoRef);
+    if(vivo===!m.anulado)return m;
+    cambio=true;return{...m,anulado:!vivo};
+  });
+  return cambio?nuevo:null;
+}
+function detalleMovPago(mov,{clientes,proveedores,pedidos}){
+  const esCob=mov.tipo==="cobranza";
+  const lista=esCob?(clientes||[]):(proveedores||[]);
+  const entidad=lista.find(x=>x.id===mov.entidadId)||null;
+  let aplic=[],echeqId=null;
+  if(!mov.auto&&Array.isArray(mov.comprobantes)&&mov.comprobantes.length){
+    aplic=mov.comprobantes.map(c=>({desc:`${c.numero?"Comp. "+c.numero+" · ":""}${c.descripcion||""}`.trim()||"Comprobante",monto:Number(c.monto)||0}));
+  }else if(entidad&&esCob&&mov.cobroId){
+    const g=new Map();
+    (entidad.ventas||[]).filter(v=>v.cobroId===mov.cobroId).forEach(v=>{
+      const ped=(pedidos||[]).find(x=>x.id===v.pedidoId);
+      const k=v.remitoNro||v.pedidoId||v.id;
+      const desc=ped?`${tituloComprobante(ped)} ${nroComprobanteDePedido(ped)}`.trim():(v.remitoNro?`Remito ${fmtRemito(v.remitoNro)}`:`Venta del ${fmtDate(v.fecha)}`);
+      const e=g.get(k)||{desc,monto:0};e.monto+=Number(v.monto)||0;g.set(k,e);
+    });
+    const sal=(entidad.saldosAnteriores||[]).filter(x=>x.cobroId===mov.cobroId).map(x=>({desc:`Saldo anterior${x.descripcion?" · "+x.descripcion:""}`,monto:Number(x.monto)||0}));
+    aplic=[...g.values(),...sal];
+  }else if(entidad&&!esCob&&mov.pagoRef){
+    const g=new Map();
+    (entidad.compras||[]).filter(r=>r.pagoId===mov.pagoRef).forEach(r=>{
+      if(r.echeqId)echeqId=r.echeqId;
+      const k=r.comprobanteId||r.id;
+      const e=g.get(k)||{desc:ETQ_COMP_COMPRA(r.tipoComprobante,r.numeroComprobante),monto:0};e.monto+=Number(r.monto)||0;g.set(k,e);
+    });
+    const sal=(entidad.saldosAnteriores||[]).filter(x=>x.pagoId===mov.pagoRef).map(x=>{if(x.echeqId)echeqId=x.echeqId;return{desc:`Saldo anterior${x.descripcion?" · "+x.descripcion:""}`,monto:Number(x.monto)||0};});
+    aplic=[...g.values(),...sal];
+  }
+  if(!aplic.length)aplic=[{desc:"Pago a cuenta",monto:Number(mov.importe)||0}];
+  const saldo=entidad?(esCob?saldoCliente(entidad):saldoProveedor(entidad)):null;
+  return{entidad,aplic,saldo,echeqId};
+}
+function imprimirComprobantePago(mov,det,formato){
+  const esc=t=>String(t==null?"":t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const esCob=mov.tipo==="cobranza";
+  const titulo=esCob?"RECIBO DE COBRANZA":"ORDEN DE PAGO";
+  const nro=mov.comprobanteNumero||"s/n";
+  const ticket=formato==="ticket";
+  const pagina=ticket?"80mm auto":formato==="a5"?"A5":"A4";
+  const margen=ticket?"4mm":formato==="a5"?"10mm":"15mm";
+  const base=ticket?12:formato==="a5"?12:14;
+  const nombre=mov.entidadNombre||(det.entidad&&det.entidad.nombre)||"";
+  const eq=mov.echeq;
+  const filas=det.aplic.map(a=>`<tr><td>${esc(a.desc)}</td><td>${esc(fmtARS(a.monto))}</td></tr>`).join("");
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(titulo+" "+nro)}</title><style>
+@page{size:${pagina};margin:${margen}}*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:${base}px;margin:0}
+.top{display:flex;justify-content:space-between;align-items:${ticket?"flex-start":"center"};${ticket?"flex-direction:column;gap:6px;":""}border-bottom:2px solid #111;padding-bottom:8px}
+.tit{text-align:${ticket?"left":"right"}}.tit b{display:block;font-size:${base+6}px;letter-spacing:.04em}.tit span{font-size:${base}px}
+.fila{display:flex;justify-content:space-between;gap:10px;margin:8px 0}.mut{color:#555}
+.monto{border:2px solid #111;border-radius:6px;padding:8px 12px;margin:14px 0;text-align:center}.monto b{font-size:${base+10}px}
+.texto{line-height:1.5;margin:12px 0}table{width:100%;border-collapse:collapse;margin-top:8px}td,th{padding:4px 2px;border-bottom:1px solid #ddd;text-align:left}td:last-child,th:last-child{text-align:right}
+th{font-size:${base-2}px;color:#555;text-transform:uppercase;letter-spacing:.05em}
+.firmas{display:flex;gap:24px;margin-top:${ticket?36:56}px}.firmas div{flex:1;border-top:1px solid #111;padding-top:4px;text-align:center;font-size:${base-2}px}
+.anul{color:#b00020;font-weight:bold;border:2px solid #b00020;padding:4px 10px;display:inline-block;margin-top:8px}
+</style></head><body>
+<div class="top"><img src="${LOGO_NOMADES}" alt="" style="height:${ticket?38:formato==="a5"?44:54}px;width:auto;display:block"><div class="tit"><b>${esc(titulo)}</b><span>Nº ${esc(nro)}</span></div></div>
+${mov.anulado?`<div class="anul">COMPROBANTE ANULADO</div>`:""}
+<div class="fila"><span><span class="mut">Fecha:</span> <b>${esc(fmtDate(mov.fecha))}</b></span><span><span class="mut">Medio:</span> <b>${esc(mov.medioPago||"Efectivo")}</b></span></div>
+<div class="texto">${esCob?`Recibimos de <b>${esc(nombre)}</b>`:`Abonamos a <b>${esc(nombre)}</b>`} la suma de <b>${esc(montoEnLetras(mov.importe))}</b>${esCob?" en concepto de cobranza":" en concepto de pago"} de los comprobantes detallados.</div>
+<div class="monto"><span class="mut">Importe</span><br><b>${esc(fmtARS(mov.importe))}</b></div>
+<table><tr><th>Comprobantes cancelados</th><th>Importe</th></tr>${filas}</table>
+${eq?`<div class="fila" style="margin-top:12px"><span class="mut">Echeq Nº ${esc(eq.numero)} · ${esc(eq.bancoEmisor||"")} · emisión ${esc(fmtDate(eq.fechaEmision))} · pago ${esc(fmtDate(eq.fechaPago))}</span></div>`:""}
+${mov.observaciones?`<div class="fila"><span class="mut">Observaciones: ${esc(mov.observaciones)}</span></div>`:""}
+${det.saldo!=null?`<table style="margin-top:12px"><tr><td class="mut">Saldo de la cuenta al ${esc(fmtDate(hoyISO()))}</td><td><b>${esc(fmtARS(det.saldo))}</b></td></tr></table>`:""}
+<div class="firmas"><div>Firma</div><div>Aclaración</div>${ticket?"":"<div>DNI / CUIT</div>"}</div>
+</body></html>`;
+  const f=document.createElement("iframe");
+  f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  document.body.appendChild(f);
+  f.onload=()=>{try{f.contentWindow.focus();f.contentWindow.print();}catch(e){alert("No se pudo abrir la impresión: "+e.message);}setTimeout(()=>{try{document.body.removeChild(f);}catch(e){}},60000);};
+  f.srcdoc=html;
+}
+function ComprobantePagoOpciones({mov,det,onClose}){
+  if(!mov||!det)return null;
+  const esCob=mov.tipo==="cobranza";
+  const titulo=esCob?"Recibo de cobranza":"Orden de pago";
+  const texto=`${titulo} ${mov.comprobanteNumero||""} — Distribuidora Nómades\n${mov.entidadNombre}\nFecha: ${fmtDate(mov.fecha)}\nMedio: ${mov.medioPago||"Efectivo"}\nImporte: ${fmtARS(mov.importe)}\n${det.aplic.map(a=>"• "+a.desc+" — "+fmtARS(a.monto)).join("\n")}`;
+  const tel=det.entidad&&det.entidad.telefono;
+  const wa=tel?waLink(tel,texto):null;
+  const tit={fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"center",margin:"14px 0 6px",fontWeight:700};
+  const bt={flex:1,minHeight:46,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:CR,fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,textDecoration:"none"};
+  return(
+    <Modal open={true} onClose={onClose} title={titulo}>
+      <div style={{textAlign:"center"}}>
+        <div style={{width:54,height:54,borderRadius:"50%",border:`3px solid ${GR}`,color:GR,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px",fontSize:28,fontWeight:700}}>✓</div>
+        <div style={{fontSize:20,fontWeight:700,color:CR}}>{titulo} {mov.comprobanteNumero||""}</div>
+        <div style={{fontSize:13,color:MU,marginTop:2}}>{mov.entidadNombre} · {fmtDate(mov.fecha)}</div>
+        <div style={{fontSize:18,fontWeight:700,color:CR,marginTop:8}}>{fmtARS(mov.importe)}</div>
+      </div>
+      <div style={tit}>Imprimir</div>
+      <div style={{display:"flex",gap:8}}>
+        <button style={bt} onClick={()=>imprimirComprobantePago(mov,det,"a5")}>🖨️ A5</button>
+        <button style={bt} onClick={()=>imprimirComprobantePago(mov,det,"a4")}>A4</button>
+        <button style={bt} onClick={()=>imprimirComprobantePago(mov,det,"ticket")}>Ticket</button>
+      </div>
+      <div style={tit}>Compartir</div>
+      <div style={{display:"flex",gap:8}}>
+        {wa?<a style={bt} href={wa} target="_blank" rel="noreferrer">💬 WhatsApp</a>:<button style={{...bt,opacity:.5}} disabled title="La cuenta no tiene teléfono cargado">💬 WhatsApp</button>}
+      </div>
+      <button onClick={onClose} style={{width:"100%",minHeight:46,marginTop:16,borderRadius:10,border:"none",background:G,color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Listo</button>
+    </Modal>
+  );
+}
+function EditarMovPago({mov,det,onClose,onGuardar}){
+  const esCob=mov.tipo==="cobranza";
+  const bloqueaImporte=!mov.auto||!!det.echeqId;
+  const bloqueaMedio=!!det.echeqId;
+  const[f,setF]=useState({fecha:mov.fecha||hoyISO(),medio:mov.medioPago||"Efectivo",importe:String(mov.importe||""),obs:mov.observaciones||"",
+    eqNum:mov.echeq?mov.echeq.numero:"",eqBanco:mov.echeq?mov.echeq.bancoEmisor:"",eqEmi:mov.echeq?mov.echeq.fechaEmision:"",eqPago:mov.echeq?mov.echeq.fechaPago:""});
+  const s=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const medios=["Efectivo","Transferencia","Mercado Pago","Otro"];if(!medios.includes(f.medio))medios.push(f.medio);
+  const imp=Number(f.importe)||0;
+  const ok=f.fecha&&imp>0&&(!mov.echeq||(f.eqNum.trim()&&f.eqBanco.trim()));
+  return(
+    <Modal open={true} onClose={onClose} title={`Editar ${esCob?"cobranza":"orden de pago"} ${mov.comprobanteNumero||""}`}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{fontSize:14,color:MU}}>{esCob?"Cliente":"Proveedor"}: <b style={{color:CR}}>{mov.entidadNombre}</b></div>
+        <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
+        <div><Lbl t="Medio de pago"/><select value={f.medio} onChange={s("medio")} disabled={bloqueaMedio}>{medios.map(m=><option key={m}>{m}</option>)}</select></div>
+        <div><Lbl t="Importe"/><input type="number" inputMode="decimal" value={f.importe} onChange={s("importe")} disabled={bloqueaImporte}/>
+          {bloqueaImporte&&<div style={{fontSize:12,color:MU,marginTop:4}}>{det.echeqId?"Es un pago con ECHEQ: para cambiar el importe deshacé el pago desde la ficha y cargalo de nuevo.":"Este comprobante cubre comprobantes puntuales: para cambiar el importe anulalo desde la cuenta y registralo de nuevo."}</div>}
+          {!bloqueaImporte&&<div style={{fontSize:12,color:MU,marginTop:4}}>Si cambiás el importe, el cobro/pago se vuelve a aplicar a los comprobantes pendientes más antiguos primero.</div>}
+        </div>
+        {mov.echeq&&<div style={{padding:12,borderRadius:12,border:`1px solid ${AM}55`,background:AM+"0d",display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
+          <div><Lbl t="N° de echeq"/><input value={f.eqNum} onChange={s("eqNum")}/></div>
+          <div><Lbl t="Banco emisor"/><input value={f.eqBanco} onChange={s("eqBanco")}/></div>
+          <div><Lbl t="Fecha de emisión"/><input type="date" value={f.eqEmi} onChange={s("eqEmi")}/></div>
+          <div><Lbl t="Fecha de pago"/><input type="date" value={f.eqPago} onChange={s("eqPago")}/></div>
+        </div>}
+        <div><Lbl t="Observaciones"/><textarea rows={2} value={f.obs} onChange={s("obs")}/></div>
+        <div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><div style={{flex:1}}/><Btn variant="green" disabled={!ok} onClick={()=>onGuardar({fecha:f.fecha,medioPago:f.medio,importe:imp,observaciones:f.obs.trim(),echeq:mov.echeq?{...mov.echeq,numero:f.eqNum.trim(),bancoEmisor:f.eqBanco.trim(),fechaEmision:f.eqEmi,fechaPago:f.eqPago}:null})}>Guardar cambios</Btn></div>
+      </div>
+    </Modal>
+  );
+}
+function revertirPagoProveedor(pr,pagoId){
+  const un=r=>r.pagoId===pagoId?{...r,pagado:false,fechaPago:null,pagoId:null,pagoTs:null,cobroId:null,medioPago:undefined}:r;
+  return{...pr,compras:(pr.compras||[]).map(un),saldosAnteriores:revertirFilasDeCobro(pr.saldosAnteriores,pagoId,false).map(r=>r.cobroId===null&&r.pagoId===pagoId?{...r,fechaPago:null,pagoId:null,pagoTs:null}:r)};
+}
+
+function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonarios,setTalonarios,movimientosPago,setMovimientosPago,pedidos,tipoFijo}){
+  const[tipo,setTipo]=useState(tipoFijo||"cobranza");const[qMov,setQMov]=useState("");const[verMov,setVerMov]=useState(null);const[editMov,setEditMov]=useState(null);const[entidadId,setEntidadId]=useState("");const[seleccion,setSeleccion]=useState([]);const[fecha,setFecha]=useState(hoyISO());const[medio,setMedio]=useState("Efectivo");const[numeroEcheq,setNumeroEcheq]=useState("");const[bancoEcheq,setBancoEcheq]=useState("");const[emisionEcheq,setEmisionEcheq]=useState(hoyISO());const[pagoEcheq,setPagoEcheq]=useState(hoyISO());const[importeEcheq,setImporteEcheq]=useState("");const[observaciones,setObservaciones]=useState("");
   const esCobranza=tipo==="cobranza";const entidades=esCobranza?(clientes||[]):(proveedores||[]);const entidad=entidades.find(x=>x.id===entidadId);
   const documentos=useMemo(()=>{if(!entidad)return[];if(esCobranza)return(entidad.ventas||[]).filter(v=>!v.pagado).map(v=>({key:v.id,id:v.id,fecha:v.fecha,numero:v.numeroComprobante||"",descripcion:`Venta · ${v.producto||"Producto"} · ${v.cantidad||0} L`,monto:Number(v.monto)||0}));return agruparCompras(entidad.compras||[]).filter(g=>g.estado!=="pagado").map(g=>({key:g.key,id:g.key,fecha:g.fecha,numero:g.numero||"",descripcion:`${g.tipo||"Compra"}${g.rows.length>1?` · ${g.rows.length} productos`:""}`,monto:g.rows.filter(r=>!r.pagado).reduce((s,r)=>s+(Number(r.monto)||0),0),rowIds:g.rows.filter(r=>!r.pagado).map(r=>r.id)}));},[entidad,esCobranza]);
   const seleccionados=documentos.filter(d=>seleccion.includes(d.key));const total=seleccionados.reduce((s,d)=>s+d.monto,0);
@@ -11406,11 +11579,83 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
     const mov={id:uid(),tipo,entidadId,entidadNombre:entidad.nombre,fecha,medioPago:medio,comprobanteNumero:asignado.numero,comprobantes:seleccionados.map(d=>({id:d.id,numero:d.numero,descripcion:d.descripcion,monto:d.monto})),importe:total,observaciones, ...(medio==="Echeq"?{echeq:{fechaEmision:emisionEcheq,numero:numeroEcheq.trim(),bancoEmisor:bancoEcheq.trim(),fechaPago:pagoEcheq,importe:Number(importeEcheq||total)}}:{})};
     if(esCobranza){setClientes(prev=>prev.map(c=>c.id!==entidadId?c:{...c,ventas:(c.ventas||[]).map(v=>seleccion.includes(v.id)?{...v,pagado:true,fechaCobro:fecha,medioPago:medio,numeroRecibo:asignado.numero,pagoId:mov.id,...(mov.echeq?{echeq:mov.echeq}:{})}:v)}));}
     else {setProveedores(prev=>prev.map(p=>p.id!==entidadId?p:{...p,compras:(p.compras||[]).map(c=>seleccionados.some(d=>(d.rowIds||[]).includes(c.id))?{...c,pagado:true,fechaPago:fecha,medioPago:medio,pagoId:mov.id,...(mov.echeq?{echeq:mov.echeq}:{})}:c)}));}
-    setMovimientosPago(prev=>[mov,...(prev||[])]);setSeleccion([]);setNumeroEcheq("");setBancoEcheq("");setObservaciones("");setImporteEcheq("");alert(`${esCobranza?"Cobranza registrada":"Pago registrado"}${asignado.numero?` · Comprobante ${asignado.numero}`:""}.`);
+    setMovimientosPago(prev=>[mov,...(prev||[])]);setSeleccion([]);setNumeroEcheq("");setBancoEcheq("");setObservaciones("");setImporteEcheq("");setVerMov(mov.id);
+  };
+  const movsVisibles=useMemo(()=>{
+    const t=normTxt(qMov).trim();
+    return(movimientosPago||[]).filter(m=>!tipoFijo||m.tipo===tipoFijo).filter(m=>{
+      if(!t)return true;
+      const base=normTxt(`${m.entidadNombre} ${m.comprobanteNumero||""} ${m.medioPago||""} ${m.observaciones||""} ${fechaBuscable(m.fecha)}`);
+      const imp=String(Math.round(Number(m.importe)||0));
+      return t.split(/\s+/).every(w=>base.includes(w)||(w.replace(/\D/g,"").length>=2&&imp.includes(w.replace(/\D/g,""))));
+    });
+  },[movimientosPago,tipoFijo,qMov]);
+  const movImprimir=(movimientosPago||[]).find(m=>m.id===verMov)||null;
+  const movEditar=(movimientosPago||[]).find(m=>m.id===editMov)||null;
+  const asignarNumero=m=>{
+    const r=consumirTalonario(talonarios,m.tipo==="cobranza"?"Recibo de cobranza":"Orden de pago");
+    if(!r.numero){alert("No hay un talonario activo de este tipo. Activá uno en Talonarios.");return;}
+    setTalonarios(r.talonarios);setMovimientosPago(prev=>(prev||[]).map(x=>x.id===m.id?{...x,comprobanteNumero:r.numero}:x));
+  };
+  // Corrige un cobro/pago ya cargado sin eliminarlo: cambia fecha, medio, observaciones y (si corresponde) el importe, manteniendo el mismo número de comprobante
+  const guardarEdicion=(m,patch)=>{
+    const esCob=m.tipo==="cobranza";
+    let importeFinal=Number(m.importe)||0;
+    if(esCob){
+      const c=(clientes||[]).find(x=>x.id===m.entidadId);
+      if(!c){alert("No se encontró el cliente.");return;}
+      if(m.auto&&m.cobroId){
+        const cb=(c.cobros||[]).find(x=>x.id===m.cobroId);
+        if(!cb){alert("El cobro original ya no existe en la cuenta del cliente.");return;}
+        let nuevo;
+        if(Math.abs(patch.importe-(Number(cb.monto)||0))<0.01){
+          nuevo={...c,cobros:c.cobros.map(x=>x.id===cb.id?{...x,fecha:patch.fecha,medioPago:patch.medioPago,nota:patch.observaciones}:x),
+            ventas:(c.ventas||[]).map(v=>v.cobroId===cb.id?{...v,fechaCobro:patch.fecha,medioPago:patch.medioPago,nota:patch.observaciones||v.nota||""}:v),
+            saldosAnteriores:(c.saldosAnteriores||[]).map(x=>x.cobroId===cb.id?{...x,fechaCobro:patch.fecha,medioPago:patch.medioPago,nota:patch.observaciones||x.nota||""}:x)};
+        }else{
+          nuevo=aplicarCobroACliente(deshacerCobroCliente(c,cb.id),patch.importe,{medioPago:patch.medioPago,nota:patch.observaciones,fecha:patch.fecha,cobroId:cb.id});
+          const cobNuevo=(nuevo.cobros||[]).find(x=>x.id===cb.id);
+          if(!cobNuevo){alert("No se pudo reaplicar el cobro: el cliente no tiene deuda pendiente para ese importe. No se guardó ningún cambio.");return;}
+          importeFinal=Number(cobNuevo.monto)||0;
+          if(importeFinal+0.01<patch.importe)alert(`El importe supera la deuda pendiente: se registró ${fmtARS(importeFinal)}.`);
+        }
+        setClientes(prev=>prev.map(x=>x.id===c.id?nuevo:x));
+      }else{
+        setClientes(prev=>prev.map(x=>x.id!==c.id?x:{...x,ventas:(x.ventas||[]).map(v=>v.pagoId===m.id?{...v,fechaCobro:patch.fecha,medioPago:patch.medioPago,...(patch.echeq?{echeq:patch.echeq}:{})}:v)}));
+        importeFinal=Number(m.importe)||0;
+      }
+    }else{
+      const pr=(proveedores||[]).find(x=>x.id===m.entidadId);
+      if(!pr){alert("No se encontró el proveedor.");return;}
+      if(m.auto&&m.pagoRef){
+        const filas=[...(pr.compras||[]),...(pr.saldosAnteriores||[])].filter(r=>r.pagoId===m.pagoRef);
+        if(!filas.length){alert("El pago original ya no existe en la cuenta del proveedor.");return;}
+        const actual=filas.reduce((a,r)=>a+(Number(r.monto)||0),0);
+        let nuevo;
+        const bloqueaImp=filas.some(r=>r.echeqId);
+        if(bloqueaImp||Math.abs(patch.importe-actual)<0.01){
+          const upd=r=>r.pagoId===m.pagoRef?{...r,fechaPago:patch.fecha,...(bloqueaImp?{}:{medioPago:patch.medioPago}),nota:patch.observaciones||r.nota||""}:r;
+          nuevo={...pr,compras:(pr.compras||[]).map(upd),saldosAnteriores:(pr.saldosAnteriores||[]).map(upd)};
+          importeFinal=actual;
+        }else{
+          nuevo=aplicarPagoAProveedor(revertirPagoProveedor(pr,m.pagoRef),patch.importe,{medioPago:patch.medioPago,nota:patch.observaciones,fecha:patch.fecha,pagoId:m.pagoRef});
+          const aplicadas=[...(nuevo.compras||[]),...(nuevo.saldosAnteriores||[])].filter(r=>r.pagado&&r.pagoId===m.pagoRef);
+          if(!aplicadas.length){alert("No se pudo reaplicar el pago: el proveedor no tiene deuda pendiente para ese importe. No se guardó ningún cambio.");return;}
+          importeFinal=aplicadas.reduce((a,r)=>a+(Number(r.monto)||0),0);
+          if(importeFinal+0.01<patch.importe)alert(`El importe supera la deuda pendiente: se registró ${fmtARS(importeFinal)}.`);
+        }
+        setProveedores(prev=>prev.map(x=>x.id===pr.id?nuevo:x));
+      }else{
+        setProveedores(prev=>prev.map(x=>x.id!==pr.id?x:{...x,compras:(x.compras||[]).map(r=>r.pagoId===m.id?{...r,fechaPago:patch.fecha,medioPago:patch.medioPago,...(patch.echeq?{echeq:patch.echeq}:{})}:r)}));
+        importeFinal=Number(m.importe)||0;
+      }
+    }
+    setMovimientosPago(prev=>(prev||[]).map(x=>x.id!==m.id?x:{...x,fecha:patch.fecha,medioPago:patch.medioPago,observaciones:patch.observaciones,importe:importeFinal,...(patch.echeq?{echeq:patch.echeq}:{}),editadoEn:Date.now()}));
+    setEditMov(null);
   };
   return <div style={{padding:"24px 16px 90px",maxWidth:1120,margin:"0 auto"}}>
-    <div style={{marginBottom:20}}><div className="bebas" style={{fontSize:32,color:CR}}>Pagos y cobranzas</div><div style={{fontSize:14,color:MU,marginTop:4}}>Aplicá un pago o una cobranza a varios comprobantes en una sola operación.</div></div>
-    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button onClick={()=>cambiarTipo("cobranza")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${esCobranza?G:BO}`,background:esCobranza?GLT:CA,color:esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↓ Registrar cobranza</button><button onClick={()=>cambiarTipo("pago")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${!esCobranza?G:BO}`,background:!esCobranza?GLT:CA,color:!esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↑ Registrar pago a proveedor</button></div>
+    <div style={{marginBottom:20}}><div className="bebas" style={{fontSize:32,color:CR}}>{tipoFijo==="cobranza"?"Cobranzas":tipoFijo==="pago"?"Órdenes de pago":"Pagos y cobranzas"}</div><div style={{fontSize:14,color:MU,marginTop:4}}>{tipoFijo==="cobranza"?"Registrá cobranzas a varios comprobantes, y editá o imprimí cada recibo.":tipoFijo==="pago"?"Registrá órdenes de pago a varios comprobantes, y editá o imprimí cada una.":"Aplicá un pago o una cobranza a varios comprobantes en una sola operación."}</div></div>
+    {!tipoFijo&&<div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button onClick={()=>cambiarTipo("cobranza")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${esCobranza?G:BO}`,background:esCobranza?GLT:CA,color:esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↓ Registrar cobranza</button><button onClick={()=>cambiarTipo("pago")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${!esCobranza?G:BO}`,background:!esCobranza?GLT:CA,color:!esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↑ Registrar pago a proveedor</button></div>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16,alignItems:"start"}}>
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>1. Seleccionar {esCobranza?"cliente":"proveedor"}</div><div style={{marginBottom:14}}><Lbl t={esCobranza?"Cliente":"Proveedor"}/><select value={entidadId} onChange={e=>{setEntidadId(e.target.value);resetSeleccion();}}><option value="">Elegí una opción…</option>{entidades.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
       {!entidad?<div style={{padding:18,borderRadius:12,background:BG,color:MU,fontSize:14}}>Seleccioná un {esCobranza?"cliente":"proveedor"} para ver los comprobantes pendientes.</div>:documentos.length===0?<div style={{padding:18,borderRadius:12,background:GR+"12",color:GR,fontSize:14,fontWeight:700}}>No hay comprobantes pendientes para esta cuenta.</div>:<><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:13,color:MU}}>{documentos.length} comprobantes pendientes</span><button onClick={()=>setSeleccion(seleccion.length===documentos.length?[]:documentos.map(d=>d.key))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>{seleccion.length===documentos.length?"Quitar todos":"Seleccionar todos"}</button></div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{documentos.map(d=><label key={d.key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:12,borderRadius:12,border:`1px solid ${seleccion.includes(d.key)?G:BO}`,background:seleccion.includes(d.key)?GLT:BG,cursor:"pointer"}}><input type="checkbox" checked={seleccion.includes(d.key)} onChange={e=>setSeleccion(prev=>e.target.checked?[...prev,d.key]:prev.filter(k=>k!==d.key))} style={{width:18,height:18,marginTop:2,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion} · {fmtDate(d.fecha)}</div></div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></label>)}</div></>}
@@ -11420,7 +11665,29 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
       <div style={{marginBottom:14}}><Lbl t="Observaciones"/><textarea rows={2} value={observaciones} onChange={e=>setObservaciones(e.target.value)} placeholder="Referencia, operación bancaria…"/></div><div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><div style={{fontSize:12,color:MU,fontWeight:800,letterSpacing:".07em"}}>TOTAL DE COMPROBANTES SELECCIONADOS</div><div className="bebas" style={{fontSize:30,color:CR,marginTop:3}}>{fmtARS(total)}</div><div style={{fontSize:12,color:MU,marginTop:4}}>{seleccionados.length} comprobante(s) · {medio}</div></div><Btn onClick={registrar} disabled={!entidad||!seleccionados.length||total<=0} >{esCobranza?"Registrar cobranza":"Registrar pago"}</Btn>
       </div>
     </div>
-    <div style={{marginTop:22}}><div style={{fontSize:18,fontWeight:800,color:CR,marginBottom:10}}>Movimientos recientes</div>{!(movimientosPago||[]).length?<div style={{padding:20,textAlign:"center",color:MU,background:CA,border:`1px solid ${BO}`,borderRadius:14}}>Todavía no hay pagos ni cobranzas registrados.</div>:<div style={{display:"flex",flexDirection:"column",gap:8}}>{(movimientosPago||[]).slice(0,30).map(m=><div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:14,flexWrap:"wrap"}}><div><div style={{fontWeight:800,color:CR}}>{m.tipo==="cobranza"?"Cobranza de":"Pago a"} {m.entidadNombre}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{fmtDate(m.fecha)} · {m.medioPago}{m.comprobanteNumero?` · Comp. ${m.comprobanteNumero}`:""}</div>{m.echeq&&<div style={{fontSize:12,color:MU,marginTop:3}}>Echeq {m.echeq.numero} · {m.echeq.bancoEmisor} · vence {fmtDate(m.echeq.fechaPago)}</div>}</div><div style={{fontSize:16,fontWeight:900,color:m.tipo==="cobranza"?GR:CR}}>{fmtARS(m.importe)}</div></div>)}</div>}</div>
+    <div style={{marginTop:22}}>
+      <div style={{fontSize:18,fontWeight:800,color:CR,marginBottom:10}}>{tipoFijo==="cobranza"?"Cobranzas registradas":tipoFijo==="pago"?"Órdenes de pago registradas":"Movimientos recientes"}</div>
+      {movsVisibles.length>0||qMov?<input value={qMov} onChange={e=>setQMov(e.target.value)} placeholder="Buscar por nombre, número, fecha o importe..." style={{marginBottom:10}}/>:null}
+      {!movsVisibles.length?<div style={{padding:20,textAlign:"center",color:MU,background:CA,border:`1px solid ${BO}`,borderRadius:14}}>{qMov?"Ningún comprobante coincide con la búsqueda.":(tipoFijo==="cobranza"?"Todavía no hay cobranzas registradas.":tipoFijo==="pago"?"Todavía no hay órdenes de pago registradas.":"Todavía no hay pagos ni cobranzas registrados.")}</div>:
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>{movsVisibles.slice(0,60).map(m=><div key={m.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:14,opacity:m.anulado?.55:1}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:800,color:CR,textDecoration:m.anulado?"line-through":"none"}}>{m.tipo==="cobranza"?"Cobranza de":"Pago a"} {m.entidadNombre}</div>
+            <div style={{fontSize:12,color:MU,marginTop:3}}>{fmtDate(m.fecha)} · {m.medioPago}{m.comprobanteNumero?` · ${m.tipo==="cobranza"?"Recibo":"OP"} ${m.comprobanteNumero}`:" · sin número"}{m.anulado?" · ANULADO (se deshizo desde la cuenta)":""}</div>
+            {m.echeq&&<div style={{fontSize:12,color:MU,marginTop:3}}>Echeq {m.echeq.numero} · {m.echeq.bancoEmisor} · vence {fmtDate(m.echeq.fechaPago)}</div>}
+            {m.observaciones&&<div style={{fontSize:12,color:MU,marginTop:3}}>{m.observaciones}</div>}
+          </div>
+          <div style={{fontSize:16,fontWeight:900,color:m.tipo==="cobranza"?GR:CR,whiteSpace:"nowrap"}}>{fmtARS(m.importe)}</div>
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+          <Btn small variant="ghost" onClick={()=>setVerMov(m.id)}>🖨️ Imprimir</Btn>
+          {!m.anulado&&<Btn small variant="ghost" onClick={()=>setEditMov(m.id)}>✏️ Editar</Btn>}
+          {!m.comprobanteNumero&&!m.anulado&&<Btn small variant="ghost" onClick={()=>asignarNumero(m)}>Asignar número</Btn>}
+        </div>
+      </div>)}</div>}
+    </div>
+    {movImprimir&&<ComprobantePagoOpciones mov={movImprimir} det={detalleMovPago(movImprimir,{clientes,proveedores,pedidos})} onClose={()=>setVerMov(null)}/>}
+    {movEditar&&<EditarMovPago mov={movEditar} det={detalleMovPago(movEditar,{clientes,proveedores,pedidos})} onClose={()=>setEditMov(null)} onGuardar={patch=>guardarEdicion(movEditar,patch)}/>}
   </div>;
 }
 
@@ -11479,6 +11746,8 @@ const TABS=[
   {key:"proveedores",label:"Proveedores",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>},
   {key:"compras",label:"Compras",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>},
   {key:"rentabilidad",label:"Rentabilidad",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="8" y1="16" x2="16" y2="8"/><circle cx="8.5" cy="8.5" r="0.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="0.5" fill="currentColor"/></svg>},
+  {key:"cobranzas",label:"Cobranzas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M7 15h4"/></svg>},
+  {key:"ordenespago",label:"Órdenes de pago",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M7 15h4"/></svg>},
   {key:"pagoscobranzas",label:"Pagos y cobranzas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M7 15h4"/></svg>},
   {key:"reporteiva",label:"IVA compras y ventas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 19V5M4 19h17"/><path d="m7 15 4-5 3 2 5-7"/><circle cx="19" cy="5" r="1"/></svg>},
   {key:"talonarios",label:"Talonarios",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>},
@@ -11760,6 +12029,28 @@ function App(){
     setPedidos(r.pedidos);
     setClientes(r.clientes);
   },[syncStatus,pedidos,clientes]);
+
+  // Cada cobro de cliente y cada pago a proveedor hecho desde las fichas (parcial o total, rápido o con "Registrar pago")
+  // toma su número del talonario activo y queda registrado en Cobranzas / Órdenes de pago, donde se puede editar e imprimir.
+  const numeradosRef=React.useRef(new Set());
+  useEffect(()=>{
+    if(syncStatus!=="synced")return;
+    const pend=pagosSinNumerar(clientes,proveedores,movimientosPago).filter(it=>!numeradosRef.current.has(it.cobro?it.cobro.id:it.pagoId));
+    const anul=movsAnuladosActualizados(movimientosPago,clientes,proveedores);
+    if(!pend.length){if(anul)setMovimientosPago(anul);return;}
+    let tal=talonarios;const nuevos=[];
+    pend.forEach(it=>{
+      const cob=it.tipo==="cobranza";
+      const r=consumirTalonario(tal,cob?"Recibo de cobranza":"Orden de pago");tal=r.talonarios;
+      numeradosRef.current.add(cob?it.cobro.id:it.pagoId);
+      const r0=cob?null:it.rows[0];
+      nuevos.push(cob
+        ?{id:uid(),tipo:"cobranza",auto:true,cobroId:it.cobro.id,entidadId:it.entidad.id,entidadNombre:it.entidad.nombre,fecha:it.cobro.fecha,medioPago:it.cobro.medioPago||"Efectivo",comprobanteNumero:r.numero,importe:Number(it.cobro.monto)||0,observaciones:it.cobro.nota||"",creadoEn:Date.now()}
+        :{id:uid(),tipo:"pago",auto:true,pagoRef:it.pagoId,entidadId:it.entidad.id,entidadNombre:it.entidad.nombre,fecha:r0.fechaPago||hoyISO(),medioPago:r0.medioPago||"Efectivo",comprobanteNumero:r.numero,importe:it.rows.reduce((a,x)=>a+(Number(x.monto)||0),0),observaciones:r0.nota||"",creadoEn:Date.now()});
+    });
+    if(tal!==talonarios)setTalonarios(tal);
+    setMovimientosPago(prev=>{const base=movsAnuladosActualizados(prev,clientes,proveedores)||prev||[];return[...nuevos.reverse(),...base];});
+  },[syncStatus,clientes,proveedores,movimientosPago]);
  
   const convertir=p=>{
     setClientes(prev=>[...prev,{id:uid(),nombre:p.nombre,rubro:p.rubro,zona:p.zona,direccion:p.direccion,telefono:p.telefono,notas:p.notas,agenda:[],historial:[],ventas:[]}]);
@@ -11784,8 +12075,8 @@ function App(){
           </div>
           <nav style={{padding:"12px 10px",display:"flex",flexDirection:"column",gap:6,flex:1,overflowY:"auto"}}>
             {TABS.filter(t=>t.key==="inicio").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",borderRadius:10,fontSize:16,fontWeight:700,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label}</button>)}
-            {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cuentascorrientes","ventas"])}
-            {renderGrupoMenu("compras","COMPRAS",["proveedores","compras"])}
+            {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cuentascorrientes","cobranzas","ventas"])}
+            {renderGrupoMenu("compras","COMPRAS",["proveedores","compras","ordenespago"])}
             {renderGrupoMenu("inventario","INVENTARIO",["productos","stock"])}
             {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","sueldos","personal","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
             {renderGrupoMenu("herramientas","HERRAMIENTAS",["maps","difusion","speeches","notas","asistente"])}
@@ -11821,7 +12112,9 @@ function App(){
           {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds} impuestos={impuestos}/>}
           {tab==="compras"&&<Compras proveedores={proveedores} prods={prods}/>}
           {tab==="rentabilidad"&&<Rentabilidad clientes={clientes} proveedores={proveedores} prods={prods}/>}
-          {tab==="pagoscobranzas"&&<PagosCobranzas clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="pagoscobranzas"&&<PagosCobranzas pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="cobranzas"&&<PagosCobranzas tipoFijo="cobranza" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="ordenespago"&&<PagosCobranzas tipoFijo="pago" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
           {tab==="talonarios"&&<Talonarios talonarios={talonarios} setTalonarios={setTalonarios}/> }
           {tab==="reporteiva"&&<ReporteIVA clientes={clientes} proveedores={proveedores}/>}
           {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos} categoriasGasto={categoriasGasto} setCategoriasGasto={setCategoriasGasto} getBackup={getBackup} aplicarBackup={aplicarBackup}/>}
