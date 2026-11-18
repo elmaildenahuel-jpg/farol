@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="18-nov-2026 · 16:50";
+const APP_BUILD="18-nov-2026 · 17:30";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -11467,6 +11467,18 @@ function pagosSinNumerar(clientes,proveedores,movs){
   });
   return out.sort((a,b)=>a.ts-b.ts);
 }
+// Pagos/cobros hechos ANTES del sistema de comprobantes: no están en el listado. Se pueden traer (sin número) para imprimirlos o editarlos.
+function pagosAnterioresSinRegistrar(clientes,proveedores,movs){
+  const ya=new Set();(movs||[]).forEach(m=>{[m.id,m.cobroId,m.pagoRef].forEach(x=>{if(x)ya.add(x);});});
+  const out=[];
+  (clientes||[]).forEach(c=>(c.cobros||[]).forEach(cb=>{if(tsDeId(cb.id)<=RECIBOS_DESDE&&!ya.has(cb.id))out.push({tipo:"cobranza",entidad:c,cobro:cb});}));
+  (proveedores||[]).forEach(pr=>{
+    const g=new Map();
+    [...(pr.compras||[]),...(pr.saldosAnteriores||[])].forEach(r=>{if(r.pagado&&!r.pagoId&&!(r.cobroId&&ya.has(r.cobroId))){const k=[r.fechaPago||r.fecha||"",r.medioPago||"",r.nota||"",r.echeqId||""].join("|");if(!g.has(k))g.set(k,[]);g.get(k).push(r);}});
+    g.forEach(rows=>out.push({tipo:"pago",entidad:pr,rows}));
+  });
+  return out;
+}
 // Marca como anulado el comprobante automático cuyo cobro/pago ya no existe (se deshizo desde la ficha) y lo reactiva si vuelve a existir
 function movsAnuladosActualizados(movs,clientes,proveedores){
   const vivos=new Set();
@@ -11646,6 +11658,26 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
   },[movimientosPago,tipoFijo,qMov]);
   const movImprimir=(movimientosPago||[]).find(m=>m.id===verMov)||null;
   const movEditar=(movimientosPago||[]).find(m=>m.id===editMov)||null;
+  const anteriores=useMemo(()=>pagosAnterioresSinRegistrar(clientes,proveedores,movimientosPago).filter(it=>it.tipo===tipo),[clientes,proveedores,movimientosPago,tipo]);
+  const traerAnteriores=()=>{
+    if(!anteriores.length)return;
+    if(!confirm(`Se van a traer ${anteriores.length} ${esCobranza?"cobranza(s)":"pago(s)"} anteriores al listado, sin número de comprobante (después podés asignarlo uno por uno). No se modifica ningún saldo. ¿Seguir?`))return;
+    const nuevos=[];const sello=new Map();
+    anteriores.forEach(it=>{
+      if(it.tipo==="cobranza"){
+        nuevos.push({id:uid(),tipo:"cobranza",auto:true,cobroId:it.cobro.id,entidadId:it.entidad.id,entidadNombre:it.entidad.nombre,fecha:it.cobro.fecha||hoyISO(),medioPago:it.cobro.medioPago||"Efectivo",comprobanteNumero:"",importe:Number(it.cobro.monto)||0,observaciones:it.cobro.nota||"",creadoEn:tsDeId(it.cobro.id)||Date.now()});
+      }else{
+        const pagoId=uid(),r0=it.rows[0],ts=Date.parse((r0.fechaPago||r0.fecha||"")+"T12:00:00")||1;
+        sello.set(it.entidad.id,[...(sello.get(it.entidad.id)||[]),{rows:new Set(it.rows),pagoId,ts}]);
+        nuevos.push({id:uid(),tipo:"pago",auto:true,pagoRef:pagoId,entidadId:it.entidad.id,entidadNombre:it.entidad.nombre,fecha:r0.fechaPago||r0.fecha||hoyISO(),medioPago:r0.medioPago||"Efectivo",comprobanteNumero:"",importe:it.rows.reduce((a,x)=>a+(Number(x.monto)||0),0),observaciones:r0.nota||"",creadoEn:ts});
+      }
+    });
+    if(sello.size){
+      const marca=(pr,arr)=>(arr||[]).map(r=>{for(const g of (sello.get(pr.id)||[]))if(g.rows.has(r))return{...r,pagoId:g.pagoId,pagoTs:g.ts};return r;});
+      setProveedores(prev=>prev.map(pr=>sello.has(pr.id)?{...pr,compras:marca(pr,pr.compras),saldosAnteriores:marca(pr,pr.saldosAnteriores)}:pr));
+    }
+    setMovimientosPago(prev=>[...nuevos,...(prev||[])]);
+  };
   const asignarNumero=m=>{
     const r=consumirTalonario(talonarios,m.tipo==="cobranza"?"Recibo de cobranza":"Orden de pago");
     if(!r.numero){alert("No hay un talonario activo de este tipo. Activá uno en Talonarios.");return;}
@@ -11721,6 +11753,11 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
     </div>
     <div style={{marginTop:22}}>
       <div style={{fontSize:18,fontWeight:800,color:CR,marginBottom:10}}>{tipoFijo==="cobranza"?"Cobranzas registradas":tipoFijo==="pago"?"Órdenes de pago registradas":"Movimientos recientes"}</div>
+      {anteriores.length>0&&<div style={{background:CA,border:`1px solid ${AM}`,borderRadius:12,padding:14,marginBottom:10}}>
+        <div style={{fontSize:14,fontWeight:700,color:CR}}>Hay {anteriores.length} {esCobranza?"cobranza(s)":"pago(s)"} anteriores que no figuran en este listado</div>
+        <div style={{fontSize:12,color:MU,margin:"4px 0 10px",lineHeight:1.5}}>Son los que se cargaron antes de esta mejora. Traelos para poder imprimirlos o editarlos (quedan sin número; podés asignárselo uno por uno).</div>
+        <Btn small onClick={traerAnteriores}>Traer al listado</Btn>
+      </div>}
       {movsVisibles.length>0||qMov?<input value={qMov} onChange={e=>setQMov(e.target.value)} placeholder="Buscar por nombre, número, fecha o importe..." style={{marginBottom:10}}/>:null}
       {!movsVisibles.length?<div style={{padding:20,textAlign:"center",color:MU,background:CA,border:`1px solid ${BO}`,borderRadius:14}}>{qMov?"Ningún comprobante coincide con la búsqueda.":(tipoFijo==="cobranza"?"Todavía no hay cobranzas registradas.":tipoFijo==="pago"?"Todavía no hay órdenes de pago registradas.":"Todavía no hay pagos ni cobranzas registrados.")}</div>:
       <div style={{display:"flex",flexDirection:"column",gap:8}}>{movsVisibles.slice(0,60).map(m=><div key={m.id} style={{background:CA,border:`1px solid ${BO}`,borderRadius:12,padding:14,opacity:m.anulado?.55:1}}>
