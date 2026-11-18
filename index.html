@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="18-nov-2026 · 02:30";
+const APP_BUILD="18-nov-2026 · 16:50";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -4960,6 +4960,49 @@ function crearXlsx(hojas){
     ...hojas.map((h,i)=>({nombre:`xl/worksheets/sheet${i+1}.xml`,contenido:hojaXml(h)}))
   ];
   return zipSinComprimir(archivos);
+}
+// Backup legible: un solo Excel con una hoja por módulo (para leer/archivar; para restaurar la app se usa el JSON)
+function construirXlsxBackup(d){
+  const prods=d.prods||[],pedidos=d.pedidos||[],clientes=d.clientes||[],provs=d.proveedores||[];
+  const N=v=>Number(v)||0,H=arr=>arr.map(v=>({v,s:"h"}));
+  const hojas=[];
+  const seguro=(nombre,anchos,fn)=>{try{const filas=fn();hojas.push({nombre,anchos,filas});}catch(e){hojas.push({nombre,anchos:[60],filas:[["No se pudo armar esta hoja: "+(e&&e.message||e)]]});}};
+  const nomCli=id=>{const c=clientes.find(x=>x.id===id);return c?c.nombre:"";};
+  const nomProd=id=>{const x=prods.find(y=>y.id===id);return x?nombreProdEnvase(x):(id||"");};
+  const deudaCli=clientes.reduce((a,c)=>a+Math.max(0,saldoCliente(c)),0),deudaProv=provs.reduce((a,x)=>a+Math.max(0,saldoProveedor(x)),0);
+  seguro("Resumen",[34,18],()=>[
+    [{v:"Backup legible — Distribuidora Nómades",s:"t"}],
+    ["Generado el "+new Date().toLocaleString("es-AR")],
+    ["Este archivo es para leer y archivar. Para restaurar la app usá el backup JSON."],
+    [],
+    [{v:"Concepto",s:"h"},{v:"Cantidad / importe",s:"h"}],
+    ["Clientes",clientes.length],["Deuda total de clientes",{v:Math.round(deudaCli),s:"$b"}],
+    ["Proveedores",provs.length],["Deuda total con proveedores",{v:Math.round(deudaProv),s:"$b"}],
+    ["Pedidos",pedidos.length],["Productos",prods.length],
+    ["Cobranzas y órdenes de pago registradas",(d.movimientosPago||[]).length],["Gastos",(d.gastos||[]).length]
+  ]);
+  seguro("Clientes",[28,16,16,28,16,16,40],()=>[H(["Cliente","Rubro","Zona","Dirección","Teléfono","Saldo pendiente","Notas"]),...clientes.map(c=>[c.nombre,c.rubro||"",c.zona||"",c.direccion||"",c.telefono||"",{v:Math.round(saldoCliente(c)),s:"$"},c.notas||""])]);
+  seguro("Cta cte clientes",[26,12,28,60,14,14,14,14],()=>{
+    const f=[H(["Cliente","Fecha","Concepto / comprobante","Detalle","Estado","Cargo","Pago","Saldo"])];
+    clientes.forEach(c=>{try{filasExportCliente(c,prods,pedidos).forEach(r=>f.push([c.nombre,{v:r.fecha,s:"f"},r.concepto,r.detalle,r.estado,r.cargo?{v:r.cargo,s:"$"}:"",r.pago?{v:r.pago,s:"$"}:"",{v:r.saldo,s:"$"}]));}catch(e){f.push([c.nombre,"","(no se pudo leer)"]);}});
+    return f;
+  });
+  seguro("Proveedores",[28,16,16,28,16,16,40],()=>[H(["Proveedor","Rubro","CUIT","Dirección","Teléfono","Saldo pendiente","Notas"]),...provs.map(x=>[x.nombre,x.rubro||"",x.cuit||"",x.direccion||"",x.telefono||"",{v:Math.round(saldoProveedor(x)),s:"$"},x.notas||""])]);
+  seguro("Cta cte proveedores",[26,12,28,60,14,14,14,14],()=>{
+    const f=[H(["Proveedor","Fecha","Concepto / comprobante","Detalle","Estado","Cargo","Pago","Saldo"])];
+    provs.forEach(x=>{try{filasExportProveedor(x,prods).forEach(r=>f.push([x.nombre,{v:r.fecha,s:"f"},r.concepto,r.detalle,r.estado,r.cargo?{v:r.cargo,s:"$"}:"",r.pago?{v:r.pago,s:"$"}:"",{v:r.saldo,s:"$"}]));}catch(e){f.push([x.nombre,"","(no se pudo leer)"]);}});
+    return f;
+  });
+  seguro("Cobranzas y pagos",[12,16,28,16,16,16,40,12],()=>[H(["Fecha","Tipo","Cliente / proveedor","Nº comprobante","Medio de pago","Importe","Observaciones","Estado"]),
+    ...[...(d.movimientosPago||[])].sort((a,b)=>String(a.fecha||"").localeCompare(String(b.fecha||""))).map(m=>[{v:m.fecha||"",s:"f"},m.tipo==="cobranza"?"Cobranza":"Orden de pago",m.entidadNombre||"",m.comprobanteNumero||"",m.medioPago||"",{v:N(m.importe),s:"$"},m.observaciones||"",m.anulado?"ANULADO":""])]);
+  seguro("Pedidos",[12,10,26,12,14,60,16],()=>[H(["Fecha entrega","Remito","Cliente","Estado","Comprobante","Detalle","Total"]),
+    ...[...pedidos].sort((a,b)=>String(a.fechaEntrega||"").localeCompare(String(b.fechaEntrega||""))).map(o=>[{v:o.fechaEntrega||"",s:"f"},fmtRemito(o.remitoNro),nomCli(o.clienteId),o.estado||"",o.tipoComprobante==="factura"?("Factura "+(o.numeroFactura||"")).trim():"Remito",
+      [...(o.lineas||[]).map(l=>`${nomProd(l.producto)} ${q1(l.cantidad)}`),...(o.servicios||[]).map(sv=>`${sv.descripcion||sv.nombre||"Servicio"}`)].join(", "),{v:N(o.montoTotal),s:"$"}])]);
+  seguro("Productos",[34,14],()=>[H(["Producto","Precio lista"]),...prods.map(x=>[nombreProdEnvase(x),{v:N(x.precio),s:"$"}])]);
+  seguro("Gastos",[12,18,16,50,16],()=>[H(["Fecha","Categoría","Tipo","Descripción","Importe"]),...(d.gastos||[]).map(g=>[{v:g.fecha||"",s:"f"},g.categoria||"",g.tipo||"",g.descripcion||"",{v:N(g.monto),s:"$"}])]);
+  const sue=(d.config&&d.config.sueldos)||[];
+  seguro("Sueldos y honorarios",[12,26,14,40,16],()=>{const f=[H(["Fecha","Persona","Tipo","Concepto","Importe"])];sue.forEach(per=>(per.movs||[]).forEach(m=>f.push([{v:m.fecha||"",s:"f"},per.nombre||"",m.tipo==="pago"?"Pago":"Devengado",m.concepto||"",{v:N(m.monto),s:"$"}])));return f;});
+  return crearXlsx(hojas);
 }
 // Entrega un archivo: menú de compartir del teléfono si existe; si no, lo descarga (o abre el PDF).
 async function entregarArchivo(blob,nombre,mime,titulo){
@@ -10270,6 +10313,15 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
     try{await bkGuardar(data,"Manual");}catch(e){}
   };
  
+  const[armandoXlsx,setArmandoXlsx]=useState(false);
+  const exportarExcelBackup=async()=>{
+    setArmandoXlsx(true);
+    try{
+      const blob=construirXlsxBackup(getBackup());
+      await entregarArchivo(blob,`backup_legible_nomades_${hoyISO()}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Backup legible Distribuidora Nómades");
+    }catch(e){alert("No se pudo generar el Excel: "+(e&&e.message||e));}
+    setArmandoXlsx(false);
+  };
   const fileInputRef=React.useRef(null);
   const[restaurando,setRestaurando]=useState(false);
   const restaurarBackup=e=>{
@@ -10414,6 +10466,8 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
               </button>
               <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={restaurarBackup} style={{display:"none"}}/>
             </div>
+            <button onClick={exportarExcelBackup} disabled={armandoXlsx} style={{width:"100%",marginTop:8,padding:"10px 14px",borderRadius:8,background:"#1D6F42",color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",opacity:armandoXlsx?0.6:1}}>{armandoXlsx?"Generando…":"📊 Backup legible (Excel)"}</button>
+            <div style={{fontSize:12,color:MU,marginTop:6,lineHeight:1.5}}>El Excel trae una hoja por tema (clientes, cuentas corrientes, proveedores, cobranzas y pagos, pedidos, productos, gastos y sueldos). Sirve para leer y archivar; para restaurar la app usá el backup JSON.</div>
             <div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.5}}>💡 "Descargar backup" abre el menú de tu teléfono: elegí Drive o WhatsApp para guardarlo fuera de la app. Tus datos además se sincronizan en la nube.</div>
           </div>
           <SaludDatos getBackup={getBackup}/>
