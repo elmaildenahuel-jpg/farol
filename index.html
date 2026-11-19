@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="19-nov-2026 · 14:00";
+const APP_BUILD="19-nov-2026 · 18:30";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -588,7 +588,7 @@ const initSpeeches=[
 ];
  
 // ── Helpers ───────────────────────────────────────────────────────
-const fmtARS=n=>n.toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0});
+const fmtARS=n=>(Number(n)||0).toLocaleString("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtDate=s=>new Date(s+"T00:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"});
 const fmtDateCorta=s=>{const d=new Date(s+"T00:00:00");return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;};
 const fmtDateTime=iso=>{
@@ -3241,7 +3241,7 @@ function marcasDeProveedor(p){
   if(Array.isArray(p.marcas))return p.marcas.filter(Boolean);
   return String(p.marca||"").split(",").map(x=>x.trim()).filter(Boolean);
 }
-const fmtARS2=n=>(Number(n)||0).toLocaleString("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2});
+const fmtARS2=fmtARS;
 const nuevaLineaCompra=()=>({id:uid(),rowId:null,producto:"",cantidad:"",precio:"",descTipo:"pct",descValor:""});
 const ivaProductoPct=p=>((p?.ivaCondicion||"gravado")==="gravado"?(p?.ivaPct==null||p?.ivaPct===""?21:Number(p.ivaPct)):0);
 // Neto de una línea = cantidad × precio unitario − descuento (descTipo "pct" = porcentaje, "monto" = importe en ARS)
@@ -3684,7 +3684,7 @@ function PanelCobro({cliente,onUpdate,onDone}){
         <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
         <div style={{display:"flex",gap:6,marginTop:6}}>
           <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
-          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo/2)):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo/2))})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo*50)/100)})</button>
         </div>
       </div>
       <div style={{marginBottom:8}}>
@@ -3730,15 +3730,16 @@ function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimiento
   const[abierto,setAbierto]=useState(true);
   const todos=useMemo(()=>[
     ...chequesDeProveedores(proveedores).map(c=>({...c,origen:"prov"})),
-    ...(movimientosPago||[]).filter(m=>m.tipo==="pago"&&m.echeq&&m.echeq.fechaPago).map(m=>({id:m.id,origen:"mov",proveedorNombre:m.entidadNombre,monto:Number(m.echeq.importe)||Number(m.importe)||0,banco:m.echeq.bancoEmisor,numero:m.echeq.numero,fechaPago:m.echeq.fechaPago,estado:m.echeq.estado||"emitido"})),
+    ...(movimientosPago||[]).filter(m=>(m.tipo==="pago"||m.tipo==="cobranza")&&m.echeq&&m.echeq.fechaPago).map(m=>({id:m.id,origen:"mov",cobro:m.tipo==="cobranza",proveedorNombre:m.entidadNombre,monto:Number(m.echeq.importe)||Number(m.importe)||0,banco:m.echeq.bancoEmisor,numero:m.echeq.numero,fechaPago:m.echeq.fechaPago,estado:m.echeq.estado||"emitido"})),
   ],[proveedores,movimientosPago]);
   const aCubrir=todos.filter(c=>c.estado!=="debitado"&&c.estado!=="anulado");
   if(todos.length===0)return null;
-  const total=aCubrir.reduce((s,c)=>s+(Number(c.monto)||0),0);
-  const vencidos=aCubrir.filter(c=>c.fechaPago<hoy);
-  const proximos=aCubrir.filter(c=>c.fechaPago>=hoy).sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago));
+  const aPagar=aCubrir.filter(c=>!c.cobro),aCobrar=aCubrir.filter(c=>c.cobro);
+  const total=aPagar.reduce((s,c)=>s+(Number(c.monto)||0),0);
+  const vencidos=aPagar.filter(c=>c.fechaPago<hoy);
+  const proximos=aPagar.filter(c=>c.fechaPago>=hoy).sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago));
   const porDia={};
-  aCubrir.forEach(c=>{const o=porDia[c.fechaPago]=porDia[c.fechaPago]||{total:0,items:[]};o.total+=Number(c.monto)||0;o.items.push(c);});
+  aCubrir.forEach(c=>{const o=porDia[c.fechaPago]=porDia[c.fechaPago]||{total:0,cobrar:0,items:[]};if(c.cobro)o.cobrar+=Number(c.monto)||0;else o.total+=Number(c.monto)||0;o.items.push(c);});
   const resumenDias=Object.keys(porDia).sort();
   const cambiarEstado=(c,estado)=>{
     if(c.origen==="mov"){setMovimientosPago&&setMovimientosPago(prev=>(prev||[]).map(m=>m.id===c.id?{...m,echeq:{...m.echeq,estado}}:m));return;}
@@ -3752,19 +3753,19 @@ function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimiento
   const diasMes=new Date(y,m,0).getDate();
   const celdas=[];for(let i=0;i<offset;i++)celdas.push(null);for(let d=1;d<=diasMes;d++)celdas.push(`${mes}-${String(d).padStart(2,"0")}`);
   const mover=d=>{const dt=new Date(y,m-1+d,1);setMes(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`);setDiaSel(null);};
-  const totalMes=aCubrir.filter(c=>c.fechaPago.slice(0,7)===mes).reduce((s,c)=>s+(Number(c.monto)||0),0);
+  const totalMes=aPagar.filter(c=>c.fechaPago.slice(0,7)===mes).reduce((s,c)=>s+(Number(c.monto)||0),0);
   const lista=diaSel?(porDia[diaSel]?porDia[diaSel].items:[]):[];
   const fila=c=>(
     <div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderTop:`1px solid ${BO}`,fontSize:13}}>
       <div style={{minWidth:0}}>
-        <div style={{color:CR,fontWeight:700}}>{c.proveedorNombre}</div>
+        <div style={{color:CR,fontWeight:700}}>{c.cobro?"💰 A cobrar de ":""}{c.proveedorNombre}</div>
         <div style={{fontSize:12,color:MU}}>{c.banco||"Banco s/d"}{c.numero?` · Nº ${c.numero}`:""} · vence {fmtDateCorta(c.fechaPago)}</div>
         <div style={{display:"flex",gap:10,marginTop:3}}>
-          <button onClick={()=>cambiarEstado(c,"debitado")} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",padding:0,cursor:"pointer"}}>✓ Marcar debitado</button>
+          <button onClick={()=>cambiarEstado(c,"debitado")} style={{fontSize:12,fontWeight:700,color:GR,background:"none",border:"none",padding:0,cursor:"pointer"}}>{c.cobro?"✓ Marcar cobrado":"✓ Marcar debitado"}</button>
           <button onClick={()=>borrar(c)} style={{fontSize:12,color:RE,background:"none",border:"none",padding:0,cursor:"pointer"}}>Quitar</button>
         </div>
       </div>
-      <b style={{color:CR,whiteSpace:"nowrap"}}>{fmtARS(Number(c.monto)||0)}</b>
+      <b style={{color:c.cobro?GR:CR,whiteSpace:"nowrap"}}>{fmtARS(Number(c.monto)||0)}</b>
     </div>
   );
   return(
@@ -3775,7 +3776,7 @@ function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimiento
       </button>
       {abierto&&(
         <div style={{padding:"0 16px 14px"}}>
-          <div style={{fontSize:13,color:MU,marginBottom:8}}>{aCubrir.length} ECHEQ pendiente{aCubrir.length!==1?"s":""} de débito{vencidos.length>0&&<span style={{color:RE,fontWeight:700}}> · {vencidos.length} vencido{vencidos.length>1?"s":""} sin marcar</span>}</div>
+          <div style={{fontSize:13,color:MU,marginBottom:8}}>{aPagar.length} ECHEQ pendiente{aPagar.length!==1?"s":""} de débito{aCobrar.length>0&&<span style={{color:GR,fontWeight:700}}> · {aCobrar.length} a cobrar ({fmtARS(aCobrar.reduce((a,c)=>a+(Number(c.monto)||0),0))})</span>}{vencidos.length>0&&<span style={{color:RE,fontWeight:700}}> · {vencidos.length} vencido{vencidos.length>1?"s":""} sin marcar</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
             <button onClick={()=>mover(-1)} style={{width:34,height:34,borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,fontSize:18,fontWeight:700,cursor:"pointer",padding:0}}>‹</button>
             <div style={{flex:1,textAlign:"center",fontSize:14,fontWeight:700,color:CR,textTransform:"capitalize"}}>{primero.toLocaleDateString("es-AR",{month:"long",year:"numeric"})} · {fmtARS(totalMes)}</div>
@@ -3787,9 +3788,9 @@ function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimiento
               if(!f)return<div key={i}/>;
               const o=porDia[f];const esHoy=f===hoy;const sel=f===diaSel;
               return(
-                <button key={f} onClick={()=>setDiaSel(sel?null:f)} style={{minHeight:42,borderRadius:8,padding:"2px 0",cursor:o?"pointer":"default",border:`1px solid ${sel?G:o?(f<hoy?RE:AM)+"88":esHoy?G+"66":"transparent"}`,background:o?(f<hoy?RE+"14":AM+"1f"):BG,color:CR,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1}}>
+                <button key={f} onClick={()=>setDiaSel(sel?null:f)} style={{minHeight:42,borderRadius:8,padding:"2px 0",cursor:o?"pointer":"default",border:`1px solid ${sel?G:o?(o.total>0?(f<hoy?RE:AM):GR)+"88":esHoy?G+"66":"transparent"}`,background:o?(o.total>0?(f<hoy?RE+"14":AM+"1f"):GR+"1a"):BG,color:CR,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1}}>
                   <span style={{fontSize:12,fontWeight:esHoy?800:500,color:esHoy?G:CR}}>{Number(f.slice(8))}</span>
-                  {o&&<span style={{fontSize:10,fontWeight:700,color:f<hoy?RE:"#B26A00"}}>{corto(o.total)}</span>}
+                  {o&&<span style={{fontSize:10,fontWeight:700,color:o.total>0?(f<hoy?RE:"#B26A00"):GR}}>{corto(o.total>0?o.total:o.cobrar)}</span>}
                 </button>
               );
             })}
@@ -3802,9 +3803,9 @@ function ModuloCheques({proveedores,setProveedores,movimientosPago,setMovimiento
           )}
           <div style={{marginTop:12,fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:700}}>Próximos vencimientos</div>
           {vencidos.length>0&&<div style={{marginTop:4}}><div style={{fontSize:12,color:RE,fontWeight:700}}>Vencidos</div>{vencidos.sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago)).map(fila)}</div>}
-          {resumenDias.filter(d=>d>=hoy).slice(0,6).map(d=>(
+          {resumenDias.filter(d=>d>=hoy&&porDia[d].total>0).slice(0,6).map(d=>(
             <div key={d} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderTop:`1px solid ${BO}`,fontSize:14}}>
-              <span style={{color:CR}}>{fmtDate(d)} <span style={{fontSize:12,color:MU}}>· {porDia[d].items.length} cheque{porDia[d].items.length>1?"s":""}</span></span>
+              <span style={{color:CR}}>{fmtDate(d)} <span style={{fontSize:12,color:MU}}>· {porDia[d].items.filter(x=>!x.cobro).length} cheque{porDia[d].items.filter(x=>!x.cobro).length>1?"s":""}</span></span>
               <b style={{color:CR}}>{fmtARS(porDia[d].total)}</b>
             </div>
           ))}
@@ -3849,7 +3850,7 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
         <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
         <div style={{display:"flex",gap:6,marginTop:6}}>
           <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
-          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo/2)):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo/2))})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo*50)/100)})</button>
         </div>
       </div>
       {!esEcheq&&<div style={{marginBottom:8}}>
@@ -4977,18 +4978,18 @@ function construirXlsxBackup(d){
     ["Este archivo es para leer y archivar. Para restaurar la app usá el backup JSON."],
     [],
     [{v:"Concepto",s:"h"},{v:"Cantidad / importe",s:"h"}],
-    ["Clientes",clientes.length],["Deuda total de clientes",{v:Math.round(deudaCli),s:"$b"}],
-    ["Proveedores",provs.length],["Deuda total con proveedores",{v:Math.round(deudaProv),s:"$b"}],
+    ["Clientes",clientes.length],["Deuda total de clientes",{v:Math.round(deudaCli*100)/100,s:"$b"}],
+    ["Proveedores",provs.length],["Deuda total con proveedores",{v:Math.round(deudaProv*100)/100,s:"$b"}],
     ["Pedidos",pedidos.length],["Productos",prods.length],
     ["Cobranzas y órdenes de pago registradas",(d.movimientosPago||[]).length],["Gastos",(d.gastos||[]).length]
   ]);
-  seguro("Clientes",[28,16,16,28,16,16,40],()=>[H(["Cliente","Rubro","Zona","Dirección","Teléfono","Saldo pendiente","Notas"]),...clientes.map(c=>[c.nombre,c.rubro||"",c.zona||"",c.direccion||"",c.telefono||"",{v:Math.round(saldoCliente(c)),s:"$"},c.notas||""])]);
+  seguro("Clientes",[28,16,16,28,16,16,40],()=>[H(["Cliente","Rubro","Zona","Dirección","Teléfono","Saldo pendiente","Notas"]),...clientes.map(c=>[c.nombre,c.rubro||"",c.zona||"",c.direccion||"",c.telefono||"",{v:Math.round(saldoCliente(c)*100)/100,s:"$"},c.notas||""])]);
   seguro("Cta cte clientes",[26,12,28,60,14,14,14,14],()=>{
     const f=[H(["Cliente","Fecha","Concepto / comprobante","Detalle","Estado","Cargo","Pago","Saldo"])];
     clientes.forEach(c=>{try{filasExportCliente(c,prods,pedidos).forEach(r=>f.push([c.nombre,{v:r.fecha,s:"f"},r.concepto,r.detalle,r.estado,r.cargo?{v:r.cargo,s:"$"}:"",r.pago?{v:r.pago,s:"$"}:"",{v:r.saldo,s:"$"}]));}catch(e){f.push([c.nombre,"","(no se pudo leer)"]);}});
     return f;
   });
-  seguro("Proveedores",[28,16,16,28,16,16,40],()=>[H(["Proveedor","Rubro","CUIT","Dirección","Teléfono","Saldo pendiente","Notas"]),...provs.map(x=>[x.nombre,x.rubro||"",x.cuit||"",x.direccion||"",x.telefono||"",{v:Math.round(saldoProveedor(x)),s:"$"},x.notas||""])]);
+  seguro("Proveedores",[28,16,16,28,16,16,40],()=>[H(["Proveedor","Rubro","CUIT","Dirección","Teléfono","Saldo pendiente","Notas"]),...provs.map(x=>[x.nombre,x.rubro||"",x.cuit||"",x.direccion||"",x.telefono||"",{v:Math.round(saldoProveedor(x)*100)/100,s:"$"},x.notas||""])]);
   seguro("Cta cte proveedores",[26,12,28,60,14,14,14,14],()=>{
     const f=[H(["Proveedor","Fecha","Concepto / comprobante","Detalle","Estado","Cargo","Pago","Saldo"])];
     provs.forEach(x=>{try{filasExportProveedor(x,prods).forEach(r=>f.push([x.nombre,{v:r.fecha,s:"f"},r.concepto,r.detalle,r.estado,r.cargo?{v:r.cargo,s:"$"}:"",r.pago?{v:r.pago,s:"$"}:"",{v:r.saldo,s:"$"}]));}catch(e){f.push([x.nombre,"","(no se pudo leer)"]);}});
@@ -7256,7 +7257,7 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
   const[verMov,setVerMov]=useState(false);
   const[filaAbierta,setFilaAbierta]=useState(null);
   const[criterio,setCriterio]=useState("operacion"); // operacion | caja
-  const f0=n=>fmtARS(Math.round(Number(n)||0));
+  const f0=n=>fmtARS(Number(n)||0);
   const movs=useMemo(()=>{
     const arr=[];
     const caja=criterio==="caja";
@@ -11482,21 +11483,27 @@ function pagosAnterioresSinRegistrar(clientes,proveedores,movs){
   return out;
 }
 // Marca como anulado el comprobante automático cuyo cobro/pago ya no existe (se deshizo desde la ficha) y lo reactiva si vuelve a existir
-function movsAnuladosActualizados(movs,clientes,proveedores){
+function movsAnuladosActualizados(movs,clientes,proveedores,sueldos){
   const vivos=new Set();
   (clientes||[]).forEach(c=>(c.cobros||[]).forEach(cb=>vivos.add(cb.id)));
   (proveedores||[]).forEach(pr=>[...(pr.compras||[]),...(pr.saldosAnteriores||[])].forEach(r=>{if(r.pagado&&r.pagoId)vivos.add(r.pagoId);}));
+  (sueldos||[]).forEach(per=>(per.movs||[]).forEach(x=>{if(x.opId)vivos.add(x.opId);}));
   let cambio=false;
   const nuevo=(movs||[]).map(m=>{
-    if(!m.auto)return m;
-    const vivo=vivos.has(m.cobroId||m.pagoRef);
+    if(!m.auto&&!(m.persona&&(sueldos||[]).length))return m;
+    const vivo=vivos.has(m.persona?m.id:(m.cobroId||m.pagoRef));
     if(vivo===!m.anulado)return m;
     cambio=true;return{...m,anulado:!vivo};
   });
   return cambio?nuevo:null;
 }
-function detalleMovPago(mov,{clientes,proveedores,pedidos}){
+function detalleMovPago(mov,{clientes,proveedores,pedidos,sueldos}){
   const esCob=mov.tipo==="cobranza";
+  if(mov.persona){
+    const per=(sueldos||[]).find(x=>x.id===mov.entidadId)||null;
+    const saldoP=per?Math.round((per.movs||[]).reduce((a,m)=>a+(m.tipo==="pago"?-1:1)*(Number(m.monto)||0),0)*100)/100:null;
+    return{entidad:per,aplic:[{desc:"Pago de sueldos y honorarios"+(mov.observaciones?` · ${mov.observaciones}`:""),monto:Number(mov.importe)||0}],saldo:saldoP,echeqId:null};
+  }
   const lista=esCob?(clientes||[]):(proveedores||[]);
   const entidad=lista.find(x=>x.id===mov.entidadId)||null;
   let aplic=[],echeqId=null;
@@ -11600,7 +11607,7 @@ function ComprobantePagoOpciones({mov,det,onClose}){
 }
 function EditarMovPago({mov,det,onClose,onGuardar}){
   const esCob=mov.tipo==="cobranza";
-  const bloqueaImporte=!mov.auto||!!det.echeqId;
+  const bloqueaImporte=(!mov.auto&&!mov.persona)||!!det.echeqId;
   const bloqueaMedio=!!det.echeqId;
   const[f,setF]=useState({fecha:mov.fecha||hoyISO(),medio:mov.medioPago||"Efectivo",importe:String(mov.importe||""),obs:mov.observaciones||"",
     eqNum:mov.echeq?mov.echeq.numero:"",eqBanco:mov.echeq?mov.echeq.bancoEmisor:"",eqEmi:mov.echeq?mov.echeq.fechaEmision:"",eqPago:mov.echeq?mov.echeq.fechaPago:""});
@@ -11646,7 +11653,7 @@ function RecibosEntidad({tipo,entidadId}){
         <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:CR,textDecoration:m.anulado?"line-through":"none"}}>{m.comprobanteNumero?`${tipo==="cobranza"?"Recibo":"OP"} ${m.comprobanteNumero}`:"Sin número"} · {fmtARS(m.importe)}</div><div style={{fontSize:11,color:MU}}>{fmtDate(m.fecha)} · {m.medioPago}{m.anulado?" · ANULADO":""}</div></div>
         <button onClick={()=>setVer(m.id)} style={{padding:"7px 10px",borderRadius:8,border:`1px solid ${BO}`,background:CA,color:CR,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖨️ Imprimir</button>
       </div>)}</div>}
-      {mov&&<ComprobantePagoOpciones mov={mov} det={detalleMovPago(mov,{clientes:ctx.clientes,proveedores:ctx.proveedores,pedidos:ctx.pedidos})} onClose={()=>setVer(null)}/>}
+      {mov&&<ComprobantePagoOpciones mov={mov} det={detalleMovPago(mov,{clientes:ctx.clientes,proveedores:ctx.proveedores,pedidos:ctx.pedidos,sueldos:ctx.sueldos})} onClose={()=>setVer(null)}/>}
     </div>
   );
 }
@@ -11655,16 +11662,19 @@ function revertirPagoProveedor(pr,pagoId){
   return{...pr,compras:(pr.compras||[]).map(un),saldosAnteriores:revertirFilasDeCobro(pr.saldosAnteriores,pagoId,false).map(r=>r.cobroId===null&&r.pagoId===pagoId?{...r,fechaPago:null,pagoId:null,pagoTs:null}:r)};
 }
 
-function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonarios,setTalonarios,movimientosPago,setMovimientosPago,pedidos,tipoFijo}){
+function PagosCobranzas({sueldos,setSueldos,clientes,setClientes,proveedores,setProveedores,talonarios,setTalonarios,movimientosPago,setMovimientosPago,pedidos,tipoFijo}){
   const[tipo,setTipo]=useState(tipoFijo||"cobranza");const[qMov,setQMov]=useState("");const[verMov,setVerMov]=useState(null);const[editMov,setEditMov]=useState(null);const[entidadId,setEntidadId]=useState("");const[seleccion,setSeleccion]=useState([]);const[fecha,setFecha]=useState(hoyISO());const[medio,setMedio]=useState("Efectivo");const[numeroEcheq,setNumeroEcheq]=useState("");const[bancoEcheq,setBancoEcheq]=useState("");const[emisionEcheq,setEmisionEcheq]=useState(hoyISO());const[pagoEcheq,setPagoEcheq]=useState(hoyISO());const[importeEcheq,setImporteEcheq]=useState("");const[observaciones,setObservaciones]=useState("");
-  const esCobranza=tipo==="cobranza";const entidades=esCobranza?(clientes||[]):(proveedores||[]);const entidad=entidades.find(x=>x.id===entidadId);
-  const documentos=useMemo(()=>{if(!entidad)return[];if(esCobranza)return(entidad.ventas||[]).filter(v=>!v.pagado).map(v=>({key:v.id,id:v.id,fecha:v.fecha,numero:v.numeroComprobante||"",descripcion:`Venta · ${v.producto||"Producto"} · ${v.cantidad||0} L`,monto:Number(v.monto)||0}));return agruparCompras(entidad.compras||[]).filter(g=>g.estado!=="pagado").map(g=>({key:g.key,id:g.key,fecha:g.fecha,numero:g.numero||"",descripcion:`${g.tipo||"Compra"}${g.rows.length>1?` · ${g.rows.length} productos`:""}`,monto:g.rows.filter(r=>!r.pagado).reduce((s,r)=>s+(Number(r.monto)||0),0),rowIds:g.rows.filter(r=>!r.pagado).map(r=>r.id)}));},[entidad,esCobranza]);
+  const esCobranza=tipo==="cobranza";const entidades=esCobranza?(clientes||[]):(proveedores||[]);
+  const personas=(sueldos||[]).filter(x=>x.activo!==false);
+  const entidad=(!esCobranza&&String(entidadId).startsWith("sueldo:"))?(()=>{const x=(sueldos||[]).find(y=>y.id===entidadId.slice(7));return x?{...x,esPersona:true}:undefined;})():entidades.find(x=>x.id===entidadId);
+  const[benefEcheq,setBenefEcheq]=useState("");const[cuitEcheq,setCuitEcheq]=useState("");
+  const documentos=useMemo(()=>{if(!entidad||entidad.esPersona)return[];if(esCobranza)return(entidad.ventas||[]).filter(v=>!v.pagado).map(v=>({key:v.id,id:v.id,fecha:v.fecha,numero:v.numeroComprobante||"",descripcion:`Venta · ${v.producto||"Producto"} · ${v.cantidad||0} L`,monto:Number(v.monto)||0}));return agruparCompras(entidad.compras||[]).filter(g=>g.estado!=="pagado").map(g=>({key:g.key,id:g.key,fecha:g.fecha,numero:g.numero||"",descripcion:`${g.tipo||"Compra"}${g.rows.length>1?` · ${g.rows.length} productos`:""}`,monto:g.rows.filter(r=>!r.pagado).reduce((s,r)=>s+(Number(r.monto)||0),0),rowIds:g.rows.filter(r=>!r.pagado).map(r=>r.id)}));},[entidad,esCobranza]);
   const seleccionados=documentos.filter(d=>seleccion.includes(d.key));const total=seleccionados.reduce((s,d)=>s+d.monto,0);
   const resetSeleccion=()=>setSeleccion([]);
   const[modo,setModo]=useState("importe");const[importeAp,setImporteAp]=useState("");
   const importeNum=Math.round((Number(importeAp)||0)*100)/100;
-  const deudaTotal=entidad?Math.round((esCobranza?saldoCliente(entidad):saldoProveedor(entidad))*100)/100:0;
-  const saldosPend=entidad?totalSaldosPendientes(entidad):0;
+  const deudaTotal=entidad?(entidad.esPersona?Math.max(0,Math.round((entidad.movs||[]).reduce((a,m)=>a+(m.tipo==="pago"?-1:1)*(Number(m.monto)||0),0)*100)/100):Math.round((esCobranza?saldoCliente(entidad):saldoProveedor(entidad))*100)/100):0;
+  const saldosPend=entidad&&!entidad.esPersona?totalSaldosPendientes(entidad):0;
   const preview=useMemo(()=>{
     let rest=importeNum;const out=[];
     const items=[...(saldosPend>0?[{key:"saldos",descripcion:"Saldos anteriores",numero:"",fecha:"",monto:saldosPend}]:[]),...[...documentos].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))];
@@ -11675,17 +11685,43 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
   const registrarPorImporte=()=>{
     if(!entidad)return;
     if(!(importeNum>0)){alert("Ingresá el importe a aplicar.");return;}
-    if(importeNum>deudaTotal+0.005){alert(`El importe supera la deuda pendiente (${fmtARS(deudaTotal)}).`);return;}
+    const persona=!!entidad.esPersona;
+    if(!persona&&importeNum>deudaTotal+0.005){alert(`El importe supera la deuda pendiente (${fmtARS(deudaTotal)}).`);return;}
+    const esEq=medio==="Echeq"&&!persona;
+    if(esEq&&(!numeroEcheq.trim()||!bancoEcheq.trim()||!emisionEcheq||!pagoEcheq)){alert("Completá todos los datos del echeq: número, banco, fecha de emisión y fecha de pago.");return;}
     const talonTipo=esCobranza?"Recibo de cobranza":"Orden de pago";const asignado=consumirTalonario(talonarios,talonTipo);
     if(!asignado.numero){alert(`No hay un talonario activo de tipo ${talonTipo}. Activá uno en Talonarios antes de continuar.`);return;}
     if(asignado.talonarios!==talonarios)setTalonarios(asignado.talonarios);
     const refId=uid();
-    const mov={id:uid(),tipo,auto:true,...(esCobranza?{cobroId:refId}:{pagoRef:refId}),entidadId,entidadNombre:entidad.nombre,fecha,medioPago:medio,comprobanteNumero:asignado.numero,importe:importeNum,observaciones,creadoEn:Date.now()};
-    if(esCobranza)setClientes(prev=>prev.map(c=>c.id!==entidadId?c:aplicarCobroACliente(c,importeNum,{medioPago:medio,nota:observaciones,fecha,cobroId:refId})));
-    else setProveedores(prev=>prev.map(x=>x.id!==entidadId?x:aplicarPagoAProveedor(x,importeNum,{medioPago:medio,nota:observaciones,fecha,pagoId:refId})));
-    setMovimientosPago(prev=>[mov,...(prev||[])]);setImporteAp("");setObservaciones("");setVerMov(mov.id);
+    const emitido=esEq&&!esCobranza;   // ECHEQ emitido a un proveedor: igual que en su ficha
+    const base={id:uid(),tipo,entidadId:entidad.id,entidadNombre:entidad.nombre,fecha:emitido?emisionEcheq:fecha,medioPago:emitido?"ECHEQ":medio,comprobanteNumero:asignado.numero,importe:importeNum,observaciones,creadoEn:Date.now()};
+    let mov;
+    if(persona){
+      mov={...base,persona:true};
+      const nro=Math.max(0,...(sueldos||[]).flatMap(x=>(x.movs||[]).map(m=>Number(m.nro)||0)))+1;
+      const medioS={"Efectivo":"efectivo","Transferencia":"transferencia"}[medio]||"otro";
+      setSueldos(prev=>(prev||[]).map(x=>x.id!==entidad.id?x:{...x,movs:[...(x.movs||[]),{id:refId,tipo:"pago",concepto:`Orden de pago ${asignado.numero}`,fecha,monto:importeNum,medio:medioS,nota:observaciones,nro,opId:base.id,creadoEn:new Date().toISOString()}]}));
+    }else if(esCobranza){
+      const eqC=esEq?{fechaEmision:emisionEcheq,numero:numeroEcheq.trim(),bancoEmisor:bancoEcheq.trim(),fechaPago:pagoEcheq,importe:importeNum,estado:"emitido"}:null;
+      mov={...base,auto:true,cobroId:refId,...(eqC?{echeq:eqC}:{})};
+      setClientes(prev=>prev.map(c=>{if(c.id!==entidad.id)return c;const r=aplicarCobroACliente(c,importeNum,{medioPago:medio,nota:observaciones,fecha,cobroId:refId});return eqC?{...r,ventas:(r.ventas||[]).map(v=>v.cobroId===refId?{...v,echeq:eqC}:v)}:r;}));
+    }else{
+      mov={...base,auto:true,pagoRef:refId};
+      if(emitido){
+        const cheque={id:uid(),monto:importeNum,banco:bancoEcheq.trim(),numero:numeroEcheq.trim(),fechaEmision:emisionEcheq,fechaPago:pagoEcheq,beneficiario:(benefEcheq||entidad.nombre||"").trim(),cuit:cuitEcheq.trim(),nota:observaciones.trim(),estado:"emitido"};
+        const notaEq=`ECHEQ${cheque.numero?" Nº "+cheque.numero:""}${cheque.banco?" · "+cheque.banco:""} · vence ${fmtDateCorta(cheque.fechaPago)}${observaciones?" · "+observaciones:""}`;
+        setProveedores(prev=>prev.map(x=>{
+          if(x.id!==entidad.id)return x;
+          const pagado=aplicarPagoAProveedor(x,importeNum,{medioPago:"ECHEQ",nota:notaEq,fecha:emisionEcheq,pagoId:refId});
+          const yaPagado=new Map([...(x.compras||[]),...(x.saldosAnteriores||[])].map(c=>[c.id,!!c.pagado]));
+          const vincular=c=>(c.pagado&&c.medioPago==="ECHEQ"&&!c.echeqId&&yaPagado.get(c.id)!==true)?{...c,echeqId:cheque.id}:c;
+          return{...pagado,compras:(pagado.compras||[]).map(vincular),saldosAnteriores:(pagado.saldosAnteriores||[]).map(vincular),echeqs:[...(x.echeqs||[]),cheque]};
+        }));
+      }else setProveedores(prev=>prev.map(x=>x.id!==entidad.id?x:aplicarPagoAProveedor(x,importeNum,{medioPago:medio,nota:observaciones,fecha,pagoId:refId})));
+    }
+    setMovimientosPago(prev=>[mov,...(prev||[])]);setImporteAp("");setObservaciones("");setNumeroEcheq("");setBancoEcheq("");setBenefEcheq("");setCuitEcheq("");setVerMov(mov.id);
   };
-  const registrar=()=>{if(modo==="importe")return registrarPorImporte();if(!entidad||!seleccionados.length||total<=0)return;if(medio==="Echeq"&&(!numeroEcheq.trim()||!bancoEcheq.trim()||!emisionEcheq||!pagoEcheq||Number(importeEcheq||total)<=0)){alert("Completá todos los datos del echeq y su importe.");return;}if(medio==="Echeq"&&Math.abs(Number(importeEcheq||total)-total)>0.01){alert("El importe del echeq debe coincidir con el total de los comprobantes seleccionados. Para un pago parcial, seleccioná únicamente los comprobantes que cubre el echeq.");return;}
+  const registrar=()=>{if(modo==="importe"||(entidad&&entidad.esPersona))return registrarPorImporte();if(!entidad||!seleccionados.length||total<=0)return;if(medio==="Echeq"&&(!numeroEcheq.trim()||!bancoEcheq.trim()||!emisionEcheq||!pagoEcheq||Number(importeEcheq||total)<=0)){alert("Completá todos los datos del echeq y su importe.");return;}if(medio==="Echeq"&&Math.abs(Number(importeEcheq||total)-total)>0.01){alert("El importe del echeq debe coincidir con el total de los comprobantes seleccionados. Para un pago parcial, seleccioná únicamente los comprobantes que cubre el echeq.");return;}
     const talonTipo=esCobranza?"Recibo de cobranza":"Orden de pago";const asignado=consumirTalonario(talonarios,talonTipo);if(!asignado.numero){alert(`No hay un talonario activo de tipo ${talonTipo}. Activá uno en Talonarios antes de continuar.`);return;}if(asignado.talonarios!==talonarios)setTalonarios(asignado.talonarios);
     const mov={id:uid(),tipo,entidadId,entidadNombre:entidad.nombre,fecha,medioPago:medio,comprobanteNumero:asignado.numero,comprobantes:seleccionados.map(d=>({id:d.id,numero:d.numero,descripcion:d.descripcion,monto:d.monto})),importe:total,observaciones, ...(medio==="Echeq"?{echeq:{fechaEmision:emisionEcheq,numero:numeroEcheq.trim(),bancoEmisor:bancoEcheq.trim(),fechaPago:pagoEcheq,importe:Number(importeEcheq||total)}}:{})};
     if(esCobranza){setClientes(prev=>prev.map(c=>c.id!==entidadId?c:{...c,ventas:(c.ventas||[]).map(v=>seleccion.includes(v.id)?{...v,pagado:true,fechaCobro:fecha,medioPago:medio,numeroRecibo:asignado.numero,pagoId:mov.id,...(mov.echeq?{echeq:mov.echeq}:{})}:v)}));}
@@ -11732,7 +11768,11 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
   const guardarEdicion=(m,patch)=>{
     const esCob=m.tipo==="cobranza";
     let importeFinal=Number(m.importe)||0;
-    if(esCob){
+    if(m.persona){
+      const medioS={"Efectivo":"efectivo","Transferencia":"transferencia"}[patch.medioPago]||"otro";
+      setSueldos(prev=>(prev||[]).map(x=>x.id!==m.entidadId?x:{...x,movs:(x.movs||[]).map(y=>y.opId===m.id?{...y,fecha:patch.fecha,monto:patch.importe,medio:medioS,nota:patch.observaciones}:y)}));
+      importeFinal=Number(patch.importe)||0;
+    }else if(esCob){
       const c=(clientes||[]).find(x=>x.id===m.entidadId);
       if(!c){alert("No se encontró el cliente.");return;}
       if(m.auto&&m.cobroId){
@@ -11750,6 +11790,7 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
           importeFinal=Number(cobNuevo.monto)||0;
           if(importeFinal+0.01<patch.importe)alert(`El importe supera la deuda pendiente: se registró ${fmtARS(importeFinal)}.`);
         }
+        if(patch.echeq)nuevo={...nuevo,ventas:(nuevo.ventas||[]).map(v=>v.cobroId===cb.id?{...v,echeq:patch.echeq}:v)};
         setClientes(prev=>prev.map(x=>x.id===c.id?nuevo:x));
       }else{
         setClientes(prev=>prev.map(x=>x.id!==c.id?x:{...x,ventas:(x.ventas||[]).map(v=>v.pagoId===m.id?{...v,fechaCobro:patch.fecha,medioPago:patch.medioPago,...(patch.echeq?{echeq:patch.echeq}:{})}:v)}));
@@ -11788,13 +11829,13 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
     <div style={{marginBottom:20}}><div className="bebas" style={{fontSize:32,color:CR}}>{tipoFijo==="cobranza"?"Cobranzas":tipoFijo==="pago"?"Órdenes de pago":"Pagos y cobranzas"}</div><div style={{fontSize:14,color:MU,marginTop:4}}>{tipoFijo==="cobranza"?"Registrá cobranzas a varios comprobantes, y editá o imprimí cada recibo.":tipoFijo==="pago"?"Registrá órdenes de pago a varios comprobantes, y editá o imprimí cada una.":"Aplicá un pago o una cobranza a varios comprobantes en una sola operación."}</div></div>
     {!tipoFijo&&<div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}><button onClick={()=>cambiarTipo("cobranza")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${esCobranza?G:BO}`,background:esCobranza?GLT:CA,color:esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↓ Registrar cobranza</button><button onClick={()=>cambiarTipo("pago")} style={{flex:1,minWidth:150,padding:13,borderRadius:12,border:`1px solid ${!esCobranza?G:BO}`,background:!esCobranza?GLT:CA,color:!esCobranza?G:MU,fontWeight:800,cursor:"pointer"}}>↑ Registrar pago a proveedor</button></div>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16,alignItems:"start"}}>
-      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>1. Seleccionar {esCobranza?"cliente":"proveedor"}</div><div style={{marginBottom:14}}><Lbl t={esCobranza?"Cliente":"Proveedor"}/><select value={entidadId} onChange={e=>{setEntidadId(e.target.value);resetSeleccion();}}><option value="">Elegí una opción…</option>{entidades.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
-      {entidad&&<div style={{display:"flex",gap:6,marginBottom:12}}>{[["importe","Por importe (más viejos primero)"],["elegir","Elegir comprobantes"]].map(([k,l])=><button key={k} onClick={()=>{setModo(k);if(k==="importe"&&medio==="Echeq")setMedio("Efectivo");}} style={{flex:1,padding:"9px 6px",borderRadius:10,border:`1px solid ${modo===k?G:BO}`,background:modo===k?GLT:CA,color:modo===k?G:MU,fontWeight:800,fontSize:13,cursor:"pointer"}}>{l}</button>)}</div>}
-      {!entidad?<div style={{padding:18,borderRadius:12,background:BG,color:MU,fontSize:14}}>Seleccioná un {esCobranza?"cliente":"proveedor"} para ver los comprobantes pendientes.</div>:(documentos.length===0&&!(modo==="importe"&&saldosPend>0))?<div style={{padding:18,borderRadius:12,background:GR+"12",color:GR,fontSize:14,fontWeight:700}}>No hay comprobantes pendientes para esta cuenta.</div>:modo==="importe"?<div><div style={{fontSize:13,color:MU,marginBottom:8}}>Deuda pendiente: <b style={{color:CR}}>{fmtARS(deudaTotal)}</b> · el importe se descuenta empezando por el comprobante más viejo.</div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{preview.map(d=>{const completo=d.aplica>=d.monto-0.005;return <div key={d.key} style={{display:"flex",gap:10,padding:12,borderRadius:12,border:`1px solid ${d.aplica>0?G:BO}`,background:d.aplica>0?GLT:BG,opacity:d.aplica>0?1:.65}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion}{d.fecha?` · ${fmtDate(d.fecha)}`:""}</div>{d.aplica>0&&<div style={{fontSize:12,fontWeight:700,color:G,marginTop:3}}>{completo?"Se cancela completo":`Se paga ${fmtARS(d.aplica)} · queda ${fmtARS(d.monto-d.aplica)}`}</div>}</div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></div>;})}</div></div>:<><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:13,color:MU}}>{documentos.length} comprobantes pendientes</span><button onClick={()=>setSeleccion(seleccion.length===documentos.length?[]:documentos.map(d=>d.key))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>{seleccion.length===documentos.length?"Quitar todos":"Seleccionar todos"}</button></div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{documentos.map(d=><label key={d.key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:12,borderRadius:12,border:`1px solid ${seleccion.includes(d.key)?G:BO}`,background:seleccion.includes(d.key)?GLT:BG,cursor:"pointer"}}><input type="checkbox" checked={seleccion.includes(d.key)} onChange={e=>setSeleccion(prev=>e.target.checked?[...prev,d.key]:prev.filter(k=>k!==d.key))} style={{width:18,height:18,marginTop:2,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion} · {fmtDate(d.fecha)}</div></div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></label>)}</div></>}
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>1. Seleccionar {esCobranza?"cliente":"proveedor"}</div><div style={{marginBottom:14}}><Lbl t={esCobranza?"Cliente":"Proveedor o persona (sueldos y honorarios)"}/><select value={entidadId} onChange={e=>{setEntidadId(e.target.value);resetSeleccion();if(String(e.target.value).startsWith("sueldo:")){setModo("importe");if(medio==="Echeq")setMedio("Efectivo");}}}><option value="">Elegí una opción…</option>{esCobranza?entidades.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>):<><optgroup label="Proveedores">{entidades.map(e=><option key={e.id} value={e.id}>{e.nombre}</option>)}</optgroup>{personas.length>0&&<optgroup label="Personal y honorarios">{personas.map(x=><option key={x.id} value={"sueldo:"+x.id}>{x.nombre}</option>)}</optgroup>}</>}</select></div>
+      {entidad&&!entidad.esPersona&&<div style={{display:"flex",gap:6,marginBottom:12}}>{[["importe","Por importe (más viejos primero)"],["elegir","Elegir comprobantes"]].map(([k,l])=><button key={k} onClick={()=>setModo(k)} style={{flex:1,padding:"9px 6px",borderRadius:10,border:`1px solid ${modo===k?G:BO}`,background:modo===k?GLT:CA,color:modo===k?G:MU,fontWeight:800,fontSize:13,cursor:"pointer"}}>{l}</button>)}</div>}
+      {!entidad?<div style={{padding:18,borderRadius:12,background:BG,color:MU,fontSize:14}}>Seleccioná un {esCobranza?"cliente":"proveedor"} para ver los comprobantes pendientes.</div>:entidad.esPersona?<div style={{padding:16,borderRadius:12,background:BG,color:CR,fontSize:14,lineHeight:1.5}}><b>{entidad.nombre}</b><div style={{color:MU,fontSize:13,marginTop:4}}>Saldo pendiente: <b style={{color:CR}}>{fmtARS(deudaTotal)}</b>. El pago se registra también en <b>Sueldos y honorarios</b>, como "Le pagué".</div></div>:(documentos.length===0&&!(modo==="importe"&&saldosPend>0))?<div style={{padding:18,borderRadius:12,background:GR+"12",color:GR,fontSize:14,fontWeight:700}}>No hay comprobantes pendientes para esta cuenta.</div>:modo==="importe"?<div><div style={{fontSize:13,color:MU,marginBottom:8}}>Deuda pendiente: <b style={{color:CR}}>{fmtARS(deudaTotal)}</b> · el importe se descuenta empezando por el comprobante más viejo.</div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{preview.map(d=>{const completo=d.aplica>=d.monto-0.005;return <div key={d.key} style={{display:"flex",gap:10,padding:12,borderRadius:12,border:`1px solid ${d.aplica>0?G:BO}`,background:d.aplica>0?GLT:BG,opacity:d.aplica>0?1:.65}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion}{d.fecha?` · ${fmtDate(d.fecha)}`:""}</div>{d.aplica>0&&<div style={{fontSize:12,fontWeight:700,color:G,marginTop:3}}>{completo?"Se cancela completo":`Se paga ${fmtARS(d.aplica)} · queda ${fmtARS(d.monto-d.aplica)}`}</div>}</div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></div>;})}</div></div>:<><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:13,color:MU}}>{documentos.length} comprobantes pendientes</span><button onClick={()=>setSeleccion(seleccion.length===documentos.length?[]:documentos.map(d=>d.key))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>{seleccion.length===documentos.length?"Quitar todos":"Seleccionar todos"}</button></div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{documentos.map(d=><label key={d.key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:12,borderRadius:12,border:`1px solid ${seleccion.includes(d.key)?G:BO}`,background:seleccion.includes(d.key)?GLT:BG,cursor:"pointer"}}><input type="checkbox" checked={seleccion.includes(d.key)} onChange={e=>setSeleccion(prev=>e.target.checked?[...prev,d.key]:prev.filter(k=>k!==d.key))} style={{width:18,height:18,marginTop:2,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion} · {fmtDate(d.fecha)}</div></div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></label>)}</div></>}
       </div>
-      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>2. Datos del movimiento</div><div style={{marginBottom:12}}><Lbl t="Fecha del movimiento"/><input type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/></div><div style={{marginBottom:12}}><Lbl t="Medio de pago"/><select value={medio} onChange={e=>setMedio(e.target.value)}>{["Efectivo","Transferencia","Mercado Pago","Echeq"].filter(x=>modo==="elegir"||x!=="Echeq").map(x=><option key={x}>{x}</option>)}</select></div>
-      {medio==="Echeq"&&<div style={{padding:14,borderRadius:12,border:`1px solid ${AM}55`,background:AM+"0d",marginBottom:14}}><div style={{fontSize:14,fontWeight:800,color:AM,marginBottom:12}}>Datos del echeq</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}><div><Lbl t="Fecha de emisión"/><input type="date" value={emisionEcheq} onChange={e=>setEmisionEcheq(e.target.value)}/></div><div><Lbl t="N° de echeq"/><input value={numeroEcheq} onChange={e=>setNumeroEcheq(e.target.value)} placeholder="Número"/></div><div><Lbl t="Banco emisor"/><input value={bancoEcheq} onChange={e=>setBancoEcheq(e.target.value)} placeholder="Banco"/></div><div><Lbl t="Fecha de pago"/><input type="date" value={pagoEcheq} onChange={e=>setPagoEcheq(e.target.value)}/></div><div><Lbl t="Importe del echeq"/><input type="number" min="0.01" step="0.01" value={importeEcheq||String(total||"")} onChange={e=>setImporteEcheq(e.target.value)} placeholder="0,00"/></div></div></div>}
-      <div style={{marginBottom:14}}><Lbl t="Observaciones"/><textarea rows={2} value={observaciones} onChange={e=>setObservaciones(e.target.value)} placeholder="Referencia, operación bancaria…"/></div>{modo==="importe"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><Lbl t="Importe a aplicar"/><input type="number" inputMode="decimal" min="0" step="0.01" value={importeAp} onChange={e=>setImporteAp(e.target.value)} placeholder="0,00"/>{entidad&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,fontSize:12,color:MU}}><span>Deuda total: {fmtARS(deudaTotal)}</span><button onClick={()=>setImporteAp(String(deudaTotal))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>Pagar todo</button></div>}<div style={{fontSize:11,color:MU,marginTop:6}}>Para pagar con echeq usá "Elegir comprobantes".</div></div>}{modo==="elegir"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><div style={{fontSize:12,color:MU,fontWeight:800,letterSpacing:".07em"}}>TOTAL DE COMPROBANTES SELECCIONADOS</div><div className="bebas" style={{fontSize:30,color:CR,marginTop:3}}>{fmtARS(total)}</div><div style={{fontSize:12,color:MU,marginTop:4}}>{seleccionados.length} comprobante(s) · {medio}</div></div>}<Btn onClick={registrar} disabled={modo==="importe"?(!entidad||!(importeNum>0)):(!entidad||!seleccionados.length||total<=0)} >{esCobranza?"Registrar cobranza":"Registrar pago"}</Btn>
+      <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>2. Datos del movimiento</div><div style={{marginBottom:12}}><Lbl t="Fecha del movimiento"/><input type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/></div><div style={{marginBottom:12}}><Lbl t="Medio de pago"/><select value={medio} onChange={e=>setMedio(e.target.value)}>{["Efectivo","Transferencia","Mercado Pago","Echeq"].filter(x=>x!=="Echeq"||!(entidad&&entidad.esPersona)).map(x=><option key={x}>{x}</option>)}</select></div>
+      {medio==="Echeq"&&<div style={{padding:14,borderRadius:12,border:`1px solid ${AM}55`,background:AM+"0d",marginBottom:14}}><div style={{fontSize:14,fontWeight:800,color:AM,marginBottom:12}}>Datos del echeq</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}><div><Lbl t="Fecha de emisión"/><input type="date" value={emisionEcheq} onChange={e=>setEmisionEcheq(e.target.value)}/></div><div><Lbl t="N° de echeq"/><input value={numeroEcheq} onChange={e=>setNumeroEcheq(e.target.value)} placeholder="Número"/></div><div><Lbl t="Banco emisor"/><input value={bancoEcheq} onChange={e=>setBancoEcheq(e.target.value)} placeholder="Banco"/></div><div><Lbl t="Fecha de pago"/><input type="date" value={pagoEcheq} onChange={e=>setPagoEcheq(e.target.value)}/></div><div><Lbl t="Importe del echeq"/><input type="number" min="0.01" step="0.01" value={modo==="importe"?String(importeNum||""):(importeEcheq||String(total||""))} readOnly={modo==="importe"} onChange={e=>setImporteEcheq(e.target.value)} placeholder="0,00"/></div>{!esCobranza&&<><div><Lbl t="Beneficiario"/><input value={benefEcheq||(entidad?entidad.nombre:"")} onChange={e=>setBenefEcheq(e.target.value)}/></div><div><Lbl t="CUIT (opcional)"/><input value={cuitEcheq} onChange={e=>setCuitEcheq(e.target.value)} inputMode="numeric"/></div></>}</div></div>}
+      <div style={{marginBottom:14}}><Lbl t="Observaciones"/><textarea rows={2} value={observaciones} onChange={e=>setObservaciones(e.target.value)} placeholder="Referencia, operación bancaria…"/></div>{modo==="importe"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><Lbl t="Importe a aplicar"/><input type="number" inputMode="decimal" min="0" step="0.01" value={importeAp} onChange={e=>setImporteAp(e.target.value)} placeholder="0,00"/>{entidad&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,fontSize:12,color:MU}}><span>Deuda total: {fmtARS(deudaTotal)}</span><button onClick={()=>setImporteAp(String(deudaTotal))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>Pagar todo</button></div>}</div>}{modo==="elegir"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><div style={{fontSize:12,color:MU,fontWeight:800,letterSpacing:".07em"}}>TOTAL DE COMPROBANTES SELECCIONADOS</div><div className="bebas" style={{fontSize:30,color:CR,marginTop:3}}>{fmtARS(total)}</div><div style={{fontSize:12,color:MU,marginTop:4}}>{seleccionados.length} comprobante(s) · {medio}</div></div>}<Btn onClick={registrar} disabled={modo==="importe"?(!entidad||!(importeNum>0)):(!entidad||!seleccionados.length||total<=0)} >{esCobranza?"Registrar cobranza":"Registrar pago"}</Btn>
       </div>
     </div>
     <div style={{marginTop:22}}>
@@ -11823,8 +11864,8 @@ function PagosCobranzas({clientes,setClientes,proveedores,setProveedores,talonar
         </div>
       </div>)}</div>}
     </div>
-    {movImprimir&&<ComprobantePagoOpciones mov={movImprimir} det={detalleMovPago(movImprimir,{clientes,proveedores,pedidos})} onClose={()=>setVerMov(null)}/>}
-    {movEditar&&<EditarMovPago mov={movEditar} det={detalleMovPago(movEditar,{clientes,proveedores,pedidos})} onClose={()=>setEditMov(null)} onGuardar={patch=>guardarEdicion(movEditar,patch)}/>}
+    {movImprimir&&<ComprobantePagoOpciones mov={movImprimir} det={detalleMovPago(movImprimir,{clientes,proveedores,pedidos,sueldos})} onClose={()=>setVerMov(null)}/>}
+    {movEditar&&<EditarMovPago mov={movEditar} det={detalleMovPago(movEditar,{clientes,proveedores,pedidos,sueldos})} onClose={()=>setEditMov(null)} onGuardar={patch=>guardarEdicion(movEditar,patch)}/>}
   </div>;
 }
 
@@ -11866,7 +11907,6 @@ const TABS=[
   {key:"clientes",label:"Clientes",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>},
   {key:"comercios",label:"Comercios",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7"/><rect x="3" y="9" width="18" height="13" rx="1"/><path d="M9 22V12h6v10"/></svg>},
   {key:"pedidos",label:"Pedidos",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>},
-  {key:"cuentascorrientes",label:"Cta.Cte",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>},
   {key:"maps",label:"Buscar",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>},
   {key:"speeches",label:"Speeches",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
   {key:"notas",label:"Notas",icon:<svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>},
@@ -12173,7 +12213,7 @@ function App(){
   useEffect(()=>{
     if(syncStatus!=="synced")return;
     const pend=pagosSinNumerar(clientes,proveedores,movimientosPago).filter(it=>!numeradosRef.current.has(it.cobro?it.cobro.id:it.pagoId));
-    const anul=movsAnuladosActualizados(movimientosPago,clientes,proveedores);
+    const anul=movsAnuladosActualizados(movimientosPago,clientes,proveedores,sueldos);
     if(!pend.length){if(anul)setMovimientosPago(anul);return;}
     let tal=talonarios;const nuevos=[];
     pend.forEach(it=>{
@@ -12186,8 +12226,8 @@ function App(){
         :{id:uid(),tipo:"pago",auto:true,pagoRef:it.pagoId,entidadId:it.entidad.id,entidadNombre:it.entidad.nombre,fecha:r0.fechaPago||hoyISO(),medioPago:r0.medioPago||"Efectivo",comprobanteNumero:r.numero,importe:it.rows.reduce((a,x)=>a+(Number(x.monto)||0),0),observaciones:r0.nota||"",creadoEn:Date.now()});
     });
     if(tal!==talonarios)setTalonarios(tal);
-    setMovimientosPago(prev=>{const base=movsAnuladosActualizados(prev,clientes,proveedores)||prev||[];return[...nuevos.reverse(),...base];});
-  },[syncStatus,clientes,proveedores,movimientosPago]);
+    setMovimientosPago(prev=>{const base=movsAnuladosActualizados(prev,clientes,proveedores,sueldos)||prev||[];return[...nuevos.reverse(),...base];});
+  },[syncStatus,clientes,proveedores,movimientosPago,sueldos]);
  
   const convertir=p=>{
     setClientes(prev=>[...prev,{id:uid(),nombre:p.nombre,rubro:p.rubro,zona:p.zona,direccion:p.direccion,telefono:p.telefono,notas:p.notas,agenda:[],historial:[],ventas:[]}]);
@@ -12199,7 +12239,7 @@ function App(){
   const masActivo=MORE_TAB_KEYS.includes(tab);
  
   return(
-    <RecibosCtx.Provider value={{movimientosPago,clientes,proveedores,pedidos}}>
+    <RecibosCtx.Provider value={{movimientosPago,clientes,proveedores,pedidos,sueldos}}>
     <div style={{minHeight:"100vh",background:BG}}>
       <div style={{display:"flex"}}>
         {/* Sidebar desktop */}
@@ -12212,7 +12252,7 @@ function App(){
           </div>
           <nav style={{padding:"12px 10px",display:"flex",flexDirection:"column",gap:6,flex:1,overflowY:"auto"}}>
             {TABS.filter(t=>t.key==="inicio").map(item=><button key={item.key} onClick={()=>setTab(item.key)} style={{display:"flex",alignItems:"center",gap:11,width:"100%",padding:"11px 12px",borderRadius:10,fontSize:16,fontWeight:700,cursor:"pointer",border:"none",background:tab===item.key?G:"transparent",color:tab===item.key?"#fff":MU,textAlign:"left"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,flexShrink:0}}>{item.icon}</span>{item.label}</button>)}
-            {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cuentascorrientes","cobranzas","ventas"])}
+            {renderGrupoMenu("ventas","VENTAS",["clientes","comercios","pedidos","cobranzas","ventas"])}
             {renderGrupoMenu("compras","COMPRAS",["proveedores","compras","ordenespago"])}
             {renderGrupoMenu("inventario","INVENTARIO",["productos","stock"])}
             {renderGrupoMenu("gestion","GESTIÓN Y ANÁLISIS",["caja","gastos","sueldos","personal","metricas","rentabilidad","pagoscobranzas","talonarios","reporteiva"])}
@@ -12232,7 +12272,6 @@ function App(){
           {tab==="clientes"&&<Clientes clientes={clientes} setClientes={setClientes} speeches={speeches} cal={cal} prods={prods} setProds={setProds} setPedidos={setPedidos} diasMora={diasMora} promo51={promo51} pedidos={pedidos} filtro={filtroClientes} setFiltro={setFiltroClientes} talonarios={talonarios} setTalonarios={setTalonarios} abrirClienteId={abrirClienteId} onClienteAbierto={()=>setAbrirClienteId(null)} onTomarPedido={tomarPedidoDe}/>}
           {tab==="comercios"&&<Comercios prospectos={prospectos} setProspectos={setProspectos} onConvertir={convertir} speeches={speeches} prods={prods} promo51={promo51}/>}
           {tab==="pedidos"&&<Pedidos pedidos={pedidos} setPedidos={setPedidos} clientes={clientes} setClientes={setClientes} prods={prods} setProds={setProds} promo51={promo51} pedidoInicial={pedidoInicial} onPedidoInicialUsado={()=>setPedidoInicial(null)} onVolverACliente={cid=>{setAbrirClienteId(cid);setTab("clientes");}}/>}
-          {tab==="cuentascorrientes"&&<CuentasCorrientes clientes={clientes} setClientes={setClientes} diasMora={diasMora} prods={prods} pedidos={pedidos}/>}
           {tab==="maps"&&<BuscadorMaps prospectos={prospectos} setProspectos={setProspectos}/>}
           {tab==="speeches"&&<Speeches speeches={speeches} setSpeeches={setSpeeches}/>}
           {tab==="notas"&&<Notas notas={notas} setNotas={setNotas} cal={cal}/>}
@@ -12249,9 +12288,9 @@ function App(){
           {tab==="proveedores"&&<Proveedores proveedores={proveedores} setProveedores={setProveedores} prods={prods} setProds={setProds} impuestos={impuestos}/>}
           {tab==="compras"&&<Compras proveedores={proveedores} prods={prods}/>}
           {tab==="rentabilidad"&&<Rentabilidad clientes={clientes} proveedores={proveedores} prods={prods}/>}
-          {tab==="pagoscobranzas"&&<PagosCobranzas pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
-          {tab==="cobranzas"&&<PagosCobranzas tipoFijo="cobranza" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
-          {tab==="ordenespago"&&<PagosCobranzas tipoFijo="pago" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="pagoscobranzas"&&<PagosCobranzas sueldos={sueldos} setSueldos={setSueldos} pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="cobranzas"&&<PagosCobranzas sueldos={sueldos} setSueldos={setSueldos} tipoFijo="cobranza" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
+          {tab==="ordenespago"&&<PagosCobranzas sueldos={sueldos} setSueldos={setSueldos} tipoFijo="pago" pedidos={pedidos} clientes={clientes} setClientes={setClientes} proveedores={proveedores} setProveedores={setProveedores} talonarios={talonarios} setTalonarios={setTalonarios} movimientosPago={movimientosPago} setMovimientosPago={setMovimientosPago}/> }
           {tab==="talonarios"&&<Talonarios talonarios={talonarios} setTalonarios={setTalonarios}/> }
           {tab==="reporteiva"&&<ReporteIVA clientes={clientes} proveedores={proveedores}/>}
           {tab==="config"&&<Configuracion cal={cal} clientes={clientes} setClientes={setClientes} prospectos={prospectos} setProspectos={setProspectos} pedidos={pedidos} setPedidos={setPedidos} prods={prods} setProds={setProds} speeches={speeches} setSpeeches={setSpeeches} notas={notas} setNotas={setNotas} gastos={gastos} setGastos={setGastos} comisiones={comisiones} setComisiones={setComisiones} metaSemanal={metaSemanal} setMetaSemanal={setMetaSemanal} diasMora={diasMora} setDiasMora={setDiasMora} promo51={promo51} setPromo51={setPromo51} envasesExtra={envasesExtra} setEnvasesExtra={setEnvasesExtra} proveedores={proveedores} setProveedores={setProveedores} categorias={categorias} setCategorias={setCategorias} impuestos={impuestos} setImpuestos={setImpuestos} categoriasGasto={categoriasGasto} setCategoriasGasto={setCategoriasGasto} getBackup={getBackup} aplicarBackup={aplicarBackup}/>}
