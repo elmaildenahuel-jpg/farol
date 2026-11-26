@@ -446,7 +446,7 @@ const RUBROS=["Kiosco","Despensa","Almacén","Pizzería","Autoservicio","Bar","P
 const ZONAS=["CABA Centro","CABA Norte","CABA Sur","GBA Norte","GBA Sur","GBA Oeste","GBA Este"];
 const ESTADOS_P=["Por contactar","Contactado","En negociación","Descartado"];
 const ENVASES=["PET","Barril","Lata"];
-const APP_BUILD="24-nov-2026 · 15:30";
+const APP_BUILD="26-nov-2026 · 10:40";
 // Categorías de producto (cerveza, fernet, etc.): la lista se edita en Configuración y cada producto guarda su categoría como texto.
 const CATEGORIAS_INIT=["Cerveza","Fernet","Otros"];
 const SIN_CATEGORIA="Sin categoría";
@@ -588,6 +588,7 @@ const initSpeeches=[
 ];
  
 // ── Helpers ───────────────────────────────────────────────────────
+const R2=n=>Math.round((Number(n)||0)*100)/100;   // redondeo a centavos
 const fmtARS=n=>(Number(n)||0).toLocaleString("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtDate=s=>new Date(s+"T00:00:00").toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"});
 const fmtDateCorta=s=>{const d=new Date(s+"T00:00:00");return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;};
@@ -1005,7 +1006,7 @@ function construirRemitoPDF(pedido,cliente,prods){
   doc.text(fmtARS(totalLineas),pageW-marginX,y,{align:"right"});
   y+=6.5;
   if(pedido.descuentoPct>0){
-    const montoDesc=Math.round(totalLineasProd*pedido.descuentoPct/100);
+    const montoDesc=R2(totalLineasProd*pedido.descuentoPct/100);
     doc.setTextColor(200,60,60);
     doc.text(`Descuento pedido (${pedido.descuentoPct}%)`,pageW-marginX-45,y,{align:"right"});
     doc.text(`-${fmtARS(montoDesc)}`,pageW-marginX,y,{align:"right"});
@@ -1124,7 +1125,7 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
   const precioListaU=id=>{const p=(prods||[]).find(x=>x.id===id);return p?(p.precio||0):0;};
   const ctxDesc=ctxDescuentos(prods,pedidos);
   const detalleDe=v=>desgloseVenta(v,cliente.id,ctxDesc);
-  const valorDescuento=v=>Math.round(detalleDe(v).beneficio);
+  const valorDescuento=v=>R2(detalleDe(v).beneficio);
 
   let y=0;
   const dibujarHeader=()=>{
@@ -1369,7 +1370,7 @@ function construirEstadoCuentaPDF(cliente,prods,pedidos){
     doc.setFont("helvetica","normal");
     doc.setFontSize(8.3);
     doc.setTextColor(100,100,100);
-    doc.text(`Representa el ${fmtPct(resAll.pct)} de la venta a lista (${fmtARS(Math.round(resAll.bruto))}) · ${resAll.conBeneficio} de ${resAll.ventas} venta${resAll.ventas!==1?"s":""} con descuento o bonificación.`,marginX,y,{maxWidth:pageW-marginX*2});
+    doc.text(`Representa el ${fmtPct(resAll.pct)} de la venta a lista (${fmtARS((resAll.bruto))}) · ${resAll.conBeneficio} de ${resAll.ventas} venta${resAll.ventas!==1?"s":""} con descuento o bonificación.`,marginX,y,{maxWidth:pageW-marginX*2});
     y+=5;
     if(resAll.estimado){
       doc.setFontSize(7.5);
@@ -1686,11 +1687,11 @@ function construirCierreMensualPDF(d){
   // Descuentos y bonificaciones del mes
   if(d.desc&&d.desc.ventas>0){
     seccion("Descuentos y bonificaciones",[197,90,35]);
-    filaCaja([["Descontado",d.desc.descuento>0?`-${fmtARS(Math.round(d.desc.descuento))}`:"$ 0",[198,40,40]],["Bonificado",fmtARS(Math.round(d.desc.bono)),[183,121,31]],["% sobre venta a lista",fmtPct(d.desc.pct),[26,26,26]]]);
+    filaCaja([["Descontado",d.desc.descuento>0?`-${fmtARS((d.desc.descuento))}`:"$ 0",[198,40,40]],["Bonificado",fmtARS((d.desc.bono)),[183,121,31]],["% sobre venta a lista",fmtPct(d.desc.pct),[26,26,26]]]);
     doc.setFont("helvetica","normal");
     doc.setFontSize(8.5);
     doc.setTextColor(120,120,120);
-    doc.text(`Venta a lista del mes: ${fmtARS(Math.round(d.desc.bruto))} · ${d.desc.conBeneficio} de ${d.desc.ventas} venta${d.desc.ventas!==1?"s":""} con descuento o bonificación${d.desc.litrosBono>0?` · ${Math.round(d.desc.litrosBono*10)/10} L regalados${d.desc.estimado?"*":""}`:""}`,marginX,y,{maxWidth:pageW-marginX*2});
+    doc.text(`Venta a lista del mes: ${fmtARS((d.desc.bruto))} · ${d.desc.conBeneficio} de ${d.desc.ventas} venta${d.desc.ventas!==1?"s":""} con descuento o bonificación${d.desc.litrosBono>0?` · ${Math.round(d.desc.litrosBono*10)/10} L regalados${d.desc.estimado?"*":""}`:""}`,marginX,y,{maxWidth:pageW-marginX*2});
     y+=8;
     if(d.desc.top&&d.desc.top.length>0){
       asegurarEspacio(8+d.desc.top.length*6);
@@ -1705,7 +1706,7 @@ function construirCierreMensualPDF(d){
         doc.setTextColor(60,60,60);
         doc.text(`${i+1}. ${c.nombre}`,marginX+2,y);
         doc.setFont("helvetica","bold");
-        doc.text(`-${fmtARS(Math.round(c.beneficio))}  ·  ${fmtPct(c.pct)}`,pageW-marginX,y,{align:"right"});
+        doc.text(`-${fmtARS((c.beneficio))}  ·  ${fmtPct(c.pct)}`,pageW-marginX,y,{align:"right"});
         y+=5.8;
       });
       y+=4;
@@ -1862,7 +1863,7 @@ function construirSolicitudLiquidacionPDF(ventas,{desde,hasta,pendiente}){
   ventas.forEach(v=>{
     asegurarEspacio(7);
     if(y<40){dibujarHeaderTabla();}
-    const com=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+    const com=R2((v.monto||0)*(v.comisionPct||0)/100);
     totalCom+=com;
     doc.setFontSize(8.3);
     doc.setTextColor(60,60,60);
@@ -1973,8 +1974,8 @@ const mensajePedido=(p,nombreCliente,prods)=>{
   const subtotalProd=lineas.reduce((s,l)=>s+(l.monto||0),0);
   const subtotal=subtotalProd+servs.reduce((s,x)=>s+(Number(x.monto)||0),0);
   const descPct=p.descuentoPct||0;
-  const montoDesc=descPct?Math.round(subtotalProd*descPct/100):0;
-  const montoIVA=p.incluyeIVA?Math.round((subtotal-montoDesc)*0.21):0;
+  const montoDesc=descPct?R2(subtotalProd*descPct/100):0;
+  const montoIVA=p.incluyeIVA?R2((subtotal-montoDesc)*0.21):0;
   let resumen="";
   if(descPct>0||p.incluyeIVA){
     resumen=`\nSubtotal: ${fmtARS(subtotal)}`;
@@ -2188,14 +2189,14 @@ function desgloseAlEntregar(prod,l,ped){
   const montoLinea=Number(l.monto)||0;
   const baseEscala=prod?montoTotal(prod,cant):montoLinea;   // a precio de lista, con la escala por volumen del catálogo
   const dp=Number(ped.descuentoPct)||0;
-  if(l.esBono)return{dv:1,neto:0,volumen:0,linea:0,pedido:0,bono:Math.round(precioLista*cant),iva:0,descuentoPct:0,descPedidoPct:0};
+  if(l.esBono)return{dv:1,neto:0,volumen:0,linea:0,pedido:0,bono:R2(precioLista*cant),iva:0,descuentoPct:0,descPedidoPct:0};
   const neto=montoLinea*(1-dp/100);
   return{
-    dv:1,neto:Math.round(neto),
-    volumen:Math.max(0,Math.round(precioLista*cant-baseEscala)),
-    linea:Math.max(0,Math.round(baseEscala-montoLinea)),
-    pedido:Math.round(montoLinea*dp/100),
-    bono:0,iva:ped.incluyeIVA?Math.round(neto*0.21):0,
+    dv:1,neto:R2(neto),
+    volumen:Math.max(0,R2(precioLista*cant-baseEscala)),
+    linea:Math.max(0,R2(baseEscala-montoLinea)),
+    pedido:R2(montoLinea*dp/100),
+    bono:0,iva:ped.incluyeIVA?R2(neto*0.21):0,
     descuentoPct:Number(l.descuentoPct)||0,descPedidoPct:dp,
   };
 }
@@ -2275,9 +2276,9 @@ function serieMensualDescuentos(items,cant){
 function ChipBeneficio({d}){
   if(!d||d.beneficio<=0)return null;
   const base={display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,marginTop:3};
-  if(d.esBono)return<span style={{...base,background:"#FBE7D6",color:"#B7691F"}}>🎁 Bonificado · valor {fmtARS(Math.round(d.bono))}{d.estimado?"*":""}</span>;
+  if(d.esBono)return<span style={{...base,background:"#FBE7D6",color:"#B7691F"}}>🎁 Bonificado · valor {fmtARS((d.bono))}{d.estimado?"*":""}</span>;
   const pct=(d.linea+d.pedido)/((d.neto+d.linea+d.pedido)||1)*100;
-  return<span style={{...base,background:RE+"12",color:"#C24545"}}>🏷️ −{fmtPct(pct)} · −{fmtARS(Math.round(d.linea+d.pedido))}</span>;
+  return<span style={{...base,background:RE+"12",color:"#C24545"}}>🏷️ −{fmtPct(pct)} · −{fmtARS((d.linea+d.pedido))}</span>;
 }
 // Panel de resumen para un cliente (cuenta corriente / ficha). items = [{v,d}] de ese cliente
 function PanelDescuentosCliente({items}){
@@ -2297,26 +2298,26 @@ function PanelDescuentosCliente({items}){
     <div style={{background:AM+"10",border:`1px solid ${AM}33`,borderRadius:10,padding:12,marginTop:12}}>
       <button onClick={()=>setAbierto(a=>!a)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
         <span style={{fontSize:15,fontWeight:700,color:CR}}>🏷️ Descuentos y bonificaciones</span>
-        <span style={{fontSize:15,fontWeight:700,color:r.beneficio>0?"#B7691F":MU}}>{r.beneficio>0?`−${fmtARS(Math.round(r.beneficio))} · ${fmtPct(r.pct)}`:"Sin descuentos"}</span>
+        <span style={{fontSize:15,fontWeight:700,color:r.beneficio>0?"#B7691F":MU}}>{r.beneficio>0?`−${fmtARS((r.beneficio))} · ${fmtPct(r.pct)}`:"Sin descuentos"}</span>
       </button>
       <div style={{fontSize:12,color:MU,marginTop:2}}>{abierto?"▲":"▼"} {r.conBeneficio} de {r.ventas} venta{r.ventas!==1?"s":""} con descuento o bonificación</div>
       {abierto&&(
         <div style={{marginTop:10}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginBottom:10}}>
-            {kpi("Venta a lista",fmtARS(Math.round(r.bruto)),"sin descuentos ni bonificaciones")}
-            {kpi("Facturado neto",fmtARS(Math.round(r.neto)),"lo que realmente se cobra")}
-            {kpi("Descuentos",r.descuento>0?`−${fmtARS(Math.round(r.descuento))}`:"—",r.descuento>0?`${fmtPct(r.pctDescuento)} de lo facturado a lista`:"ninguno",r.descuento>0?"#C24545":CR)}
-            {kpi("Bonificaciones",r.bono>0?fmtARS(Math.round(r.bono)):"—",r.bono>0?`${Math.round(r.litrosBono*10)/10} L regalados${r.estimado?"*":""}`:"ninguna",r.bono>0?"#B7691F":CR)}
+            {kpi("Venta a lista",fmtARS((r.bruto)),"sin descuentos ni bonificaciones")}
+            {kpi("Facturado neto",fmtARS((r.neto)),"lo que realmente se cobra")}
+            {kpi("Descuentos",r.descuento>0?`−${fmtARS((r.descuento))}`:"—",r.descuento>0?`${fmtPct(r.pctDescuento)} de lo facturado a lista`:"ninguno",r.descuento>0?"#C24545":CR)}
+            {kpi("Bonificaciones",r.bono>0?fmtARS((r.bono)):"—",r.bono>0?`${Math.round(r.litrosBono*10)/10} L regalados${r.estimado?"*":""}`:"ninguna",r.bono>0?"#B7691F":CR)}
             {kpi("Beneficio total",fmtPct(r.pct),"descuentos + bonif. sobre venta a lista")}
-            {kpi("Promedio por venta",r.conBeneficio>0?fmtARS(Math.round(r.promPorVentaConBeneficio)):"—",`${r.conBeneficio} de ${r.ventas} (${fmtPct(r.conBeneficio/r.ventas*100)}) con beneficio`)}
+            {kpi("Promedio por venta",r.conBeneficio>0?fmtARS((r.promPorVentaConBeneficio)):"—",`${r.conBeneficio} de ${r.ventas} (${fmtPct(r.conBeneficio/r.ventas*100)}) con beneficio`)}
           </div>
           {r.litrosPagos>0&&(
             <div style={{fontSize:13,color:MU,marginBottom:10,lineHeight:1.45}}>
-              💲 Precio por litro: lista <b style={{color:CR}}>{fmtARS(Math.round(r.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS(Math.round(r.precioLitroReal))}</b>
-              {r.precioLitroLista>r.precioLitroReal?<> (−{fmtARS(Math.round(r.precioLitroLista-r.precioLitroReal))}/L)</>:null}
+              💲 Precio por litro: lista <b style={{color:CR}}>{fmtARS((r.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS((r.precioLitroReal))}</b>
+              {r.precioLitroLista>r.precioLitroReal?<> (−{fmtARS((r.precioLitroLista-r.precioLitroReal))}/L)</>:null}
             </div>
           )}
-          {r.volumen>0&&<div style={{fontSize:13,color:MU,marginBottom:10}}>📦 Escala por volumen del catálogo: −{fmtARS(Math.round(r.volumen))} (ya incluida en el precio, no suma al beneficio).</div>}
+          {r.volumen>0&&<div style={{fontSize:13,color:MU,marginBottom:10}}>📦 Escala por volumen del catálogo: −{fmtARS((r.volumen))} (ya incluida en el precio, no suma al beneficio).</div>}
           {meses.length>0&&(
             <div style={{border:`1px solid ${BO}`,borderRadius:10,overflow:"hidden",background:"#fff"}}>
               <div style={{display:"grid",gridTemplateColumns:colsMes,gap:6,padding:"6px 10px",background:BG,fontSize:11,fontWeight:700,color:MU,textTransform:"uppercase"}}>
@@ -2325,9 +2326,9 @@ function PanelDescuentosCliente({items}){
               {meses.map(m=>(
                 <div key={m.key} style={{display:"grid",gridTemplateColumns:colsMes,gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:12,color:CR}}>
                   <span style={{textTransform:"capitalize"}}>{m.lbl}</span>
-                  <span style={{textAlign:"right"}}>{fmtARS(Math.round(m.bruto))}</span>
-                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS(Math.round(m.descuento))}`:"—"}</span>
-                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS(Math.round(m.bono)):"—"}</span>
+                  <span style={{textAlign:"right"}}>{fmtARS((m.bruto))}</span>
+                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS((m.descuento))}`:"—"}</span>
+                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS((m.bono)):"—"}</span>
                   <span style={{textAlign:"right",fontWeight:700}}>{fmtPct(m.pct)}</span>
                 </div>
               ))}
@@ -2367,7 +2368,7 @@ function aplicarCobroACliente(cliente,montoCobro,{medioPago="Efectivo",nota="",f
     if(v._split){
       const{_split,_montoPagado,_montoRestante,_cantPagada,_cantRestante,...base}=v;
       const rP=v.monto>0?_montoPagado/v.monto:0,dvP={},dvR={};
-      if(v.dv===1){["neto","volumen","linea","pedido","bono","iva"].forEach(f=>{const t=Number(v[f])||0,pp=Math.round(t*rP);dvP[f]=pp;dvR[f]=t-pp;});dvP.dvEsc=true;dvR.dvEsc=true;}
+      if(v.dv===1){["neto","volumen","linea","pedido","bono","iva"].forEach(f=>{const t=Number(v[f])||0,pp=R2(t*rP);dvP[f]=pp;dvR[f]=t-pp;});dvP.dvEsc=true;dvR.dvEsc=true;}
       ventasFinales.push({...base,...dvP,cantidad:_cantPagada,monto:_montoPagado,pagado:true,fechaCobro,medioPago,nota:nota||v.nota||"",cobroId});
       ventasFinales.push({...base,...dvR,id:uid(),cantidad:_cantRestante,monto:_montoRestante,pagado:false,fechaCobro:null,cobroId:null,_origenId:v.id});
     }else{ventasFinales.push(v);}
@@ -2621,7 +2622,7 @@ function imprimirRemito(pedido,cliente,prods,formato){
   }).join("")+servs.map(x=>ticket
       ?`<tr><td>${esc(x.concepto)} (servicio)</td><td class="r">${esc(fmtARS(x.monto||0))}</td></tr>`
       :`<tr><td>${esc(x.concepto)} <span style="color:#777">(servicio)</span></td><td class="r">—</td><td class="r">—</td><td class="r"><b>${esc(fmtARS(x.monto||0))}</b></td></tr>`).join("");
-  const montoDesc=pedido.descuentoPct>0?Math.round(totalLineas*pedido.descuentoPct/100):0;
+  const montoDesc=pedido.descuentoPct>0?R2(totalLineas*pedido.descuentoPct/100):0;
   const sr=saldoRemito(pedido,cliente);
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>${tituloComprobante(pedido)} ${esc(nro)}</title><style>
 @page{size:${pagina};margin:${margen}}
@@ -3125,8 +3126,8 @@ function FormCliente({initial,onSave,onCancel}){
         <div><Lbl t="Zona"/><select value={f.zona} onChange={s("zona")}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></div>
       </div>
       <div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número"/></div>
-      <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="numeric"/></div>
-      <div><Lbl t="% de comisión"/><input type="number" inputMode="numeric" value={f.comisionPctDefault||""} onChange={s("comisionPctDefault")} placeholder="Ej: 15"/><div style={{fontSize:13,color:MU,marginTop:4}}>Se aplica automáticamente a todo lo que se le cobre a este cliente (total o parcial) y se refleja en Caja.</div></div>
+      <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="decimal"/></div>
+      <div><Lbl t="% de comisión"/><input type="number" step="any" inputMode="decimal" value={f.comisionPctDefault||""} onChange={s("comisionPctDefault")} placeholder="Ej: 15"/><div style={{fontSize:13,color:MU,marginTop:4}}>Se aplica automáticamente a todo lo que se le cobre a este cliente (total o parcial) y se refleja en Caja.</div></div>
       <div><Lbl t="Notas"/><textarea rows={3} value={f.notas} onChange={s("notas")} placeholder="Horarios, contacto..."/></div>
       <div style={{display:"flex",gap:8,paddingTop:4}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn onClick={()=>f.nombre.trim()&&onSave(f)} disabled={!f.nombre.trim()}>Guardar</Btn></div>
     </div>
@@ -3139,20 +3140,20 @@ function FormVenta({prods,onSave,onCancel,comisionPctDefault,initial,labelGuarda
   const prod=prods.find(p=>p.id===f.producto);
   const sug=f.cantidad&&prod?montoTotal(prod,Number(f.cantidad)):null;
   const descPct=Number(f.descuentoPct)||0;
-  const sugConDescuento=sug&&descPct?Math.round(sug*(1-descPct/100)):null;
+  const sugConDescuento=sug&&descPct?R2(sug*(1-descPct/100)):null;
   const promoAplicada=f.cantidad&&prod?(prod.promos||[]).filter(pr=>Number(f.cantidad)>=pr.minCantidad).sort((a,b)=>b.minCantidad-a.minCantidad)[0]:null;
-  const gananciaEstimada=f.monto&&comisionPctDefault?Math.round(Number(f.monto)*Number(comisionPctDefault)/100):null;
+  const gananciaEstimada=f.monto&&comisionPctDefault?R2(Number(f.monto)*Number(comisionPctDefault)/100):null;
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {numeroSiguiente&&<div style={{padding:"8px 12px",borderRadius:10,background:GLT,color:G,fontSize:13,fontWeight:800}}>Comprobante siguiente · {numeroSiguiente}</div>}
       <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
       <div><Lbl t="Producto"/><SelectorProducto prods={prods} value={f.producto} onChange={v=>setF(p=>({...p,producto:v}))}/></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
-        <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"12":"24"}/>{prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:4}}>Cada lata = 0.50L</div>}</div>
-        <div><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={f.descuentoPct} onChange={s("descuentoPct")} placeholder="0"/></div>
+        <div><Lbl t={prod&&prod.envase==="Lata"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" step="any" inputMode="decimal" value={f.cantidad} onChange={s("cantidad")} placeholder={prod&&prod.envase==="Lata"?"12":"24"}/>{prod&&prod.envase==="Lata"&&<div style={{fontSize:12,color:MU,marginTop:4}}>Cada lata = 0.50L</div>}</div>
+        <div><Lbl t="% descuento"/><input type="number" step="any" inputMode="decimal" value={f.descuentoPct} onChange={s("descuentoPct")} placeholder="0"/></div>
       </div>
       <div>
-        <Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder={sugConDescuento||sug||"36000"}/>
+        <Lbl t="Monto ARS"/><input type="number" step="any" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder={sugConDescuento||sug||"36000"}/>
         {sug&&!f.monto&&(
           <button type="button" onClick={()=>setF(p=>({...p,monto:String(sugConDescuento||sug)}))} style={{display:"block",marginTop:4,fontSize:13,color:G,background:"none",border:"none",padding:0,cursor:"pointer",textDecoration:"underline"}}>
             {sugConDescuento?<>Sug. con {descPct}% desc: {fmtARS(sugConDescuento)} <span style={{color:MU,textDecoration:"line-through"}}>{fmtARS(sug)}</span></>:<>Sug: {fmtARS(sug)}</>} — usar este monto
@@ -3202,7 +3203,7 @@ function FormProveedor({initial,onSave,onCancel,marcasDisponibles,existingProvid
       <div className="proveedor-form-identidad">
         <div><Lbl t="Nombre del proveedor"/><input value={f.nombre} onChange={s("nombre")} placeholder="Nombre comercial o de fantasía" autoComplete="organization"/></div>
         <div><Lbl t="Razón social"/><input value={f.razonSocial} onChange={s("razonSocial")} placeholder="Razón social según constancia AFIP/ARCA" autoComplete="organization"/></div>
-        <div><Lbl t="CUIT (único)"/><input value={f.cuit} onChange={e=>{setF(p=>({...p,cuit:e.target.value.replace(/[^0-9-]/g,"").slice(0,13)}));setError("");}} placeholder="20-12345678-3" inputMode="numeric" autoComplete="off"/><div style={{fontSize:12,color:MU,marginTop:4}}>Se valida el dígito verificador y no puede repetirse en otro proveedor.</div></div>
+        <div><Lbl t="CUIT (único)"/><input value={f.cuit} onChange={e=>{setF(p=>({...p,cuit:e.target.value.replace(/[^0-9-]/g,"").slice(0,13)}));setError("");}} placeholder="20-12345678-3" inputMode="decimal" autoComplete="off"/><div style={{fontSize:12,color:MU,marginTop:4}}>Se valida el dígito verificador y no puede repetirse en otro proveedor.</div></div>
       </div>
       <div>
         <Lbl t="Marcas que provee"/>
@@ -3210,7 +3211,7 @@ function FormProveedor({initial,onSave,onCancel,marcasDisponibles,existingProvid
         <div style={{fontSize:13,color:MU,marginTop:6}}>Al registrar una compra, el buscador muestra los productos de las marcas seleccionadas. Sin ninguna marca, muestra todos.</div>
       </div>
       <div><Lbl t="Condición frente al IVA"/><select value={f.ivaCondicion} onChange={s("ivaCondicion")}><option value="responsable_inscripto">Responsable inscripto</option><option value="monotributo">Monotributista</option><option value="exento">Exento</option><option value="consumidor_final">Consumidor final / sin condición informada</option></select><div style={{fontSize:12,color:MU,marginTop:4}}>Se usa como referencia al cargar compras. Verificá siempre el IVA que figura en la factura.</div></div>
-      <div className="proveedor-form-contacto"><div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número" autoComplete="street-address"/></div><div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="numeric"/></div></div>
+      <div className="proveedor-form-contacto"><div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número" autoComplete="street-address"/></div><div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="decimal"/></div></div>
       <div><Lbl t="Notas"/><textarea rows={3} value={f.notas} onChange={s("notas")} placeholder="Condiciones de pago, contacto, cuenta bancaria..."/></div>
       {error&&<div role="alert" style={{background:"#c6282812",border:"1px solid #c6282844",color:"#c62828",borderRadius:10,padding:"10px 12px",fontSize:13,fontWeight:650}}>{error}</div>}
       <div style={{display:"flex",gap:8,paddingTop:4,flexWrap:"wrap"}}><Btn variant="ghost" onClick={onCancel}>Cancelar</Btn><Btn onClick={guardar}>Guardar proveedor</Btn></div>
@@ -3484,7 +3485,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
                   </button>
                 )}
                 <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
-                  <div><Lbl t={unidad(l.producto)==="u"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>setLinea(l.id,{cantidad:e.target.value})} placeholder={unidad(l.producto)==="u"?"24":"100"}/></div>
+                  <div><Lbl t={unidad(l.producto)==="u"?"Cantidad (unidades)":"Cantidad (L)"}/><input type="number" step="any" inputMode="decimal" value={l.cantidad} onChange={e=>setLinea(l.id,{cantidad:e.target.value})} placeholder={unidad(l.producto)==="u"?"24":"100"}/></div>
                   <div><Lbl t={unidad(l.producto)==="u"?"Precio por unidad ARS":"Precio por litro ARS"}/><input type="number" inputMode="decimal" step="0.01" value={l.precio} onChange={e=>setLinea(l.id,{precio:e.target.value})} placeholder="0"/></div>
                 </div>
                 <div>
@@ -3506,7 +3507,7 @@ function FormCompra({prods,marcas,impuestos,historial,initialRows,onSave,onCance
                 )}
                 {costoU!=null&&(
                   <div style={{fontSize:13,color:MU}}>
-                    {fmtARS(Math.round(costoU))} por {unidad(l.producto)==="u"?"unidad":"litro"}
+                    {fmtARS((costoU))} por {unidad(l.producto)==="u"?"unidad":"litro"}
                     {varPct!=null&&<span style={{fontWeight:700,color:varPct>0?"#C62828":varPct<0?GR:MU}}> · {varPct>0?"▲ +":varPct<0?"▼ ":""}{varPct}% vs. última compra</span>}
                   </div>
                 )}
@@ -3627,7 +3628,7 @@ function FormProspecto({initial,onSave,onCancel}){
         <div><Lbl t="Zona"/><select value={f.zona} onChange={s("zona")}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></div>
       </div>
       <div><Lbl t="Dirección"/><input value={f.direccion} onChange={s("direccion")} placeholder="Calle y número"/></div>
-      <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="numeric"/></div>
+      <div><Lbl t="WhatsApp (sin +)"/><input value={f.telefono} onChange={s("telefono")} placeholder="5491155550000" inputMode="decimal"/></div>
       <div><Lbl t="Estado"/><select value={f.estado} onChange={s("estado")}>{ESTADOS_P.map(x=><option key={x}>{x}</option>)}</select></div>
       <div><Lbl t="Notas"/><textarea rows={3} value={f.notas} onChange={s("notas")} placeholder="Por qué te parece buen prospecto..."/></div>
       <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:8,padding:"10px 12px"}}>
@@ -3681,10 +3682,10 @@ function PanelCobro({cliente,onUpdate,onDone}){
     <div style={{background:"#fff",border:`1px solid ${G}33`,borderRadius:10,padding:14}}>
       <div style={{marginBottom:8}}>
         <Lbl t="Monto cobrado"/>
-        <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
+        <input type="number" step="any" inputMode="decimal" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
         <div style={{display:"flex",gap:6,marginTop:6}}>
-          <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
-          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo*50)/100)})</button>
+          <button onClick={()=>setMonto(String(R2(saldo)))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS((saldo*50)/100)})</button>
         </div>
       </div>
       <div style={{marginBottom:8}}>
@@ -3701,7 +3702,7 @@ function PanelCobro({cliente,onUpdate,onDone}){
       {montoNum>0&&(
         <div style={{fontSize:14,color:MU,marginBottom:10}}>
           {esParcial?"Pago parcial":"Salda toda la cuenta"} de <strong style={{color:G}}>{fmtARS(montoNum)}</strong> · Saldo restante: <strong style={{color:"#C62828"}}>{fmtARS(Math.max(0,saldo-montoNum))}</strong>
-          {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS(Math.round(Math.max(0,montoNum-totalSaldosPendientes(cliente))*Number(cliente.comisionPctDefault)/100))}</strong></>}
+          {!!cliente.comisionPctDefault&&<> · Comisión ({cliente.comisionPctDefault}%): <strong style={{color:G}}>{fmtARS((Math.max(0,montoNum-totalSaldosPendientes(cliente))*Number(cliente.comisionPctDefault)/100))}</strong></>}
         </div>
       )}
       <div style={{display:"flex",gap:8}}>
@@ -3847,10 +3848,10 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
     <div style={{background:"#fff",border:`1px solid ${G}33`,borderRadius:10,padding:14}}>
       <div style={{marginBottom:8}}>
         <Lbl t="Monto pagado"/>
-        <input type="number" inputMode="numeric" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
+        <input type="number" step="any" inputMode="decimal" value={monto} onChange={e=>setMonto(e.target.value)} placeholder={`Deuda total: ${fmtARS(saldo)}`} autoFocus/>
         <div style={{display:"flex",gap:6,marginTop:6}}>
-          <button onClick={()=>setMonto(String(saldo))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
-          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS(Math.round(saldo*50)/100)})</button>
+          <button onClick={()=>setMonto(String(R2(saldo)))} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:G+"15",color:G,border:`1px solid ${G}33`,cursor:"pointer"}}>Todo ({fmtARS(saldo)})</button>
+          <button onClick={()=>setMonto(saldo>1?String(Math.round(saldo*50)/100):"")} style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:6,background:BO+"55",color:MU,border:`1px solid ${BO}`,cursor:"pointer"}}>Mitad ({fmtARS((saldo*50)/100)})</button>
         </div>
       </div>
       {!esEcheq&&<div style={{marginBottom:8}}>
@@ -3866,13 +3867,13 @@ function PanelPagoProveedor({proveedor,onUpdate,onDone}){
         <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:10,marginBottom:10,display:"flex",flexDirection:"column",gap:8}}>
           <div style={{fontSize:13,fontWeight:700,color:CR}}>🧾 Datos del ECHEQ emitido</div>
           <div><Lbl t="Banco emisor"/><input value={eq.banco} onChange={setE("banco")} placeholder="Ej: Banco Galicia"/></div>
-          <div><Lbl t="N° de cheque"/><input value={eq.numero} onChange={setE("numero")} inputMode="numeric" placeholder="Ej: 00012345"/></div>
+          <div><Lbl t="N° de cheque"/><input value={eq.numero} onChange={setE("numero")} inputMode="decimal" placeholder="Ej: 00012345"/></div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
             <div><Lbl t="Fecha de emisión"/><input type="date" value={eq.fechaEmision} onChange={setE("fechaEmision")}/></div>
             <div><Lbl t="Fecha de pago (vence)"/><input type="date" value={eq.fechaPago} min={eq.fechaEmision||undefined} onChange={setE("fechaPago")}/></div>
           </div>
           <div><Lbl t="Beneficiario"/><input value={eq.beneficiario} onChange={setE("beneficiario")}/></div>
-          <div><Lbl t="CUIT del beneficiario (opcional)"/><input value={eq.cuit} onChange={setE("cuit")} inputMode="numeric" placeholder="20-12345678-9"/></div>
+          <div><Lbl t="CUIT del beneficiario (opcional)"/><input value={eq.cuit} onChange={setE("cuit")} inputMode="decimal" placeholder="20-12345678-9"/></div>
           <div style={{fontSize:12,color:MU}}>Importe del cheque: {montoNum?fmtARS(montoNum):"el monto pagado"}. Va al calendario de Inicio el día del vencimiento.</div>
         </div>
       )}
@@ -3902,7 +3903,7 @@ function FormSaldoAnterior({initial,onSave,onCancel}){
       <div style={{fontSize:15,fontWeight:700,color:CR}}>{initial?"Editar saldo anterior":"Cargar saldo anterior"}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Fecha de la deuda"/><input type="date" value={f.fecha} max={hoyISO()} onChange={e=>setF(x=>({...x,fecha:e.target.value}))}/></div>
-        <div><Lbl t="Monto ($)"/><input type="number" inputMode="numeric" value={f.monto} onChange={e=>setF(x=>({...x,monto:e.target.value}))} placeholder="0"/></div>
+        <div><Lbl t="Monto ($)"/><input type="number" step="any" inputMode="decimal" value={f.monto} onChange={e=>setF(x=>({...x,monto:e.target.value}))} placeholder="0"/></div>
       </div>
       <div><Lbl t="Descripción"/><textarea rows={3} value={f.descripcion} onChange={e=>setF(x=>({...x,descripcion:e.target.value}))} maxLength={300} placeholder="Ej: Saldo del sistema anterior · facturas A-0001-123 y 130"/></div>
       <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Poné la fecha original de la deuda si querés que cuente los días de mora. Este saldo suma a la cuenta corriente, pero no entra en ventas, métricas ni comisiones.</div>
@@ -3924,7 +3925,7 @@ function FormAjusteSaldo({actual,esProveedor,onSave,onCancel}){
     <div style={{background:"#fff",border:`1px solid ${AM}66`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:10}}>
       <div style={{fontSize:15,fontWeight:700,color:CR}}>Ajustar saldo</div>
       <div style={{fontSize:14,color:MU}}>Saldo actual: <b style={{color:CR}}>{fmtARS(actual)}</b></div>
-      <div><Lbl t="Saldo correcto ($)"/><input type="number" inputMode="numeric" value={nuevo} onChange={e=>setNuevo(e.target.value)} placeholder="Cómo debería quedar el saldo"/></div>
+      <div><Lbl t="Saldo correcto ($)"/><input type="number" step="any" inputMode="decimal" value={nuevo} onChange={e=>setNuevo(e.target.value)} placeholder="Cómo debería quedar el saldo"/></div>
       <div><Lbl t="Motivo (opcional)"/><input value={motivo} onChange={e=>setMotivo(e.target.value)} maxLength={120} placeholder="Ej: diferencia de precio, nota de crédito, error de carga"/></div>
       {hay&&dif!==0&&<div style={{fontSize:13,fontWeight:700,color:dif>0?"#C62828":GR}}>{dif>0?`Se suman ${fmtARS(dif)} a la deuda`:`Se descuentan ${fmtARS(-dif)} de la deuda`} (queda en {fmtARS(n)}).</div>}
       {hay&&dif===0&&<div style={{fontSize:13,color:MU}}>El saldo ya es ese, no hay nada que ajustar.</div>}
@@ -4573,7 +4574,7 @@ function Inicio({clientes,pedidos,prods,notas,metaSemanal,setMetaSemanal,setTab,
         </div>
         {editandoMeta?(
           <div style={{display:"flex",gap:8}}>
-            <input type="number" inputMode="numeric" value={metaTmp} onChange={e=>setMetaTmp(e.target.value)} placeholder="Litros por semana" autoFocus/>
+            <input type="number" step="any" inputMode="decimal" value={metaTmp} onChange={e=>setMetaTmp(e.target.value)} placeholder="Litros por semana" autoFocus/>
             <button onClick={()=>{const n=Number(metaTmp);if(n>0)setMetaSemanal(n);setEditandoMeta(false);}} style={{padding:"0 14px",borderRadius:8,background:G,color:"#fff",border:"none",fontWeight:700,cursor:"pointer"}}>{I.check}</button>
           </div>
         ):metaSemanal>0?(
@@ -5387,16 +5388,11 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods,acciones}){
         <span className="bebas" style={{fontSize:24,color:saldo>0?"#C62828":GR}}>{fmtARS(saldo)}</span>
       </div>
 
-      <div style={{display:"flex",gap:8,marginBottom:8}}><ExportarMovimientos tipo="proveedor" entidad={proveedor} prods={prods}/></div>
-      <ModalFechaCobro datos={pedirPago} onClose={()=>setPedirPago(null)}/>
-      <RecibosEntidad tipo="pago" entidadId={proveedor.id}/>
-      <BloqueSaldosAnteriores entidad={proveedor} onUpdate={onUpdate} esProveedor/>
-
       {saldo>0&&(
         <>
           {/* Registrar pago — mismo panel unificado que con clientes */}
           {!showPago?(
-            <button onClick={()=>setShowPago(true)} style={{width:"100%",padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <button onClick={()=>setShowPago(true)} style={{width:"100%",marginBottom:10,padding:"12px 0",borderRadius:10,background:GR,color:"#fff",border:"none",fontSize:16,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               {I.check} Registrar pago
             </button>
           ):(
@@ -5404,6 +5400,11 @@ function CuentaCorrienteProveedor({proveedor,onUpdate,prods,acciones}){
           )}
         </>
       )}
+      <div style={{display:"flex",gap:8,marginBottom:8}}><ExportarMovimientos tipo="proveedor" entidad={proveedor} prods={prods}/></div>
+      <ModalFechaCobro datos={pedirPago} onClose={()=>setPedirPago(null)}/>
+      <RecibosEntidad tipo="pago" entidadId={proveedor.id}/>
+      <BloqueSaldosAnteriores entidad={proveedor} onUpdate={onUpdate} esProveedor/>
+
 
       <div style={{marginTop:12}}>
         <MovimientosProveedorCards proveedor={proveedor} prods={prods} acciones={{
@@ -5935,7 +5936,7 @@ function FormGasto({initial,onSave,onCancel,onDelete}){
       <SelectCategoriaGasto tipo={f.tipo} value={f.categoria} onChange={v=>setF(p=>({...p,categoria:v}))}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-        <div><Lbl t="Monto ARS"/><input type="number" inputMode="numeric" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
+        <div><Lbl t="Monto ARS"/><input type="number" step="any" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
       </div>
       <div><Lbl t="Descripción (opcional)"/><input value={f.descripcion} onChange={s("descripcion")} placeholder="Ej: Carga de nafta camioneta"/></div>
       <div>
@@ -6295,7 +6296,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       const descL=Number(campo==="descuentoPct"?valor:l.descuentoPct)||0;
       if(prod&&cant>0){
         const base=montoTotal(prod,cant);
-        updated.monto=String(Math.round(base*(1-Math.min(descL,100)/100)));
+        updated.monto=String(R2(base*(1-Math.min(descL,100)/100)));
       }
     }
     return updated;
@@ -6308,16 +6309,16 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
   const promoProgresoSel=clienteSel?progresoPromo51(clienteSel,promo51,prods,pedidos):null;
   const comisionPctSel=clienteSel&&clienteSel.comisionPctDefault?Number(clienteSel.comisionPctDefault):0;
   const descPctNum=Number(descuentoPct)||0;
-  const montoDescuento=Math.round(totalPedido*descPctNum/100);
+  const montoDescuento=R2(totalPedido*descPctNum/100);
   const subtotalConDescuento=totalPedido-montoDescuento;
   const serviciosValidos=servicios.filter(x=>Number(x.monto)>0).map(x=>({id:x.id,concepto:(x.concepto||"").trim()||"Servicio",monto:Number(x.monto)}));
   const totalServicios=serviciosValidos.reduce((a,x)=>a+x.monto,0);
-  const montoIVAProd=incluyeIVA?Math.round(subtotalConDescuento*0.21):0;
-  const montoIVAServ=incluyeIVA?Math.round(totalServicios*0.21):0;
+  const montoIVAProd=incluyeIVA?R2(subtotalConDescuento*0.21):0;
+  const montoIVAServ=incluyeIVA?R2(totalServicios*0.21):0;
   const montoIVA=montoIVAProd+montoIVAServ;
   const totalProductosFinal=subtotalConDescuento+montoIVAProd;   // solo productos (con su descuento e IVA)
   const totalFinal=totalProductosFinal+totalServicios+montoIVAServ;
-  const gananciaEstimadaPedido=comisionPctSel?Math.round(totalProductosFinal*comisionPctSel/100):0;
+  const gananciaEstimadaPedido=comisionPctSel?R2(totalProductosFinal*comisionPctSel/100):0;
  
   const confirmarPedido=()=>{
     if(!clienteId||lineasValidas.length===0)return;
@@ -6356,7 +6357,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
         const prod=prods.find(x=>x.id===l.productoId);
         return{
           id:uid(),fecha:ped.fechaEntrega,producto:l.productoId,remitoNro:nroRem,pedidoId:ped.id,
-          cantidad:l.cantidad,monto:Math.round(l.monto*factor),pagado:ped.pagado,
+          cantidad:l.cantidad,monto:R2(l.monto*factor),pagado:ped.pagado,
           promoAcumulable:!!(ped.promoAplica&&prodCuentaParaPromo(prod,promo51)),esBono:!!l.esBono,
           ...desgloseAlEntregar(prod,l,ped),
         };
@@ -6364,7 +6365,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
       // Otros servicios: una "venta" por servicio, con el importe manual (+IVA si es factura). cantidad 0 → no cuenta en litros, stock ni estadísticas de productos
       const ventasServicio=(ped.servicios||[]).map(sv=>({
         id:uid(),fecha:ped.fechaEntrega,producto:sv.concepto||"Servicio",servicio:true,concepto:sv.concepto||"Servicio",remitoNro:nroRem,pedidoId:ped.id,
-        cantidad:0,monto:Math.round(sv.monto*(ped.incluyeIVA?1.21:1)),pagado:ped.pagado,promoAcumulable:false,esBono:false,
+        cantidad:0,monto:R2(sv.monto*(ped.incluyeIVA?1.21:1)),pagado:ped.pagado,promoAcumulable:false,esBono:false,
       }));
       return{...c,ventas:[...c.ventas,...nuevasVentas,...ventasServicio]};
     }));
@@ -6647,16 +6648,16 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                       <div>
                         <Lbl t={prod&&prod.envase==="Lata"?"Cantidad (u.)":"Cantidad (L)"}/>
-                        <input type="number" inputMode="numeric" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder={prod&&prod.envase==="Lata"?"12":"12"}/>
+                        <input type="number" step="any" inputMode="decimal" value={l.cantidad} onChange={e=>updateLinea(l.id,"cantidad",e.target.value)} placeholder={prod&&prod.envase==="Lata"?"12":"12"}/>
                         {prod&&prod.envase==="Lata"&&<div style={{fontSize:11,color:MU,marginTop:2}}>1 lata = 0.50L</div>}
                       </div>
                       <div>
                         <Lbl t="% desc."/>
-                        <input type="number" inputMode="numeric" value={l.descuentoPct} onChange={e=>updateLinea(l.id,"descuentoPct",e.target.value)} placeholder="0"/>
+                        <input type="number" step="any" inputMode="decimal" value={l.descuentoPct} onChange={e=>updateLinea(l.id,"descuentoPct",e.target.value)} placeholder="0"/>
                       </div>
                       <div>
                         <Lbl t="Monto ARS"/>
-                        <input type="number" inputMode="numeric" value={l.monto} onChange={e=>updateLinea(l.id,"monto",e.target.value)} placeholder={sug||"0"}/>
+                        <input type="number" step="any" inputMode="decimal" value={l.monto} onChange={e=>updateLinea(l.id,"monto",e.target.value)} placeholder={sug||"0"}/>
                         {sug&&!l.monto&&<div style={{fontSize:11,color:G,marginTop:2}}>Sug: {fmtARS(sug)}</div>}
                       </div>
                     </div>
@@ -6679,7 +6680,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
             {servicios.map(sv=>(
               <div key={sv.id} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 110px 34px",gap:6,marginBottom:6,alignItems:"center"}}>
                 <input value={sv.concepto} onChange={e=>setServicios(prev=>prev.map(x=>x.id===sv.id?{...x,concepto:e.target.value}:x))} placeholder="Ej: Flete, instalación, alquiler..."/>
-                <input type="number" inputMode="numeric" value={sv.monto} onChange={e=>setServicios(prev=>prev.map(x=>x.id===sv.id?{...x,monto:e.target.value}:x))} placeholder="Importe"/>
+                <input type="number" step="any" inputMode="decimal" value={sv.monto} onChange={e=>setServicios(prev=>prev.map(x=>x.id===sv.id?{...x,monto:e.target.value}:x))} placeholder="Importe"/>
                 <button onClick={()=>setServicios(prev=>prev.filter(x=>x.id!==sv.id))} style={{background:"none",border:"none",color:RE,fontSize:20,cursor:"pointer",padding:0}}>×</button>
               </div>
             ))}
@@ -6694,7 +6695,7 @@ function Pedidos({pedidos,setPedidos,clientes,setClientes,prods,setProds,promo51
                 <span style={{fontSize:16,fontWeight:600,color:CR}}>{fmtARS(totalPedido)}</span>
               </div>
 
-              <div style={{marginBottom:10}}><Lbl t="% descuento"/><input type="number" inputMode="numeric" value={descuentoPct} onChange={e=>setDescuentoPct(e.target.value)} placeholder="0"/></div>
+              <div style={{marginBottom:10}}><Lbl t="% descuento"/><input type="number" step="any" inputMode="decimal" value={descuentoPct} onChange={e=>setDescuentoPct(e.target.value)} placeholder="0"/></div>
 
               {(descPctNum>0||incluyeIVA||totalServicios>0)&&(
                 <div style={{fontSize:14,color:MU,marginBottom:8}}>
@@ -7003,8 +7004,8 @@ function Productos({prods,setProds,promo51,envasesExtra,categorias}){
                 ))}
                 {showPromo===p.id?(
                   <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) auto",gap:8,marginTop:8}}>
-                    <div><Lbl t="Desde (L)"/><input type="number" value={pf.minCantidad} onChange={e=>setPf(x=>({...x,minCantidad:e.target.value}))} placeholder="48"/></div>
-                    <div><Lbl t="Precio/L"/><input type="number" value={pf.precioUnitario} onChange={e=>setPf(x=>({...x,precioUnitario:e.target.value}))} placeholder="1400"/></div>
+                    <div><Lbl t="Desde (L)"/><input type="number" step="any" value={pf.minCantidad} onChange={e=>setPf(x=>({...x,minCantidad:e.target.value}))} placeholder="48"/></div>
+                    <div><Lbl t="Precio/L"/><input type="number" step="any" value={pf.precioUnitario} onChange={e=>setPf(x=>({...x,precioUnitario:e.target.value}))} placeholder="1400"/></div>
                     <div style={{display:"flex",alignItems:"flex-end",gap:6}}>
                       <button onClick={()=>agregarPromo(p.id)} style={{padding:"10px 12px",borderRadius:8,background:G,color:"#fff",border:"none",fontWeight:700,cursor:"pointer"}}>{I.check}</button>
                       <button onClick={()=>setShowPromo(null)} style={{padding:"10px 10px",borderRadius:8,background:"none",border:`1px solid ${BO}`,color:MU,cursor:"pointer"}}>{I.x}</button>
@@ -7264,7 +7265,7 @@ function CajaBalance({todas,proveedores,gastos,sueldos}){
     const hoyC=hoyISO();
     const echeqPorId={};(proveedores||[]).forEach(p=>(p.echeqs||[]).forEach(e=>{echeqPorId[e.id]=e;}));
     todas.forEach(v=>{
-      const ganancia=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+      const ganancia=R2((v.monto||0)*(v.comisionPct||0)/100);
       if(!caja){arr.push({tipo:"haber",fecha:v.fecha||"",monto:v.monto||0,ganancia,concepto:`Venta · ${v.clienteNombre}`,hecho:!!v.pagado,cat:"venta"});return;}
       if(!v.pagado)return;
       const f=(v.echeq&&v.echeq.fechaPago)||v.fechaCobro||v.fecha||"";
@@ -7429,8 +7430,8 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
   const todas=useMemo(()=>clientes.flatMap(c=>c.ventas.map(v=>({...v,clienteId:c.id,clienteNombre:c.nombre,comisionPct:v.servicio?0:(Number(c.comisionPctDefault)||0)}))),[clientes]);
   const clientesSinComision=useMemo(()=>clientes.filter(c=>(c.ventas||[]).length>0&&!Number(c.comisionPctDefault)),[clientes]);
   const totalFacturado=todas.reduce((s,v)=>s+(v.monto||0),0);
-  const totalGanancia=todas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
-  const gananciaCobrada=todas.filter(v=>v.pagado).reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const totalGanancia=todas.reduce((s,v)=>s+R2((v.monto||0)*(v.comisionPct||0)/100),0);
+  const gananciaCobrada=todas.filter(v=>v.pagado).reduce((s,v)=>s+R2((v.monto||0)*(v.comisionPct||0)/100),0);
   const gananciaPendiente=totalGanancia-gananciaCobrada;
 
   // Liquidación de comisiones: la fábrica te paga en montos sueltos, sin relación 1 a 1 con ventas puntuales.
@@ -7474,7 +7475,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
     setComisiones(prev=>(prev||[]).filter(l=>l.id!==id));
   };
   const movimientosComision=useMemo(()=>{
-    const debes=todas.filter(v=>v.pagado).map(v=>({tipo:"debe",fecha:v.fecha,monto:Math.round((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta ${v.clienteNombre}`}));
+    const debes=todas.filter(v=>v.pagado).map(v=>({tipo:"debe",fecha:v.fecha,monto:R2((v.monto||0)*(v.comisionPct||0)/100),concepto:`Venta ${v.clienteNombre}`}));
     const haberes=liquidacionesOrdenadas.map(l=>({tipo:"haber",fecha:l.fecha,monto:Number(l.monto)||0,concepto:l.nota?`Liquidación — ${l.nota}`:"Liquidación de comisión"}));
     return[...debes,...haberes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
   },[todas,liquidacionesOrdenadas]);
@@ -7533,7 +7534,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
   const mesActual=hoy.slice(0,7);
   const delMes=todas.filter(v=>(v.fecha||"").slice(0,7)===mesActual);
   const facturadoMes=delMes.reduce((s,v)=>s+(v.monto||0),0);
-  const gananciaMes=delMes.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const gananciaMes=delMes.reduce((s,v)=>s+R2((v.monto||0)*(v.comisionPct||0)/100),0);
 
   const dHoy=new Date();
   const dMesAnterior=new Date(dHoy.getFullYear(),dHoy.getMonth()-1,1);
@@ -7541,7 +7542,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
   const lblMesAnterior=dMesAnterior.toLocaleDateString("es-AR",{month:"long",year:"numeric"});
   const delMesAnterior=todas.filter(v=>(v.fecha||"").slice(0,7)===mesAnterior);
   const facturadoMesAnterior=delMesAnterior.reduce((s,v)=>s+(v.monto||0),0);
-  const gananciaMesAnterior=delMesAnterior.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0);
+  const gananciaMesAnterior=delMesAnterior.reduce((s,v)=>s+R2((v.monto||0)*(v.comisionPct||0)/100),0);
   const pctVar=(actual,anterior)=>anterior>0?Math.round(((actual-anterior)/anterior)*100):(actual>0?100:0);
   const varFacturado=pctVar(facturadoMes,facturadoMesAnterior);
   const varGanancia=pctVar(gananciaMes,gananciaMesAnterior);
@@ -7587,7 +7588,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
     meses.forEach(m=>map[m.key]=0);
     todas.forEach(v=>{
       const key=(v.fecha||"").slice(0,7);
-      if(key in map)map[key]+=Math.round((v.monto||0)*(v.comisionPct||0)/100);
+      if(key in map)map[key]+=R2((v.monto||0)*(v.comisionPct||0)/100);
     });
     return meses.map(m=>({...m,ganancia:map[m.key]}));
   },[todas]);
@@ -7623,7 +7624,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
     cantidad:filtradas.length,
     litros:filtradas.reduce((s,v)=>s+litrosDeItem(v.cantidad,envaseMap[v.producto]),0),
     facturado:filtradas.reduce((s,v)=>s+(v.monto||0),0),
-    ganancia:filtradas.reduce((s,v)=>s+Math.round((v.monto||0)*(v.comisionPct||0)/100),0),
+    ganancia:filtradas.reduce((s,v)=>s+R2((v.monto||0)*(v.comisionPct||0)/100),0),
     cobrado:filtradas.filter(v=>v.pagado).reduce((s,v)=>s+(v.monto||0),0),
     pendiente:filtradas.filter(v=>!v.pagado).reduce((s,v)=>s+(v.monto||0),0),
   }),[filtradas]);
@@ -7634,7 +7635,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
     const header="Cliente,Fecha venta,Fecha cobro,Producto,Cantidad (L),Monto ARS,% comisión,Ganancia ARS,Estado,Medio de pago";
     const filas=filtradas.map(v=>[
       `"${v.clienteNombre}"`,v.fecha,v.fechaCobro||"",`"${v.producto}"`,v.cantidad,v.monto,v.comisionPct||0,
-      Math.round((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`
+      R2((v.monto||0)*(v.comisionPct||0)/100),v.pagado?"Pagado":"Pendiente",`"${v.medioPago||""}"`
     ].join(","));
     const blob=new Blob(["\uFEFF"+header+"\n"+filas.join("\n")],{type:"text/csv;charset=utf-8;"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);
@@ -7716,7 +7717,7 @@ function Caja({clientes,setClientes,prods,comisiones,setComisiones,pedidos,prove
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
                 <label style={{fontSize:12,color:MU,display:"block",marginBottom:4}}>Monto liquidado</label>
-                <input type="number" inputMode="decimal" value={montoLiquidar} onChange={e=>setMontoLiquidar(e.target.value)} placeholder="Ej: 45000" style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${BO}`,fontSize:15}}/>
+                <input type="number" step="any" inputMode="decimal" value={montoLiquidar} onChange={e=>setMontoLiquidar(e.target.value)} placeholder="Ej: 45000" style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${BO}`,fontSize:15}}/>
               </div>
               <div>
                 <label style={{fontSize:12,color:MU,display:"block",marginBottom:4}}>Fecha</label>
@@ -8466,13 +8467,13 @@ function Rentabilidad({clientes,proveedores,prods}){
       </div>}
 
       <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:10,padding:"10px 12px",marginBottom:16,fontSize:13,color:MU,lineHeight:1.4}}>
-        {mes?<>ℹ️ Ventas de {fmtMesLargo(mes)} valuadas al costo promedio por litro de todo lo comprado hasta ese mes (la cerveza que vendés pudo comprarse antes). Comprado en el mes: <b style={{color:CR}}>{fmtARS(Math.round(comprasDelMes))}</b>. Es una estimación, no contabilidad exacta.</>:<>ℹ️ Es un promedio histórico acumulado (todo lo comprado vs. todo lo vendido de cada producto), no un seguimiento de lotes puntuales de stock. Sirve como estimación, no como contabilidad exacta.</>}
+        {mes?<>ℹ️ Ventas de {fmtMesLargo(mes)} valuadas al costo promedio por litro de todo lo comprado hasta ese mes (la cerveza que vendés pudo comprarse antes). Comprado en el mes: <b style={{color:CR}}>{fmtARS((comprasDelMes))}</b>. Es una estimación, no contabilidad exacta.</>:<>ℹ️ Es un promedio histórico acumulado (todo lo comprado vs. todo lo vendido de cada producto), no un seguimiento de lotes puntuales de stock. Sirve como estimación, no como contabilidad exacta.</>}
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:20}}>
         {[
           {l:"Total vendido",v:fmtARS(totales.montoVendido)},
-          {l:mes?"Costo de lo vendido":"Total comprado",v:fmtARS(Math.round(totales.montoComprado))},
+          {l:mes?"Costo de lo vendido":"Total comprado",v:fmtARS((totales.montoComprado))},
           {l:"Ganancia bruta",v:fmtARS(totales.gananciaBruta)},
           {l:"Margen global",v:totales.margenGlobal!=null?`${totales.margenGlobal}%`:"—"},
         ].map(s=>(
@@ -8490,7 +8491,7 @@ function Rentabilidad({clientes,proveedores,prods}){
             <div key={c.categoria} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,padding:"7px 0",borderTop:`1px solid ${BO}`}}>
               <div style={{minWidth:0}}>
                 <div style={{fontSize:15,fontWeight:600,color:CR}}>{c.categoria}</div>
-                <div style={{fontSize:12,color:MU}}>Vendido {fmtARS(Math.round(c.vendido))} · Comprado {fmtARS(Math.round(c.comprado))}</div>
+                <div style={{fontSize:12,color:MU}}>Vendido {fmtARS((c.vendido))} · Comprado {fmtARS((c.comprado))}</div>
               </div>
               {c.margenPct!=null?<span style={{fontSize:15,fontWeight:700,color:c.margenPct<0?RE:G,whiteSpace:"nowrap"}}>{c.margenPct>0?"+":""}{c.margenPct}%</span>:<span style={{fontSize:13,fontWeight:700,color:MU}}>Sin datos</span>}
             </div>
@@ -8527,18 +8528,18 @@ function Rentabilidad({clientes,proveedores,prods}){
                 <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:8}}>
                   <div>
                     <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Costo prom./{u}</div>
-                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.costoPorL*fu))}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS((p.costoPorL*fu))}</div>
                     {p.costoDeFicha&&<div style={{fontSize:11,color:AM}}>costo de la ficha del producto</div>}
                   </div>
                   <div>
                     <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em"}}>Venta prom./{u}</div>
-                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS(Math.round(p.ventaPorL*fu))}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:CR}}>{fmtARS((p.ventaPorL*fu))}</div>
                   </div>
                 </div>
                 <div style={{height:8,background:BG,borderRadius:4,overflow:"hidden",marginBottom:8}}>
                   <div style={{width:`${Math.min(100,Math.max(0,Math.round((p.costoPorL/p.ventaPorL)*100)))}%`,height:"100%",background:p.margenPct<0?RE:G,borderRadius:4}}/>
                 </div>
-                <div style={{fontSize:13,color:MU}}>Ganancia por {u}: <strong style={{color:p.gananciaPorL<0?RE:G}}>{fmtARS(Math.round(p.gananciaPorL*fu))}</strong> · Ganancia estimada sobre lo vendido: <strong style={{color:p.gananciaEstimada<0?RE:G}}>{fmtARS(p.gananciaEstimada)}</strong></div>
+                <div style={{fontSize:13,color:MU}}>Ganancia por {u}: <strong style={{color:p.gananciaPorL<0?RE:G}}>{fmtARS((p.gananciaPorL*fu))}</strong> · Ganancia estimada sobre lo vendido: <strong style={{color:p.gananciaEstimada<0?RE:G}}>{fmtARS(p.gananciaEstimada)}</strong></div>
               </>
             )}
           </div>
@@ -8876,29 +8877,29 @@ function Metricas({clientes,prods,pedidos}){
             <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,marginBottom:12}}>
               <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:12}}>
                 <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Venta a lista</div>
-                <div className="bebas" style={{fontSize:20,color:CR}}>{fmtARS(Math.round(resDesc.bruto))}</div>
-                <div style={{fontSize:12,color:MU,marginTop:1}}>Neto facturado {fmtARS(Math.round(resDesc.neto))}</div>
+                <div className="bebas" style={{fontSize:20,color:CR}}>{fmtARS((resDesc.bruto))}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>Neto facturado {fmtARS((resDesc.neto))}</div>
               </div>
               <div style={{background:BG,border:`1px solid ${RE}22`,borderRadius:14,padding:12}}>
                 <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Descontado</div>
-                <div className="bebas" style={{fontSize:20,color:resDesc.descuento>0?"#C24545":CR}}>{resDesc.descuento>0?`−${fmtARS(Math.round(resDesc.descuento))}`:"—"}</div>
+                <div className="bebas" style={{fontSize:20,color:resDesc.descuento>0?"#C24545":CR}}>{resDesc.descuento>0?`−${fmtARS((resDesc.descuento))}`:"—"}</div>
                 <div style={{fontSize:12,color:MU,marginTop:1}}>{fmtPct(resDesc.pctDescuento)} de lo facturado a lista</div>
               </div>
               <div style={{background:BG,border:`1px solid ${AM}33`,borderRadius:14,padding:12}}>
                 <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Bonificado</div>
-                <div className="bebas" style={{fontSize:20,color:resDesc.bono>0?"#B7691F":CR}}>{resDesc.bono>0?fmtARS(Math.round(resDesc.bono)):"—"}</div>
+                <div className="bebas" style={{fontSize:20,color:resDesc.bono>0?"#B7691F":CR}}>{resDesc.bono>0?fmtARS((resDesc.bono)):"—"}</div>
                 <div style={{fontSize:12,color:MU,marginTop:1}}>{Math.round(resDesc.litrosBono*10)/10} L regalados{resDesc.estimado?"*":""}</div>
               </div>
               <div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:12}}>
                 <div style={{fontSize:12,color:MU,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Beneficio total</div>
                 <div className="bebas" style={{fontSize:20,color:CR}}>{fmtPct(resDesc.pct)}</div>
-                <div style={{fontSize:12,color:MU,marginTop:1}}>{resDesc.conBeneficio} de {resDesc.ventas} venta{resDesc.ventas!==1?"s":""} · prom. {resDesc.conBeneficio>0?fmtARS(Math.round(resDesc.promPorVentaConBeneficio)):"—"}</div>
+                <div style={{fontSize:12,color:MU,marginTop:1}}>{resDesc.conBeneficio} de {resDesc.ventas} venta{resDesc.ventas!==1?"s":""} · prom. {resDesc.conBeneficio>0?fmtARS((resDesc.promPorVentaConBeneficio)):"—"}</div>
               </div>
             </div>
             {resDesc.litrosPagos>0&&(
               <div style={{fontSize:13,color:MU,marginBottom:16,lineHeight:1.45}}>
-                💲 Precio promedio por litro: lista <b style={{color:CR}}>{fmtARS(Math.round(resDesc.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS(Math.round(resDesc.precioLitroReal))}</b>
-                {resDesc.precioLitroLista>resDesc.precioLitroReal?<> (−{fmtARS(Math.round(resDesc.precioLitroLista-resDesc.precioLitroReal))}/L)</>:null}
+                💲 Precio promedio por litro: lista <b style={{color:CR}}>{fmtARS((resDesc.precioLitroLista))}</b> → real <b style={{color:CR}}>{fmtARS((resDesc.precioLitroReal))}</b>
+                {resDesc.precioLitroLista>resDesc.precioLitroReal?<> (−{fmtARS((resDesc.precioLitroLista-resDesc.precioLitroReal))}/L)</>:null}
               </div>
             )}
 
@@ -8906,7 +8907,7 @@ function Metricas({clientes,prods,pedidos}){
             <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:6,height:90,marginBottom:10}}>
               {descMensual.map((m,i)=>(
                 <div key={m.key} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,height:"100%",justifyContent:"flex-end"}}>
-                  <div title={`${m.lbl}: ${fmtPct(m.pct)} · ${fmtARS(Math.round(m.beneficio))}`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.pct/maxPctMes)*68))}px`,borderRadius:6,background:i===descMensual.length-1?AM:AM+"44",transition:"height 0.3s"}}/>
+                  <div title={`${m.lbl}: ${fmtPct(m.pct)} · ${fmtARS((m.beneficio))}`} style={{width:"100%",maxWidth:28,height:`${Math.max(4,Math.round((m.pct/maxPctMes)*68))}px`,borderRadius:6,background:i===descMensual.length-1?AM:AM+"44",transition:"height 0.3s"}}/>
                   <span style={{fontSize:11,fontWeight:i===descMensual.length-1?700:500,color:i===descMensual.length-1?AM:MU,textTransform:"capitalize"}}>{m.lbl}</span>
                 </div>
               ))}
@@ -8918,9 +8919,9 @@ function Metricas({clientes,prods,pedidos}){
               {descMensual.map(m=>(
                 <div key={m.key} style={{display:"grid",gridTemplateColumns:"0.8fr 1.2fr 1fr 1fr 0.8fr",gap:6,padding:"7px 10px",borderTop:`1px solid ${BO}`,fontSize:12,color:CR}}>
                   <span style={{textTransform:"capitalize"}}>{m.lbl}</span>
-                  <span style={{textAlign:"right"}}>{m.ventas?fmtARS(Math.round(m.bruto)):"—"}</span>
-                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS(Math.round(m.descuento))}`:"—"}</span>
-                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS(Math.round(m.bono)):"—"}</span>
+                  <span style={{textAlign:"right"}}>{m.ventas?fmtARS((m.bruto)):"—"}</span>
+                  <span style={{textAlign:"right",color:m.descuento>0?"#C24545":MU}}>{m.descuento>0?`−${fmtARS((m.descuento))}`:"—"}</span>
+                  <span style={{textAlign:"right",color:m.bono>0?"#B7691F":MU}}>{m.bono>0?fmtARS((m.bono)):"—"}</span>
                   <span style={{textAlign:"right",fontWeight:700}}>{m.ventas?fmtPct(m.pct):"—"}</span>
                 </div>
               ))}
@@ -8939,12 +8940,12 @@ function Metricas({clientes,prods,pedidos}){
               <div key={c.nombre} style={{padding:"9px 0",borderTop:`1px solid ${BO}`}}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline"}}>
                   <span style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</span>
-                  <span style={{fontSize:14,fontWeight:700,color:"#B7691F",flexShrink:0}}>−{fmtARS(Math.round(c.beneficio))} · {fmtPct(c.pct)}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:"#B7691F",flexShrink:0}}>−{fmtARS((c.beneficio))} · {fmtPct(c.pct)}</span>
                 </div>
                 <div style={{height:5,borderRadius:3,background:BG,margin:"5px 0 3px",overflow:"hidden"}}>
                   <div style={{width:`${Math.min(100,Math.round((descCriterio==="pct"?c.pct/maxRankPct:c.beneficio/maxRankMonto)*100))}%`,height:"100%",background:AM,borderRadius:3}}/>
                 </div>
-                <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Desc. {fmtARS(Math.round(c.descuento))} · Bonif. {fmtARS(Math.round(c.bono))}{c.litrosBono>0?` (${Math.round(c.litrosBono*10)/10} L)`:""} · {c.conBeneficio} de {c.ventas} venta{c.ventas!==1?"s":""} · lista {fmtARS(Math.round(c.bruto))}</div>
+                <div style={{fontSize:12,color:MU,lineHeight:1.4}}>Desc. {fmtARS((c.descuento))} · Bonif. {fmtARS((c.bono))}{c.litrosBono>0?` (${Math.round(c.litrosBono*10)/10} L)`:""} · {c.conBeneficio} de {c.ventas} venta{c.ventas!==1?"s":""} · lista {fmtARS((c.bruto))}</div>
               </div>
             ))}
             {resDesc.estimado&&<div style={{fontSize:12,color:MU,marginTop:8,lineHeight:1.4}}>* Las bonificaciones anteriores al registro detallado se valúan al precio de lista actual.</div>}
@@ -8970,7 +8971,7 @@ function Metricas({clientes,prods,pedidos}){
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,color:CR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
               <div style={{marginTop:4,height:3,background:BO,borderRadius:2}}><div style={{width:`${(c[topCriterio]/maxFacturacion)*100}%`,height:"100%",background:G,borderRadius:2}}/></div>
-              <div style={{fontSize:12,color:MU,marginTop:3}}>Ticket prom.: {fmtARS(Math.round(c.monto/c.pedidos))}</div>
+              <div style={{fontSize:12,color:MU,marginTop:3}}>Ticket prom.: {fmtARS((c.monto/c.pedidos))}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div style={{fontSize:15,fontWeight:700,color:G}}>{topCriterio==="litros"?`${Math.round(c.litros*10)/10}L`:fmtARS(c.monto)}</div>
@@ -9417,12 +9418,12 @@ function FormGastoPersonal({initial,onSave,onCancel,onDelete,onDeleteFuturas}){
       <SelectCategoriaGasto tipo="personal" value={f.categoria} onChange={v=>setF(p=>({...p,categoria:v}))}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t={nuevo&&f.modo!=="unico"?"Fecha del 1.er pago":"Fecha"}/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-        <div><Lbl t={nuevo&&f.modo!=="unico"?"Importe de cada pago":"Monto ARS"}/><input type="number" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
+        <div><Lbl t={nuevo&&f.modo!=="unico"?"Importe de cada pago":"Monto ARS"}/><input type="number" step="any" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
       </div>
       {nuevo&&f.modo!=="unico"&&(
         <div>
           <Lbl t={f.modo==="cuotas"?"Cantidad de cuotas":"Cantidad de meses"}/>
-          <input type="number" inputMode="numeric" min="2" max="60" value={f.cuotas} onChange={s("cuotas")}/>
+          <input type="number" step="any" inputMode="decimal" min="2" max="60" value={f.cuotas} onChange={s("cuotas")}/>
           <div style={{fontSize:12,color:MU,marginTop:6}}>Se cargan {nCuotas} pagos, uno por mes{montoNum>0?` · total ${fmtARS(total)}`:""}. Los de fechas futuras quedan como "A pagar" y aparecen en Próximos pagos.</div>
         </div>
       )}
@@ -9784,7 +9785,7 @@ function FormPersonaSueldo({initial,onSave,onCancel}){
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div><Lbl t="Nombre"/><input value={f.nombre} onChange={s("nombre")} placeholder="Ej: Juan Pérez, Estudio contable" autoFocus/></div>
       <div><Lbl t="Tipo"/><div style={{display:"flex",gap:6}}>{chip("empleado","Empleado/a")}{chip("honorarios","Honorarios")}</div></div>
-      <div><Lbl t="Monto mensual de referencia (opcional)"/><input type="number" inputMode="decimal" value={f.montoRef} onChange={s("montoRef")} placeholder="0"/><div style={{fontSize:12,color:MU,marginTop:4}}>Se usa en el botón "Repetir sueldo" para cargar el mes con un toque.</div></div>
+      <div><Lbl t="Monto mensual de referencia (opcional)"/><input type="number" step="any" inputMode="decimal" value={f.montoRef} onChange={s("montoRef")} placeholder="0"/><div style={{fontSize:12,color:MU,marginTop:4}}>Se usa en el botón "Repetir sueldo" para cargar el mes con un toque.</div></div>
       <div><Lbl t="Teléfono (opcional, para enviar recibos por WhatsApp)"/><input type="tel" value={f.telefono} onChange={s("telefono")} placeholder="11 2345 6789"/></div>
       <div><Lbl t="Nota (opcional)"/><input value={f.nota} onChange={s("nota")} placeholder="Ej: repartidor, CUIT, alias de cuenta"/></div>
       {initial.id&&<label style={{display:"flex",alignItems:"center",gap:8,fontSize:14,color:CR,cursor:"pointer"}}><input type="checkbox" checked={f.activo} onChange={e=>setF(p=>({...p,activo:e.target.checked}))} style={{width:18,height:18}}/>Activo (si lo desmarcás pasa a "Archivados")</label>}
@@ -9810,7 +9811,7 @@ function FormMovSueldo({initial,saldo,onSave,onCancel}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10}}>
         <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
-        <div><Lbl t="Monto ARS"/><input type="number" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
+        <div><Lbl t="Monto ARS"/><input type="number" step="any" inputMode="decimal" value={f.monto} onChange={s("monto")} placeholder="0" autoFocus/></div>
       </div>
       {esPago&&saldo>0&&<button onClick={()=>setF(p=>({...p,monto:String(Math.round(saldo*100)/100)}))} style={{alignSelf:"flex-start",fontSize:12,fontWeight:700,padding:"5px 10px",borderRadius:8,border:`1px solid ${G}66`,background:BG,color:G,cursor:"pointer"}}>Usar el saldo pendiente: {fmtARS(saldo)}</button>}
       {esPago&&<div><Lbl t="Medio de pago"/><select value={f.medio} onChange={s("medio")}><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="cheque">Cheque / ECHEQ</option><option value="otro">Otro</option></select></div>}
@@ -9909,6 +9910,7 @@ function SueldosHonorarios({sueldos,setSueldos,syncStatus,syncError}){
           <button onClick={()=>repetir(d)} style={{flex:1,minWidth:90,padding:"9px 6px",borderRadius:10,border:`1px solid ${BO}`,background:BG,color:CR,fontSize:14,fontWeight:700,cursor:"pointer"}}>{(p.montoRef||(p.movs||[]).some(m=>m.tipo!=="pago"))?"↻ Cargar mes":"+ Cargar"}</button>
           <button onClick={()=>setModalM({personaId:p.id})} aria-label="Nuevo movimiento" style={{padding:"9px 12px",borderRadius:10,border:`1px solid ${BO}`,background:BG,color:CR,fontSize:14,fontWeight:700,cursor:"pointer"}}>+ Mov.</button>
           <button onClick={()=>setModalP(p)} aria-label="Editar persona" style={{padding:"9px 12px",borderRadius:10,border:`1px solid ${BO}`,background:BG,color:MU,cursor:"pointer"}}>{I.edit}</button>
+          <BotonBorrar titulo="¿Eliminar persona?" mensaje={`Vas a eliminar a ${p.nombre}${movs.length?` y sus ${movs.length} movimiento(s)`:""}. Esta acción no se puede deshacer.`} onConfirmar={()=>borrarPersona(p.id)} style={{padding:"9px 12px",background:RE+"11",border:`1px solid ${RE}33`,borderRadius:10,cursor:"pointer",color:RE}}/>
         </div>
         {(d.devMes>0||d.pagMes>0)&&<div style={{fontSize:12,color:MU,marginTop:8}}>{new Date(Number(mes.slice(0,4)),Number(mes.slice(5,7))-1,1).toLocaleDateString("es-AR",{month:"long"})}: devengado {fmtARS(d.devMes)} · pagado {fmtARS(d.pagMes)}</div>}
         {abre&&(
@@ -10546,7 +10548,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
         <div style={{fontSize:16,fontWeight:700,color:CR,marginBottom:4}}>💰 Cobranzas</div>
         <p style={{fontSize:14,color:MU,marginBottom:14,lineHeight:1.5}}>Una venta pendiente se marca como "vencida" cuando pasan más de estos días sin cobrarse. Se usa para el filtro "Vencidos" y las alertas de mora en Clientes y en la ficha de cada cliente.</p>
         <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
-          <div style={{flex:1}}><Lbl t="Días para considerar mora"/><input type="number" inputMode="numeric" value={moraTmp} onChange={e=>setMoraTmp(e.target.value)} placeholder="Ej: 15"/></div>
+          <div style={{flex:1}}><Lbl t="Días para considerar mora"/><input type="number" step="any" inputMode="decimal" value={moraTmp} onChange={e=>setMoraTmp(e.target.value)} placeholder="Ej: 15"/></div>
           <button onClick={guardarMora} disabled={!moraTmp||Number(moraTmp)<=0} style={{padding:"10px 16px",borderRadius:10,background:G,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",opacity:!moraTmp||Number(moraTmp)<=0?0.4:1}}>Guardar</button>
         </div>
       </div>
@@ -10576,7 +10578,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           </div>
           <div>
             <Lbl t="Cantidad necesaria"/>
-            <input type="number" inputMode="numeric" value={promoTmp.cantidadNecesaria} onChange={e=>setPromoTmp(p=>({...p,cantidadNecesaria:e.target.value}))} placeholder="Ej: 250"/>
+            <input type="number" step="any" inputMode="decimal" value={promoTmp.cantidadNecesaria} onChange={e=>setPromoTmp(p=>({...p,cantidadNecesaria:e.target.value}))} placeholder="Ej: 250"/>
             <div style={{fontSize:12,color:MU,marginTop:4,lineHeight:1.4}}>
               ⚠️ Va en <b>litros</b> para Barril y PET (no en "cantidad de barriles/bidones"), y en <b>unidades</b> para Lata. Ej: si un barril tiene 50L y la promo es "cada 5 barriles", cargá <b>250</b> acá.
             </div>
@@ -10587,7 +10589,7 @@ function Configuracion({cal,clientes,setClientes,prospectos,setProspectos,pedido
           </div>
           <div>
             <Lbl t="Cantidad del bono"/>
-            <input type="number" inputMode="numeric" value={promoTmp.cantidadBono} onChange={e=>setPromoTmp(p=>({...p,cantidadBono:e.target.value}))} placeholder="Ej: 1"/>
+            <input type="number" step="any" inputMode="decimal" value={promoTmp.cantidadBono} onChange={e=>setPromoTmp(p=>({...p,cantidadBono:e.target.value}))} placeholder="Ej: 1"/>
           </div>
         </div>
         {promoTmp.activo&&(!promoTmp.marcaCuenta||!promoTmp.productoBonoId)&&(
@@ -11301,7 +11303,7 @@ function FilaStock({f,unidad,onCommit,onAjustar,movil,primera}){
   const editor=(
     <div style={{display:"inline-flex",alignItems:"center",gap:6}}>
       <button onClick={()=>onAjustar(prod.id,-1)} style={btn}>−</button>
-      <input type="number" inputMode="numeric" value={valor}
+      <input type="number" step="any" inputMode="decimal" value={valor}
         onFocus={()=>setEnFoco(true)}
         onChange={e=>setValor(e.target.value)}
         onBlur={()=>{setEnFoco(false);onCommit(prod.id,valor);}}
@@ -11419,7 +11421,7 @@ function CuentasCorrientes({clientes,setClientes,diasMora,prods,pedidos}){
                       </div>
                     </div>
                     <ChipBeneficio d={desgloseVenta(v,cliente.id,ctxDesc)}/>
-                    {!!cliente.comisionPctDefault&&<div style={{fontSize:13,color:G,marginTop:4}}>% comisión ({cliente.comisionPctDefault}%) = {fmtARS(Math.round(v.monto*Number(cliente.comisionPctDefault)/100))}</div>}
+                    {!!cliente.comisionPctDefault&&<div style={{fontSize:13,color:G,marginTop:4}}>% comisión ({cliente.comisionPctDefault}%) = {fmtARS((v.monto*Number(cliente.comisionPctDefault)/100))}</div>}
                   </div>
                 );})}
 
@@ -11458,8 +11460,8 @@ function Talonarios({talonarios,setTalonarios}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18,marginBottom:20}}>
       <div><Lbl t="Nombre del talonario"/><input value={f.nombre} onChange={e=>setF(p=>({...p,nombre:e.target.value}))} placeholder="Ej. Facturas de venta"/></div>
       <div><Lbl t="Tipo de comprobante"/><select value={f.tipo} onChange={e=>setF(p=>({...p,tipo:e.target.value}))}>{tipos.map(x=><option key={x}>{x}</option>)}</select></div>
-      <div><Lbl t="Punto de venta"/><input inputMode="numeric" maxLength={4} value={f.puntoVenta} onChange={e=>setF(p=>({...p,puntoVenta:e.target.value.replace(/\D/g,"").slice(0,4)}))} placeholder="0001"/></div>
-      <div><Lbl t="Próximo número"/><input type="number" min="1" value={f.proximo} onChange={e=>setF(p=>({...p,proximo:e.target.value}))}/></div>
+      <div><Lbl t="Punto de venta"/><input inputMode="decimal" maxLength={4} value={f.puntoVenta} onChange={e=>setF(p=>({...p,puntoVenta:e.target.value.replace(/\D/g,"").slice(0,4)}))} placeholder="0001"/></div>
+      <div><Lbl t="Próximo número"/><input type="number" step="any" min="1" value={f.proximo} onChange={e=>setF(p=>({...p,proximo:e.target.value}))}/></div>
       <div style={{display:"flex",alignItems:"center",gap:8}}><input type="checkbox" checked={!!f.activo} onChange={e=>setF(p=>({...p,activo:e.target.checked}))} style={{width:18,height:18}}/><span style={{fontSize:14,color:CR}}>Talonario activo</span></div>
       <div style={{display:"flex",alignItems:"end",gap:8}}><Btn onClick={guardar}>{editId?"Guardar cambios":"Crear talonario"}</Btn>{editId&&<Btn variant="ghost" onClick={()=>{setEditId(null);setF({nombre:"",tipo:"Venta",puntoVenta:"0001",proximo:"1",activo:true});}}>Cancelar</Btn>}</div>
     </div>
@@ -11653,7 +11655,7 @@ function EditarMovPago({mov,det,onClose,onGuardar,destinos,puedeDest,motivoDest}
         {!esCob&&destinos&&destinos.length>0&&puedeDest?<div><Lbl t="Destinatario"/><select value={f.dest} onChange={e=>setF(p=>({...p,dest:e.target.value,importe:String(mov.importe||""),medio:mov.medioPago||p.medio}))}>{destinos.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}</select>{cambiaDest&&<div style={{fontSize:12,color:MU,marginTop:4}}>Al cambiar el destinatario se mueve el pago a la otra cuenta. El importe y el medio no se modifican en esta misma edición.</div>}</div>:<div style={{fontSize:14,color:MU}}>{esCob?"Cliente":mov.persona?"Persona":"Proveedor"}: <b style={{color:CR}}>{mov.entidadNombre}</b>{!esCob&&motivoDest&&<div style={{fontSize:12,marginTop:4}}>{motivoDest}</div>}</div>}
         <div><Lbl t="Fecha"/><input type="date" value={f.fecha} onChange={s("fecha")}/></div>
         <div><Lbl t="Medio de pago"/><select value={f.medio} onChange={s("medio")} disabled={bloqueaMedio}>{medios.map(m=><option key={m}>{m}</option>)}</select></div>
-        <div><Lbl t="Importe"/><input type="number" inputMode="decimal" value={f.importe} onChange={s("importe")} disabled={bloqueaImporte}/>
+        <div><Lbl t="Importe"/><input type="number" step="any" inputMode="decimal" value={f.importe} onChange={s("importe")} disabled={bloqueaImporte}/>
           {bloqueaImporte&&<div style={{fontSize:12,color:MU,marginTop:4}}>{det.echeqId?"Es un pago con ECHEQ: para cambiar el importe deshacé el pago desde la ficha y cargalo de nuevo.":"Este comprobante cubre comprobantes puntuales: para cambiar el importe anulalo desde la cuenta y registralo de nuevo."}</div>}
           {!bloqueaImporte&&!mov.persona&&!mov.anticipo&&<div style={{fontSize:12,color:MU,marginTop:4}}>Si cambiás el importe, el cobro/pago se vuelve a aplicar a los comprobantes pendientes más antiguos primero.</div>}
           {!bloqueaImporte&&mov.anticipo&&<div style={{fontSize:12,color:MU,marginTop:4}}>Anticipo: el importe no puede ser menor a lo que ya aplicaste a comprobantes.</div>}
@@ -11812,7 +11814,7 @@ function PagosCobranzas({sueldos,setSueldos,clientes,setClientes,proveedores,set
     return(movimientosPago||[]).filter(m=>!tipoFijo||m.tipo===tipoFijo).filter(m=>{
       if(!t)return true;
       const base=normTxt(`${m.entidadNombre} ${m.comprobanteNumero||""} ${m.medioPago||""} ${m.observaciones||""} ${fechaBuscable(m.fecha)}`);
-      const imp=String(Math.round(Number(m.importe)||0));
+      const imp=String(R2(Number(m.importe)||0));
       return t.split(/\s+/).every(w=>base.includes(w)||(w.replace(/\D/g,"").length>=2&&imp.includes(w.replace(/\D/g,""))));
     });
   },[movimientosPago,tipoFijo,qMov]);
@@ -11972,7 +11974,7 @@ function PagosCobranzas({sueldos,setSueldos,clientes,setClientes,proveedores,set
       {!entidad?<div style={{padding:18,borderRadius:12,background:BG,color:MU,fontSize:14}}>Seleccioná un {esCobranza?"cliente":"proveedor"} para ver los comprobantes pendientes.</div>:entidad.esPersona?<div style={{padding:16,borderRadius:12,background:BG,color:CR,fontSize:14,lineHeight:1.5}}><b>{entidad.nombre}</b><div style={{color:MU,fontSize:13,marginTop:4}}>Saldo pendiente: <b style={{color:CR}}>{fmtARS(deudaTotal)}</b>. El pago se registra también en <b>Sueldos y honorarios</b>, como "Le pagué".</div></div>:(documentos.length===0&&!(modo==="importe"&&saldosPend>0))?<div style={{padding:18,borderRadius:12,background:GR+"12",color:GR,fontSize:14,fontWeight:700}}>No hay comprobantes pendientes para esta cuenta.</div>:modo==="importe"?<div><div style={{fontSize:13,color:MU,marginBottom:8}}>Deuda pendiente: <b style={{color:CR}}>{fmtARS(deudaTotal)}</b> · el importe se descuenta empezando por el comprobante más viejo.</div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{preview.map(d=>{const completo=d.aplica>=d.monto-0.005;return <div key={d.key} style={{display:"flex",gap:10,padding:12,borderRadius:12,border:`1px solid ${d.aplica>0?G:BO}`,background:d.aplica>0?GLT:BG,opacity:d.aplica>0?1:.65}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion}{d.fecha?` · ${fmtDate(d.fecha)}`:""}</div>{d.aplica>0&&<div style={{fontSize:12,fontWeight:700,color:G,marginTop:3}}>{completo?"Se cancela completo":`Se paga ${fmtARS(d.aplica)} · queda ${fmtARS(d.monto-d.aplica)}`}</div>}</div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></div>;})}</div></div>:<><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:13,color:MU}}>{documentos.length} comprobantes pendientes</span><button onClick={()=>setSeleccion(seleccion.length===documentos.length?[]:documentos.map(d=>d.key))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>{seleccion.length===documentos.length?"Quitar todos":"Seleccionar todos"}</button></div><div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:430,overflowY:"auto"}}>{documentos.map(d=><label key={d.key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:12,borderRadius:12,border:`1px solid ${seleccion.includes(d.key)?G:BO}`,background:seleccion.includes(d.key)?GLT:BG,cursor:"pointer"}}><input type="checkbox" checked={seleccion.includes(d.key)} onChange={e=>setSeleccion(prev=>e.target.checked?[...prev,d.key]:prev.filter(k=>k!==d.key))} style={{width:18,height:18,marginTop:2,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:800,color:CR}}>{d.numero?`Comp. ${d.numero}`:d.descripcion}</div><div style={{fontSize:12,color:MU,marginTop:3}}>{d.descripcion} · {fmtDate(d.fecha)}</div></div><div style={{fontSize:14,fontWeight:800,color:CR,whiteSpace:"nowrap"}}>{fmtARS(d.monto)}</div></label>)}</div></>}
       </div>
       <div style={{background:CA,border:`1px solid ${BO}`,borderRadius:18,padding:18}}><div style={{fontSize:17,fontWeight:800,color:CR,marginBottom:14}}>2. Datos del movimiento</div><div style={{marginBottom:12}}><Lbl t="Fecha del movimiento"/><input type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/></div><div style={{marginBottom:12}}><Lbl t="Medio de pago"/><select value={medio} onChange={e=>setMedio(e.target.value)}>{["Efectivo","Transferencia","Mercado Pago","Echeq"].map(x=><option key={x}>{x}</option>)}</select></div>
-      {medio==="Echeq"&&<div style={{padding:14,borderRadius:12,border:`1px solid ${AM}55`,background:AM+"0d",marginBottom:14}}><div style={{fontSize:14,fontWeight:800,color:AM,marginBottom:12}}>Datos del echeq</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}><div><Lbl t="Fecha de emisión"/><input type="date" value={emisionEcheq} onChange={e=>setEmisionEcheq(e.target.value)}/></div><div><Lbl t="N° de echeq"/><input value={numeroEcheq} onChange={e=>setNumeroEcheq(e.target.value)} placeholder="Número"/></div><div><Lbl t="Banco emisor"/><input value={bancoEcheq} onChange={e=>setBancoEcheq(e.target.value)} placeholder="Banco"/></div><div><Lbl t="Fecha de pago"/><input type="date" value={pagoEcheq} onChange={e=>setPagoEcheq(e.target.value)}/></div><div><Lbl t="Importe del echeq"/><input type="number" min="0.01" step="0.01" value={modo==="importe"?String(importeNum||""):(importeEcheq||String(total||""))} readOnly={modo==="importe"} onChange={e=>setImporteEcheq(e.target.value)} placeholder="0,00"/></div>{!esCobranza&&<><div><Lbl t="Beneficiario"/><input value={benefEcheq||(entidad?entidad.nombre:"")} onChange={e=>setBenefEcheq(e.target.value)}/></div><div><Lbl t="CUIT (opcional)"/><input value={cuitEcheq} onChange={e=>setCuitEcheq(e.target.value)} inputMode="numeric"/></div></>}</div></div>}
+      {medio==="Echeq"&&<div style={{padding:14,borderRadius:12,border:`1px solid ${AM}55`,background:AM+"0d",marginBottom:14}}><div style={{fontSize:14,fontWeight:800,color:AM,marginBottom:12}}>Datos del echeq</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}><div><Lbl t="Fecha de emisión"/><input type="date" value={emisionEcheq} onChange={e=>setEmisionEcheq(e.target.value)}/></div><div><Lbl t="N° de echeq"/><input value={numeroEcheq} onChange={e=>setNumeroEcheq(e.target.value)} placeholder="Número"/></div><div><Lbl t="Banco emisor"/><input value={bancoEcheq} onChange={e=>setBancoEcheq(e.target.value)} placeholder="Banco"/></div><div><Lbl t="Fecha de pago"/><input type="date" value={pagoEcheq} onChange={e=>setPagoEcheq(e.target.value)}/></div><div><Lbl t="Importe del echeq"/><input type="number" min="0.01" step="0.01" value={modo==="importe"?String(importeNum||""):(importeEcheq||String(total||""))} readOnly={modo==="importe"} onChange={e=>setImporteEcheq(e.target.value)} placeholder="0,00"/></div>{!esCobranza&&<><div><Lbl t="Beneficiario"/><input value={benefEcheq||(entidad?entidad.nombre:"")} onChange={e=>setBenefEcheq(e.target.value)}/></div><div><Lbl t="CUIT (opcional)"/><input value={cuitEcheq} onChange={e=>setCuitEcheq(e.target.value)} inputMode="decimal"/></div></>}</div></div>}
       <div style={{marginBottom:14}}><Lbl t="Observaciones"/><textarea rows={2} value={observaciones} onChange={e=>setObservaciones(e.target.value)} placeholder="Referencia, operación bancaria…"/></div>{modo==="importe"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><Lbl t="Importe a aplicar"/><input type="number" inputMode="decimal" min="0" step="0.01" value={importeAp} onChange={e=>setImporteAp(e.target.value)} placeholder="0,00"/>{entidad&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,fontSize:12,color:MU}}><span>Deuda total: {fmtARS(deudaTotal)}</span><button onClick={()=>setImporteAp(String(deudaTotal))} style={{border:0,background:"none",color:G,fontWeight:800,cursor:"pointer"}}>Pagar todo</button></div>}{!esCobranza&&entidad&&!entidad.esPersona&&<label style={{display:"flex",alignItems:"flex-start",gap:8,marginTop:10,fontSize:13,color:CR,cursor:"pointer"}}><input type="checkbox" checked={anticipo} onChange={e=>setAnticipo(e.target.checked)} style={{width:18,height:18,marginTop:1,flexShrink:0}}/><span><b>Pago anticipado / a cuenta</b> (todavía no hay comprobante). Queda registrado y lo aplicás después, cuando cargues la factura o el remito.</span></label>}</div>}{modo==="elegir"&&<div style={{background:BG,border:`1px solid ${BO}`,borderRadius:14,padding:14,marginBottom:14}}><div style={{fontSize:12,color:MU,fontWeight:800,letterSpacing:".07em"}}>TOTAL DE COMPROBANTES SELECCIONADOS</div><div className="bebas" style={{fontSize:30,color:CR,marginTop:3}}>{fmtARS(total)}</div><div style={{fontSize:12,color:MU,marginTop:4}}>{seleccionados.length} comprobante(s) · {medio}</div></div>}<Btn onClick={registrar} disabled={modo==="importe"?(!entidad||!(importeNum>0)):(!entidad||!seleccionados.length||total<=0)} >{esCobranza?"Registrar cobranza":"Registrar pago"}</Btn>
       </div>
     </div>
